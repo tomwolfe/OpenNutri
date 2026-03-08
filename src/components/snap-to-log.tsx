@@ -62,9 +62,10 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
   const { submit, object } = useObject({
     api: '/api/analyze',
     schema: FoodAnalysisSchema,
-    onFinish: (event) => {
+    onFinish: async (event) => {
       if (event.object?.items) {
-        const convertedItems = event.object.items.map((item: {
+        // 1. Immediately show AI draft items to the user (with enhancing flag)
+        const aiItems = event.object.items.map((item: {
           name: string;
           calories?: number;
           protein_g?: number;
@@ -85,13 +86,49 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
           servingGrams: 100,
           numericQuantity: item.numeric_quantity,
           unit: item.unit,
-          isEnhancing: false,
+          isEnhancing: true, // Mark as enhancing while waiting for USDA
           notes: item.notes,
           usdaMatch: item.usdaMatch,
         }));
 
-        setDraftItems(convertedItems);
+        setDraftItems(aiItems);
         setUploadProgress('review');
+
+        // 2. Call the batch enrichment endpoint in the background
+        try {
+          const res = await fetch('/api/food/usda/batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: aiItems }),
+          });
+          
+          if (res.ok) {
+            const enrichedData = await res.json();
+            
+            // 3. Update the UI with official USDA data and remove loading spinners
+            setDraftItems(enrichedData.items.map((item: any) => ({
+              foodName: item.foodName,
+              calories: item.calories,
+              protein: item.protein,
+              carbs: item.carbs,
+              fat: item.fat,
+              source: item.source || 'USDA',
+              servingGrams: 100,
+              numericQuantity: item.numeric_quantity || 1,
+              unit: item.unit || 'serving',
+              isEnhancing: false,
+              notes: item.notes,
+              usdaMatch: item.usdaMatch,
+            })));
+          } else {
+            // Fallback to AI items if USDA fails
+            setDraftItems(aiItems.map(item => ({ ...item, isEnhancing: false })));
+          }
+        } catch (err) {
+          console.error('USDA enrichment failed:', err);
+          // Fallback to AI items if USDA fails
+          setDraftItems(aiItems.map(item => ({ ...item, isEnhancing: false })));
+        }
       }
     },
     onError: (err) => {

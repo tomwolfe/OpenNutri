@@ -93,26 +93,64 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
   const { submit, object, isLoading: isStreaming } = useObject({
     api: '/api/analyze',
     schema: FoodAnalysisSchema,
-    onFinish: () => setUploadProgress('review'),
-  });
+    onFinish: async (event) => {
+      if (event.object?.items) {
+        // 1. Immediately show AI draft items to the user (with enhancing flag)
+        const aiItems: DraftItem[] = event.object.items.map((item: any) => ({
+          foodName: item?.name ?? '',
+          calories: item?.calories ?? 0,
+          protein: item?.protein_g ?? 0,
+          carbs: item?.carbs_g ?? 0,
+          fat: item?.fat_g ?? 0,
+          source: 'AI_ESTIMATE',
+          servingGrams: 100,
+          numericQuantity: item?.numeric_quantity,
+          unit: item?.unit,
+          isEnhancing: true, // Mark as enhancing while waiting for USDA
+          notes: item?.notes,
+          usdaMatch: item?.usdaMatch,
+        }));
+        setItems(aiItems);
+        setUploadProgress('review');
 
-  // Effect: Sync streaming items to local items
-  useEffect(() => {
-    if (object?.items) {
-      const streamingItems: DraftItem[] = (object.items as any[]).map((item) => ({
-        foodName: item?.name ?? '',
-        calories: item?.calories ?? 0,
-        protein: item?.protein_g ?? 0,
-        carbs: item?.carbs_g ?? 0,
-        fat: item?.fat_g ?? 0,
-        source: 'AI_ESTIMATE',
-        servingGrams: 100,
-        numericQuantity: item?.numeric_quantity,
-        unit: item?.unit,
-      }));
-      setItems(streamingItems);
-    }
-  }, [object]);
+        // 2. Call the batch enrichment endpoint in the background
+        try {
+          const res = await fetch('/api/food/usda/batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: aiItems }),
+          });
+          
+          if (res.ok) {
+            const enrichedData = await res.json();
+            
+            // 3. Update the UI with official USDA data and remove loading spinners
+            setItems(enrichedData.items.map((item: any) => ({
+              foodName: item.foodName,
+              calories: item.calories,
+              protein: item.protein,
+              carbs: item.carbs,
+              fat: item.fat,
+              source: item.source || 'USDA',
+              servingGrams: 100,
+              numericQuantity: item.numeric_quantity || 1,
+              unit: item.unit || 'serving',
+              isEnhancing: false,
+              notes: item.notes,
+              usdaMatch: item.usdaMatch,
+            })));
+          } else {
+            // Fallback to AI items if USDA fails
+            setItems(aiItems.map(item => ({ ...item, isEnhancing: false })));
+          }
+        } catch (err) {
+          console.error('USDA enrichment failed:', err);
+          // Fallback to AI items if USDA fails
+          setItems(aiItems.map(item => ({ ...item, isEnhancing: false })));
+        }
+      }
+    },
+  });
 
   // Text Search
   useEffect(() => {
