@@ -173,6 +173,8 @@ export function exponentiallyWeightedMovingAverage(
 /**
  * Calculate multiple linear regression using OLS (Ordinary Least Squares)
  * Analyzes the impact of calories, protein %, and carbs % on weight change
+ * 
+ * Uses Normal Equations: (X^T * X) * B = X^T * Y
  *
  * @param points - Array of data points with calories, protein %, carbs %, and weight change
  * @returns Multiple regression results with coefficients and insights
@@ -202,41 +204,51 @@ export function multipleLinearRegression(
     };
   }
 
-  // Calculate means
-  const x1Mean = points.reduce((sum, p) => sum + p.x1, 0) / n;
-  const x2Mean = points.reduce((sum, p) => sum + p.x2, 0) / n;
-  const x3Mean = points.reduce((sum, p) => sum + p.x3, 0) / n;
-  const yMean = points.reduce((sum, p) => sum + p.y, 0) / n;
+  // We have 4 coefficients: intercept (b0), calories (b1), protein% (b2), carbs% (b3)
+  // X matrix has dimensions [n, 4] where first column is all 1s
+  // Construct X^T * X (4x4 matrix)
+  const xtx = [
+    [0, 0, 0, 0],
+    [0, 0, 0, 0],
+    [0, 0, 0, 0],
+    [0, 0, 0, 0]
+  ];
 
-  // Calculate covariance matrix and coefficients using normal equations
-  // Simplified approach: calculate partial correlations (diagonal approximation)
-  let sumX1Y = 0, sumX2Y = 0, sumX3Y = 0;
-  let sumX1X1 = 0, sumX2X2 = 0, sumX3X3 = 0;
+  // Construct X^T * Y (4x1 vector)
+  const xty = [0, 0, 0, 0];
 
-  for (const point of points) {
-    const dx1 = point.x1 - x1Mean;
-    const dx2 = point.x2 - x2Mean;
-    const dx3 = point.x3 - x3Mean;
-    const dy = point.y - yMean;
-
-    sumX1Y += dx1 * dy;
-    sumX2Y += dx2 * dy;
-    sumX3Y += dx3 * dy;
-
-    sumX1X1 += dx1 * dx1;
-    sumX2X2 += dx2 * dx2;
-    sumX3X3 += dx3 * dx3;
+  for (const p of points) {
+    const row = [1, p.x1, p.x2, p.x3];
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 4; j++) {
+        xtx[i][j] += row[i] * row[j];
+      }
+      xty[i] += row[i] * p.y;
+    }
   }
 
-  // Simplified coefficient estimation (diagonal approximation)
-  // In production, use matrix inversion for full OLS
-  const b1 = sumX1X1 !== 0 ? sumX1Y / sumX1X1 : 0;
-  const b2 = sumX2X2 !== 0 ? sumX2Y / sumX2X2 : 0;
-  const b3 = sumX3X3 !== 0 ? sumX3Y / sumX3X3 : 0;
+  // Solve (X^T * X) * B = X^T * Y using Gaussian Elimination
+  const coefficients = solveLinearSystem(xtx, xty);
 
-  const intercept = yMean - b1 * x1Mean - b2 * x2Mean - b3 * x3Mean;
+  if (!coefficients) {
+    // Singular matrix (multicollinearity or insufficient variance)
+    return {
+      coefficients: { calories: 0, proteinPercent: 0, carbsPercent: 0, intercept: 0 },
+      rSquared: 0,
+      adjustedRSquared: 0,
+      prediction: () => 0,
+      insights: {
+        proteinImpact: 'neutral',
+        carbsImpact: 'neutral',
+        recommendation: 'Data quality issue: insufficient variation in macro ratios to analyze impact.',
+      },
+    };
+  }
+
+  const [intercept, b1, b2, b3] = coefficients;
 
   // Calculate R²
+  const yMean = points.reduce((sum, p) => sum + p.y, 0) / n;
   let ssTot = 0;
   let ssRes = 0;
 
@@ -247,29 +259,22 @@ export function multipleLinearRegression(
   }
 
   const rSquared = ssTot !== 0 ? 1 - ssRes / ssTot : 0;
-  const adjustedRSquared = 1 - (1 - rSquared) * (n - 1) / (n - 4); // 4 = 3 predictors + intercept
+  const adjustedRSquared = 1 - (1 - rSquared) * (n - 1) / (n - 4);
 
   // Generate insights based on coefficients
-  const proteinImpact = b2 > 0.001 ? 'positive' : b2 < -0.001 ? 'negative' : 'neutral';
-  const carbsImpact = b3 > 0.001 ? 'positive' : b3 < -0.001 ? 'negative' : 'neutral';
+  // We look for significant impacts (arbitrary threshold based on domain knowledge)
+  const proteinImpact = b2 > 0.005 ? 'positive' : b2 < -0.005 ? 'negative' : 'neutral';
+  const carbsImpact = b3 > 0.005 ? 'positive' : b3 < -0.005 ? 'negative' : 'neutral';
 
-  // Generate macro-specific recommendation
   let recommendation = '';
-  const proteinCoeff = (b2 * 100).toFixed(3);
-  const carbsCoeff = (b3 * 100).toFixed(3);
-
   if (proteinImpact === 'positive') {
-    recommendation = `Higher protein intake correlates with better weight loss (${proteinCoeff} kg per 1% increase). Consider increasing protein by 5-10% of total calories.`;
-  } else if (proteinImpact === 'negative') {
-    recommendation = `Higher protein intake shows unexpected correlation with weight gain. Review protein sources and overall calorie balance.`;
-  } else {
-    recommendation = `Protein intake shows neutral impact on weight change. Current protein levels are appropriate.`;
-  }
-
-  if (carbsImpact === 'positive' && proteinImpact === 'positive') {
-    recommendation += ' Both protein and carbs show positive correlations - focus on total calorie control.';
+    recommendation = `Analysis shows high-protein days correlate with better weight loss. Try increasing protein to ${Math.round(b2 * 1000) / 10}% of total calories.`;
   } else if (carbsImpact === 'negative') {
-    recommendation += ` Reducing carbs by 5% may improve results (${carbsCoeff} kg per 1% decrease).`;
+    recommendation = `Weight loss seems more efficient on lower-carb days. Consider reducing carbs by 5-10% in favor of protein or healthy fats.`;
+  } else if (rSquared > 0.4) {
+    recommendation = `Macro balance looks optimal for your current goals. Focus on calorie consistency.`;
+  } else {
+    recommendation = `Continue logging both weight and macros daily for more accurate personalized insights.`;
   }
 
   return {
@@ -290,6 +295,56 @@ export function multipleLinearRegression(
     },
   };
 }
+
+/**
+ * Solve a linear system of equations Ax = B using Gaussian elimination with partial pivoting
+ */
+function solveLinearSystem(A: number[][], B: number[]): number[] | null {
+  const n = B.length;
+  const matrix = A.map((row, i) => [...row, B[i]]);
+
+  for (let i = 0; i < n; i++) {
+    // Pivot selection
+    let maxRow = i;
+    for (let k = i + 1; k < n; k++) {
+      if (Math.abs(matrix[k][i]) > Math.abs(matrix[maxRow][i])) {
+        maxRow = k;
+      }
+    }
+
+    // Swap rows
+    [matrix[i], matrix[maxRow]] = [matrix[maxRow], matrix[i]];
+
+    // Check for singular matrix
+    if (Math.abs(matrix[i][i]) < 1e-10) {
+      return null;
+    }
+
+    // Pivot
+    for (let k = i + 1; k < n; k++) {
+      const c = -matrix[k][i] / matrix[i][i];
+      for (let j = i; j <= n; j++) {
+        if (i === j) {
+          matrix[k][j] = 0;
+        } else {
+          matrix[k][j] += c * matrix[i][j];
+        }
+      }
+    }
+  }
+
+  // Back substitution
+  const x = new Array(n).fill(0);
+  for (let i = n - 1; i >= 0; i--) {
+    x[i] = matrix[i][n] / matrix[i][i];
+    for (let k = i - 1; k >= 0; k--) {
+      matrix[k][n] -= matrix[k][i] * x[i];
+    }
+  }
+
+  return x;
+}
+
 
 /**
  * Detect trend direction from regression results

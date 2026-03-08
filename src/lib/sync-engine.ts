@@ -7,7 +7,8 @@
 
 import { db, type LocalFoodLog, type DecryptedFoodLog, type LocalUserTarget } from '@/lib/db-local';
 import { decryptBatchInWorker } from '@/lib/worker-client';
-import { mergeCrdt, encodeYDoc, createYDoc } from '@/lib/crdt';
+import { mergeCrdt, encodeYDoc, createYDoc, applyYUpdate } from '@/lib/crdt';
+import * as Y from 'yjs';
 
 /**
  * Sync conflict representation
@@ -19,6 +20,77 @@ export interface SyncConflict {
   serverVersion: number;
   localData?: any;
   serverData?: any;
+}
+
+/**
+ * Domain-aware conflict resolution for food logs
+ */
+function resolveLogConflict(
+  localLog: LocalFoodLog | undefined,
+  serverLog: LocalFoodLog
+): { mergedUpdate: string; mergedData: any } {
+  // 1. Initial CRDT merge (handles property-level merge)
+  const { mergedUpdate, mergedData } = mergeCrdt(
+    localLog?.yjsData || null,
+    serverLog.yjsData || null,
+    localLog || serverLog,
+    serverLog
+  );
+
+  if (!localLog) return { mergedUpdate, mergedData };
+
+  // 2. Domain-aware overrides
+  const doc = new Y.Doc();
+  applyYUpdate(doc, mergedUpdate);
+  const map = doc.getMap('data');
+  let needsOverride = false;
+
+  // Rule: Prefer verified data
+  if (localLog.isVerified && !serverLog.isVerified) {
+    if (!mergedData.isVerified) {
+      map.set('isVerified', true);
+      map.set('totalCalories', localLog.totalCalories);
+      map.set('mealType', localLog.mealType);
+      map.set('aiConfidenceScore', localLog.aiConfidenceScore);
+      // If we have local verified data, we MUST preserve the encrypted payload too
+      map.set('encryptedData', localLog.encryptedData);
+      map.set('encryptionIv', localLog.encryptionIv);
+      needsOverride = true;
+    }
+  } else if (!localLog.isVerified && serverLog.isVerified) {
+    if (!mergedData.isVerified) {
+      map.set('isVerified', true);
+      map.set('totalCalories', serverLog.totalCalories);
+      map.set('mealType', serverLog.mealType);
+      map.set('aiConfidenceScore', serverLog.aiConfidenceScore);
+      map.set('encryptedData', serverLog.encryptedData);
+      map.set('encryptionIv', serverLog.encryptionIv);
+      needsOverride = true;
+    }
+  } 
+  // Rule: If neither/both verified, prefer higher AI confidence
+  else if (localLog.aiConfidenceScore !== null && serverLog.aiConfidenceScore !== null) {
+    const diff = (localLog.aiConfidenceScore || 0) - (serverLog.aiConfidenceScore || 0);
+    if (Math.abs(diff) > 0.05) {
+      const preferred = diff > 0 ? localLog : serverLog;
+      if (mergedData.aiConfidenceScore !== preferred.aiConfidenceScore) {
+        map.set('aiConfidenceScore', preferred.aiConfidenceScore);
+        map.set('totalCalories', preferred.totalCalories);
+        map.set('encryptedData', preferred.encryptedData);
+        map.set('encryptionIv', preferred.encryptionIv);
+        needsOverride = true;
+      }
+    }
+  }
+
+  if (needsOverride) {
+    return {
+      mergedUpdate: encodeYDoc(doc),
+      mergedData: map.toJSON()
+    };
+  }
+
+  return { mergedUpdate, mergedData };
 }
 
 /**
@@ -159,19 +231,14 @@ export async function syncDelta(
     const logsToDecrypt: LocalFoodLog[] = [];
 
     await db.transaction('rw', db.foodLogs, db.decryptedLogs, db.userTargets, async () => {
-      // Merge logs using CRDT strategy
+      // Merge logs using Domain-Aware strategy
       for (const sLog of serverLogs) {
         if (sLog.deviceId === deviceId) continue;
 
         const localLog = await db.foodLogs.get(sLog.id);
         
-        // CRDT Merge
-        const { mergedUpdate, mergedData } = mergeCrdt(
-          localLog?.yjsData || null,
-          sLog.yjsData || null,
-          localLog || sLog,
-          sLog
-        );
+        // Use Domain-Aware Merge
+        const { mergedUpdate, mergedData } = resolveLogConflict(localLog, sLog);
 
         const newLocalLog: LocalFoodLog = {
           ...sLog,
@@ -191,6 +258,7 @@ export async function syncDelta(
 
         pulled++;
       }
+
 
       // Merge targets using CRDT strategy
       for (const sTarget of serverTargets) {

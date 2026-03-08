@@ -87,16 +87,42 @@ export async function POST(request: NextRequest) {
 
       // If encrypted, decrypt in memory
       if (isEncrypted && encryptionKey && iv) {
-        // Note: Full decryption implementation requires Web Crypto API in edge runtime
-        // For now, this is a placeholder for the encrypted flow
-        // The actual implementation would use crypto.subtle.decrypt here
-        console.log('Encrypted image received - decryption in edge runtime requires key import');
-        // TODO: Implement edge-compatible decryption
-        // For transition period, we accept base64 data URLs that never touch storage
+        try {
+          // 1. Import the session key (AES-GCM)
+          const keyBuffer = base64ToArrayBuffer(encryptionKey);
+          const cryptoKey = await crypto.subtle.importKey(
+            'raw',
+            keyBuffer,
+            { name: 'AES-GCM' },
+            false,
+            ['decrypt']
+          );
+
+          // 2. Decrypt the image data
+          const ivBuffer = base64ToArrayBuffer(iv);
+          const encryptedBuffer = base64ToArrayBuffer(imageData);
+          
+          const decryptedBuffer = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: ivBuffer },
+            cryptoKey,
+            encryptedBuffer
+          );
+
+          // 3. Convert back to data URL for AI vision stream
+          const base64Plaintext = arrayBufferToBase64(decryptedBuffer);
+          processedImageData = `data:image/jpeg;base64,${base64Plaintext}`;
+          
+          console.log('Successfully decrypted image in edge runtime');
+        } catch (decryptError) {
+          console.error('Decryption failed:', decryptError);
+          return NextResponse.json(
+            { error: 'Failed to decrypt image data. Check key and iv.' },
+            { status: 400 }
+          );
+        }
       }
 
       // Analyze image (streaming)
-      // imageData should be a data URL: data:image/jpeg;base64,<base64data>
       const result = await analyzeFoodImageStream(processedImageData, mealTypeHint, recentFoods);
       return result.toTextStreamResponse();
     } else if (text) {
