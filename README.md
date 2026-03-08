@@ -1,36 +1,132 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# OpenNutri
+
+Privacy-centric nutrition tracker with Vision AI integration.
+
+## Project Structure
+
+```
+src/
+├── app/
+│   ├── (auth)/              # Auth pages (login, signup)
+│   │   └── login/
+│   ├── (dashboard)/         # Protected dashboard pages
+│   │   └── dashboard/
+│   ├── api/
+│   │   ├── auth/            # NextAuth endpoints
+│   │   ├── food/usda        # USDA food search API
+│   │   └── log/             # Food logging endpoints
+│   ├── layout.tsx           # Root layout with SessionProvider
+│   └── page.tsx             # Landing page
+├── components/
+│   ├── dashboard/           # Dashboard components
+│   ├── forms/               # Form components
+│   │   └── manual-food-entry.tsx
+│   ├── layout/              # Layout components
+│   └── ui/                  # Shadcn/UI components
+├── db/
+│   ├── migrations/          # Drizzle migrations
+│   └── schema/
+│       └── index.ts         # Database schema
+├── hooks/                   # Custom React hooks
+├── lib/
+│   ├── auth.ts              # NextAuth configuration
+│   ├── db.ts                # NeonDB connection
+│   └── usda.ts              # USDA API client
+├── stores/                  # Zustand stores
+├── types/                   # TypeScript types
+└── workers/                 # AI job workers (Phase 2)
+```
+
+## Tech Stack
+
+- **Framework:** Next.js 14 (App Router)
+- **Language:** TypeScript
+- **Database:** NeonDB (Serverless Postgres)
+- **ORM:** Drizzle ORM
+- **Auth:** NextAuth v5 (Credentials provider)
+- **UI:** Tailwind CSS + Shadcn/UI
+- **State:** Zustand
+- **Hosting:** Vercel (Hobby tier)
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+
+- Node.js 18+
+- NeonDB account (free tier)
+- Vercel account (free tier)
+
+### Setup
+
+1. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+2. **Set up environment variables:**
+   ```bash
+   cp .env.example .env.local
+   ```
+   
+   Edit `.env.local` with your credentials:
+   - `DATABASE_URL`: NeonDB connection string
+   - `NEXTAUTH_SECRET`: Generate with `openssl rand -base64 32`
+   - `NEXTAUTH_URL`: Your app URL (http://localhost:3000 for dev)
+   - `USDA_API_KEY`: USDA FoodData Central API key (optional)
+
+3. **Set up the database:**
+   ```bash
+   npm run db:push
+   ```
+
+4. **Run development server:**
+   ```bash
+   npm run dev
+   ```
+
+5. **Open http://localhost:3000**
+
+## Database Scripts
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run db:generate   # Generate migrations
+npm run db:migrate    # Run migrations
+npm run db:push       # Push schema to database
+npm run db:studio     # Open Drizzle Studio
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Phase 1 Features (Complete)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- ✅ User authentication (NextAuth v5)
+- ✅ Manual food entry with USDA API integration
+- ✅ Daily nutrition dashboard
+- ✅ Meal tracking (breakfast, lunch, dinner, snack)
+- ✅ Date-based food log viewing
+- ✅ Macronutrient totals (calories, protein, carbs, fat)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Phase 2 Features (Planned)
 
-## Learn More
+- Vision AI integration (Zhipu GLM-4.6V-Flash)
+- Async job processing with Vercel Cron
+- Image upload with Vercel Blob
+- Client-side job status polling
+- AI scan rate limiting (5/day for free users)
+- Semantic caching for food descriptions
 
-To learn more about Next.js, take a look at the following resources:
+## Architecture Notes
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Serverless Considerations
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **Vercel Timeout:** AI processing uses async job pattern (DB polling + Cron)
+- **Database Size:** Images stored in Vercel Blob, not database
+- **Connection Pooling:** Neon serverless driver handles pooling automatically
 
-## Deploy on Vercel
+### Privacy
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- No data selling
+- Full data export capability (Phase 3)
+- E2E encryption options (Phase 3)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## License
+
+MIT
