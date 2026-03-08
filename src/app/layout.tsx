@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { SessionProvider } from "next-auth/react";
 import { validateEnv } from "@/lib/env";
+import { SyncInitializer } from "@/components/layout/sync-initializer";
 
 // Validate environment variables at startup (all environments)
 validateEnv();
@@ -45,7 +46,10 @@ export default function RootLayout({
   return (
     <html lang="en" className={inter.variable}>
       <body className="font-sans antialiased">
-        <SessionProvider>{children}</SessionProvider>
+        <SessionProvider>
+          <SyncInitializer />
+          {children}
+        </SessionProvider>
       </body>
     </html>
   );

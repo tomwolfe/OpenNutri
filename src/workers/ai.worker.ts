@@ -24,13 +24,23 @@ async function getClassifier() {
   if (classifier) return classifier;
   
   try {
-    // MobileNet v2 is lightweight and supports WebGPU well
+    // Attempt to use Moondream2 for high-quality vision analysis if WebGPU is available
+    if (navigator.gpu) {
+      console.log('WebGPU detected, loading Moondream2...');
+      classifier = await pipeline('image-to-text', 'onnx-community/moondream2', {
+        device: 'webgpu',
+      });
+      return classifier;
+    }
+    
+    // Fallback to MobileNet v2 for WASM
+    console.log('WebGPU not detected, falling back to MobileNet v2 (WASM)');
     classifier = await pipeline('image-classification', 'onnx-community/mobilenetv2-1.0-224', {
-      device: navigator.gpu ? 'webgpu' : 'wasm',
+      device: 'wasm',
     });
     return classifier;
   } catch (err) {
-    console.warn('WebGPU initialization failed, falling back to WASM', err);
+    console.warn('Advanced model initialization failed, falling back to basic MobileNet', err);
     classifier = await pipeline('image-classification', 'onnx-community/mobilenetv2-1.0-224', {
       device: 'wasm',
     });

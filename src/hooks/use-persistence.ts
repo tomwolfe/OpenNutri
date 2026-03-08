@@ -26,9 +26,79 @@ export function usePersistence({ onSuccess, onError }: UsePersistenceOptions = {
   ) => {
     if (!session?.user?.id || items.length === 0) return;
     setIsSaving(true);
+    const userId = session.user.id;
 
     try {
-      // Update local favorites
+      const totalCalories = items.reduce((sum, item) => sum + item.calories, 0);
+      const notes = items.map(i => i.notes).filter(Boolean).join(' ');
+      const logId = crypto.randomUUID();
+      const timestamp = new Date();
+
+      // 1. Prepare Encrypted Data
+      let encryptedData = '', encryptionIv = '';
+      if (vaultKey) {
+        const result = await encryptLog({
+          mealType,
+          items,
+          notes,
+          imageUrl,
+          imageIv,
+          timestamp: timestamp.getTime()
+        });
+        encryptedData = result.encryptedData;
+        encryptionIv = result.iv;
+      } else {
+        throw new Error('Vault is locked. Cannot save encrypted data.');
+      }
+
+      // 2. Local-First Write (Save to IndexedDB immediately)
+      const foodLog = {
+        id: logId,
+        userId,
+        timestamp,
+        mealType,
+        totalCalories,
+        aiConfidenceScore: 1.0, // Manual entry is 100% confident
+        isVerified: true,
+        imageUrl,
+        notes,
+        encryptedData,
+        encryptionIv,
+        encryptionSalt: null,
+        version: 1,
+        deviceId: localStorage.getItem('opennutri_device_id'),
+        synced: false,
+        updatedAt: Date.now(),
+      };
+
+      await db.foodLogs.put(foodLog);
+      
+      // Update decrypted cache for instant UI feedback
+      await db.decryptedLogs.put({
+        id: logId,
+        userId,
+        timestamp,
+        mealType,
+        totalCalories,
+        items,
+        notes,
+        imageUrl,
+        imageIv,
+        version: 1
+      });
+
+      // 3. Add to Sync Outbox (Write-Ahead Log pattern)
+      await db.syncOutbox.add({
+        userId,
+        table: 'foodLogs',
+        entityId: logId,
+        operation: 'PUT',
+        payload: foodLog,
+        timestamp: Date.now(),
+        status: 'pending'
+      });
+
+      // 4. Update local favorites (background)
       for (const item of items) {
         const favoriteId = item.foodName.toLowerCase().trim();
         const existing = await db.userFavorites.get(favoriteId);
@@ -51,42 +121,8 @@ export function usePersistence({ onSuccess, onError }: UsePersistenceOptions = {
         }
       }
 
-      const totalCalories = items.reduce((sum, item) => sum + item.calories, 0);
-      const notes = items.map(i => i.notes).filter(Boolean).join(' ');
-      
-      let encryptedData = null, encryptionIv = null;
-      if (vaultKey) {
-        const result = await encryptLog({
-          mealType,
-          items,
-          notes,
-          imageUrl,
-          imageIv,
-          timestamp: Date.now()
-        });
-        encryptedData = result.encryptedData;
-        encryptionIv = result.iv;
-      }
-
-      const response = await fetch('/api/log/food', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mealType: encryptedData ? 'encrypted' : mealType,
-          items: encryptedData ? [] : items,
-          totalCalories: encryptedData ? 0 : totalCalories,
-          notes: encryptedData ? 'encrypted' : notes,
-          imageUrl: encryptedData ? null : imageUrl,
-          encryptedData,
-          encryptionIv,
-        }),
-      });
-
-      if (!response.ok) throw new Error('Failed to save');
-
-      if (session?.user?.id && vaultKey) {
-        triggerSync(session.user.id, vaultKey).catch(console.error);
-      }
+      // 5. Trigger background sync
+      triggerSync(userId, vaultKey).catch(console.error);
       
       onSuccess?.();
     } catch (err) {

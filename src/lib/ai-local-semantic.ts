@@ -35,6 +35,46 @@ function cosineSimilarity(vecA: number[], vecB: number[]): number {
 }
 
 /**
+ * Pre-populate the local index with common foods
+ */
+export async function syncSmallCoreIndex(): Promise<void> {
+  if (typeof window === 'undefined') return;
+
+  try {
+    const response = await fetch('/data/small-core-index.json');
+    const commonFoods = await response.json();
+    
+    const count = await db.localSemanticCache.count();
+    // If we have less than the "core" items, seed it
+    if (count < commonFoods.length) {
+      console.log('Seeding local semantic index with common foods...');
+      
+      // Process in batches to avoid locking the UI/Worker too long
+      for (const food of commonFoods) {
+        const existing = await db.localSemanticCache.get(food.id);
+        if (!existing) {
+          // generateEmbedding uses the worker internally
+          const embedding = await generateEmbedding(food.description);
+          await db.localSemanticCache.put({
+            id: food.id,
+            description: food.description,
+            embedding,
+            calories: food.calories,
+            protein: food.protein,
+            carbs: food.carbs,
+            fat: food.fat,
+            lastUsed: Date.now(),
+          });
+        }
+      }
+      console.log('Local semantic index seeded successfully.');
+    }
+  } catch (error) {
+    console.error('Failed to sync small-core index:', error);
+  }
+}
+
+/**
  * Search local history for a semantic match
  */
 export async function searchLocalHistory(

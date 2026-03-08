@@ -206,13 +206,56 @@ export async function getVaultKey(
 
 /**
  * Generate a random session key for AES-GCM
- * Used for one-time encryption of images before analysis
+ * Used for one-time encryption of images before analysis or session persistence
  * @returns CryptoKey for AES-GCM encryption
  */
 export async function generateSessionKey(): Promise<CryptoKey> {
   return crypto.subtle.generateKey(
     { name: ENCRYPTION_ALGORITHM, length: KEY_LENGTH },
     true,
+    ['encrypt', 'decrypt', 'wrapKey', 'unwrapKey']
+  );
+}
+
+/**
+ * Wrap a CryptoKey with another CryptoKey (AES-GCM)
+ */
+export async function wrapKey(
+  keyToWrap: CryptoKey,
+  wrappingKey: CryptoKey
+): Promise<{ ciphertext: string; iv: string }> {
+  const iv = generateIV();
+  const wrapped = await crypto.subtle.wrapKey(
+    'raw',
+    keyToWrap,
+    wrappingKey,
+    { name: ENCRYPTION_ALGORITHM, iv }
+  );
+  
+  return {
+    ciphertext: arrayBufferToBase64(wrapped),
+    iv: arrayBufferToBase64(iv),
+  };
+}
+
+/**
+ * Unwrap a CryptoKey with another CryptoKey (AES-GCM)
+ */
+export async function unwrapKey(
+  wrappedKeyBase64: string,
+  ivBase64: string,
+  wrappingKey: CryptoKey
+): Promise<CryptoKey> {
+  const wrappedKey = base64ToArrayBuffer(wrappedKeyBase64);
+  const iv = base64ToArrayBuffer(ivBase64);
+  
+  return crypto.subtle.unwrapKey(
+    'raw',
+    wrappedKey,
+    wrappingKey,
+    { name: ENCRYPTION_ALGORITHM, iv },
+    { name: ENCRYPTION_ALGORITHM, length: KEY_LENGTH },
+    false,
     ['encrypt', 'decrypt']
   );
 }
@@ -240,7 +283,7 @@ export function arrayBufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
 /**
  * Helper: Convert Base64 string to ArrayBuffer
  */
-function base64ToArrayBuffer(base64: string): ArrayBuffer {
+export function base64ToArrayBuffer(base64: string): ArrayBuffer {
   const binaryString = atob(base64);
   const bytes = new Uint8Array(binaryString.length);
   for (let i = 0; i < binaryString.length; i++) {

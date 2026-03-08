@@ -86,11 +86,46 @@ self.onmessage = async (event: MessageEvent) => {
   try {
     if (type === 'SYNC_DELTA') {
       const { userId, deviceId, lastSyncTimestamp } = payload;
-      
-      // 1. Find unsynced
+
+      // 1. Process Sync Outbox (Write-Ahead Log)
+      const outboxItems = await db.syncOutbox
+        .where('userId')
+        .equals(userId)
+        .and(item => item.status === 'pending' || item.status === 'failed')
+        .toArray();
+
+      for (const item of outboxItems) {
+        try {
+          await db.syncOutbox.update(item.id!, { status: 'processing' });
+
+          const response = await fetch('/api/sync/outbox/process', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(item),
+          });
+
+          if (response.ok) {
+            // Mark as synced in the actual table
+            if (item.table === 'foodLogs') {
+              await db.foodLogs.update(item.entityId, { synced: true, updatedAt: Date.now() });
+            }
+            // Remove from outbox on success
+            await db.syncOutbox.delete(item.id!);
+          } else {
+            const error = await response.text();
+            await db.syncOutbox.update(item.id!, { status: 'failed', error });
+          }
+        } catch (err) {
+          console.error('Failed to process outbox item:', item.id, err);
+          await db.syncOutbox.update(item.id!, { status: 'failed', error: String(err) });
+        }
+      }
+
+      // 2. Fallback: Find unsynced that might have missed the outbox (legacy)
       const unsyncedLogs = await db.foodLogs
         .filter(log => !log.synced && log.userId === userId)
         .toArray();
+...
 
       const unsyncedTargets = await db.userTargets
         .filter(target => !target.synced && target.userId === userId)

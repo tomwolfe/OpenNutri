@@ -113,6 +113,18 @@ export interface LocalVaultKey {
   updatedAt: number;
 }
 
+export interface SyncOutboxItem {
+  id?: number;
+  userId: string;
+  table: string;
+  entityId: string;
+  operation: 'PUT' | 'DELETE';
+  payload: any;
+  timestamp: number;
+  status: 'pending' | 'failed' | 'processing';
+  error?: string;
+}
+
 export interface LocalSemanticMatch {
   id: string; // fdcId string or foodName
   description: string;
@@ -135,10 +147,11 @@ export class OpenNutriDB extends Dexie {
   healthData!: Table<LocalHealthData>;
   vaultKeys!: Table<LocalVaultKey>;
   localSemanticCache!: Table<LocalSemanticMatch>;
+  syncOutbox!: Table<SyncOutboxItem>;
 
   constructor() {
     super('OpenNutriDB');
-    this.version(8).stores({
+    this.version(9).stores({
       pendingImages: 'id, timestamp',
       foodLogs: 'id, userId, timestamp, synced, updatedAt',
       decryptedLogs: 'id, userId, timestamp',
@@ -149,6 +162,7 @@ export class OpenNutriDB extends Dexie {
       healthData: '[userId+date], userId, date',
       vaultKeys: 'userId, credentialId',
       localSemanticCache: 'id, lastUsed',
+      syncOutbox: '++id, userId, status, timestamp',
     });
   }
 

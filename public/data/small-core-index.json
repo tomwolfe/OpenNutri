@@ -1,0 +1,12 @@
+[
+  { "id": "usda-11033", "description": "Apple, raw, with skin", "calories": 52, "protein": 0.3, "carbs": 13.8, "fat": 0.2 },
+  { "id": "usda-11034", "description": "Banana, raw", "calories": 89, "protein": 1.1, "carbs": 22.8, "fat": 0.3 },
+  { "id": "usda-11035", "description": "Chicken Breast, grilled", "calories": 165, "protein": 31, "carbs": 0, "fat": 3.6 },
+  { "id": "usda-11036", "description": "Egg, whole, boiled", "calories": 155, "protein": 12.6, "carbs": 1.1, "fat": 10.6 },
+  { "id": "usda-11037", "description": "Oatmeal, cooked", "calories": 71, "protein": 2.5, "carbs": 12, "fat": 1.4 },
+  { "id": "usda-11038", "description": "Milk, 2% fat", "calories": 50, "protein": 3.3, "carbs": 4.8, "fat": 2 },
+  { "id": "usda-11039", "description": "Avocado, raw", "calories": 160, "protein": 2, "carbs": 8.5, "fat": 14.7 },
+  { "id": "usda-11040", "description": "Rice, white, cooked", "calories": 130, "protein": 2.7, "carbs": 28, "fat": 0.3 },
+  { "id": "usda-11041", "description": "Salmon, Atlantic, grilled", "calories": 208, "protein": 22, "carbs": 0, "fat": 13 },
+  { "id": "usda-11042", "description": "Peanut Butter, smooth", "calories": 588, "protein": 25, "carbs": 20, "fat": 50 }
+]

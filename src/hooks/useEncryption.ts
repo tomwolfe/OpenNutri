@@ -3,6 +3,7 @@
  * 
  * Manages E2E encryption keys for food logs.
  * Handles key generation, storage, and retrieval.
+ * Implements Session Resumption (Encrypted Session Persistence).
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -13,9 +14,16 @@ import {
   encryptFoodLog,
   decryptFoodLog,
   type EncryptedFoodLog,
+  wrapKey,
+  unwrapKey,
+  generateSessionKey,
+  arrayBufferToBase64,
+  base64ToArrayBuffer,
 } from '@/lib/encryption';
 
 const VAULT_KEY_STORAGE = 'opennutri_vault_key';
+const SESSION_PERSISTENCE_KEY = 'opennutri_session_persistence_key';
+const WRAPPED_VAULT_KEY_STORAGE = 'opennutri_wrapped_vault_key';
 
 interface VaultKeyData {
   salt: string;
@@ -53,13 +61,71 @@ export function useEncryption(): UseEncryptionReturn {
   const [hasBiometricKey, setHasBiometricKey] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Check Web Crypto API support on mount
+  /**
+   * Internal: Persist key for session resumption
+   * Wraps the vault key with a temporary session key
+   */
+  const persistSessionKey = useCallback(async (masterKey: CryptoKey) => {
+    try {
+      const sessionWrappingKey = await generateSessionKey();
+      
+      // Export wrapping key to sessionStorage
+      const exportedWrappingKey = await crypto.subtle.exportKey('raw', sessionWrappingKey);
+      sessionStorage.setItem(SESSION_PERSISTENCE_KEY, arrayBufferToBase64(exportedWrappingKey));
+      
+      // Wrap master key and store in localStorage
+      const wrapped = await wrapKey(masterKey, sessionWrappingKey);
+      localStorage.setItem(WRAPPED_VAULT_KEY_STORAGE, JSON.stringify(wrapped));
+      
+      // Also set the legacy flag
+      sessionStorage.setItem(VAULT_KEY_STORAGE, JSON.stringify({ type: 'master', unlocked: true }));
+    } catch (err) {
+      console.warn('Failed to persist session key:', err);
+    }
+  }, []);
+
+  /**
+   * Internal: Resume session from storage
+   */
+  const resumeSession = useCallback(async () => {
+    try {
+      const exportedWrappingKey = sessionStorage.getItem(SESSION_PERSISTENCE_KEY);
+      const wrappedDataStr = localStorage.getItem(WRAPPED_VAULT_KEY_STORAGE);
+      
+      if (!exportedWrappingKey || !wrappedDataStr) return;
+      
+      const wrappedData = JSON.parse(wrappedDataStr);
+      
+      // Import the wrapping key back
+      const binaryKey = base64ToArrayBuffer(exportedWrappingKey);
+      
+      const sessionWrappingKey = await crypto.subtle.importKey(
+        'raw',
+        binaryKey,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['unwrapKey']
+      );
+      
+      const masterKey = await unwrapKey(wrappedData.ciphertext, wrappedData.iv, sessionWrappingKey);
+      setKey(masterKey);
+      console.log('Encryption session resumed successfully');
+    } catch (err) {
+      console.error('Failed to resume encryption session:', err);
+      // Clean up corrupted session
+      sessionStorage.removeItem(SESSION_PERSISTENCE_KEY);
+      localStorage.removeItem(WRAPPED_VAULT_KEY_STORAGE);
+    }
+  }, []);
+
+  // Check Web Crypto API support and resume session on mount
   useEffect(() => {
     const supported = isCryptoAvailable();
     setIsSupported(supported);
     
     if (!supported) {
       setError('Web Crypto API is not supported in this browser');
+      return;
     }
 
     // Check for biometrics
@@ -68,18 +134,13 @@ export function useEncryption(): UseEncryptionReturn {
       setIsBiometricsSupported(bioAvailable);
     });
 
-    // Try to load cached key from session storage
-    const cachedKey = sessionStorage.getItem(VAULT_KEY_STORAGE);
-    if (cachedKey) {
-      console.log('Vault key cached in session');
-    }
-  }, []);
+    // Try to resume session
+    resumeSession();
+  }, [resumeSession]);
 
-  // Update biometric key status when key or user changes
+  // Update biometric key status
   useEffect(() => {
     const checkBiometricKey = async () => {
-      // We need a userId to check IndexedDB
-      // For now, we'll check if any biometric key exists
       const { db } = await import('@/lib/db-local');
       const count = await db.vaultKeys.count();
       setHasBiometricKey(count > 0);
@@ -87,7 +148,27 @@ export function useEncryption(): UseEncryptionReturn {
     checkBiometricKey();
   }, [key]);
 
-  // ... (keep initializeKey and unlockVault)
+  // Initialize a new vault
+  const initializeKey = useCallback(async (email: string, password: string) => {
+    const keyData = await generateVaultKey(email, password);
+    // Derive the master key object for current session
+    const masterKey = await getVaultKey(password, keyData.salt, keyData.encryptedKey, keyData.iv);
+    setKey(masterKey);
+    await persistSessionKey(masterKey);
+    return keyData;
+  }, [persistSessionKey]);
+
+  // Unlock existing vault
+  const unlockVault = useCallback(async (password: string, salt: string, encryptedKey: string, iv: string) => {
+    try {
+      const masterKey = await getVaultKey(password, salt, encryptedKey, iv);
+      setKey(masterKey);
+      await persistSessionKey(masterKey);
+    } catch (err) {
+      console.error('Failed to unlock vault:', err);
+      throw new Error('Invalid password or corrupted vault data');
+    }
+  }, [persistSessionKey]);
 
   // Enable biometric unlock
   const enableBiometricUnlock = useCallback(async (userId: string) => {
@@ -105,10 +186,7 @@ export function useEncryption(): UseEncryptionReturn {
       const unlockedKey = await unlockVaultWithBiometrics(userId);
       if (unlockedKey) {
         setKey(unlockedKey);
-        sessionStorage.setItem(VAULT_KEY_STORAGE, JSON.stringify({
-          type: 'master',
-          unlocked: true,
-        }));
+        await persistSessionKey(unlockedKey);
         return true;
       }
       return false;
@@ -116,14 +194,12 @@ export function useEncryption(): UseEncryptionReturn {
       console.error('Biometric unlock failed:', err);
       return false;
     }
-  }, []);
+  }, [persistSessionKey]);
 
   // Encrypt a food log entry
   const encryptLog = useCallback(
     async (log: unknown): Promise<{ encryptedData: string; iv: string }> => {
-      if (!key) {
-        throw new Error('Vault not unlocked. Please log in first.');
-      }
+      if (!key) throw new Error('Vault not unlocked. Please log in first.');
       return encryptFoodLog(log as EncryptedFoodLog, key);
     },
     [key]
@@ -132,9 +208,7 @@ export function useEncryption(): UseEncryptionReturn {
   // Decrypt a food log entry
   const decryptLog = useCallback(
     async (encryptedData: string, iv: string): Promise<EncryptedFoodLog> => {
-      if (!key) {
-        throw new Error('Vault not unlocked. Please log in first.');
-      }
+      if (!key) throw new Error('Vault not unlocked. Please log in first.');
       return decryptFoodLog(encryptedData, iv, key);
     },
     [key]
@@ -144,9 +218,7 @@ export function useEncryption(): UseEncryptionReturn {
   const encryptBinaryData = useCallback(
     async (data: ArrayBuffer | Uint8Array, customKey?: CryptoKey): Promise<{ ciphertext: ArrayBuffer; iv: Uint8Array }> => {
       const targetKey = customKey || key;
-      if (!targetKey) {
-        throw new Error('Vault not unlocked and no session key provided.');
-      }
+      if (!targetKey) throw new Error('Vault not unlocked and no session key provided.');
       const { encryptBinary } = await import('@/lib/encryption');
       return encryptBinary(data, targetKey);
     },
@@ -157,9 +229,7 @@ export function useEncryption(): UseEncryptionReturn {
   const decryptBinaryData = useCallback(
     async (ciphertext: ArrayBuffer, iv: ArrayBuffer | Uint8Array, customKey?: CryptoKey): Promise<ArrayBuffer> => {
       const targetKey = customKey || key;
-      if (!targetKey) {
-        throw new Error('Vault not unlocked and no session key provided.');
-      }
+      if (!targetKey) throw new Error('Vault not unlocked and no session key provided.');
       const { decryptBinary } = await import('@/lib/encryption');
       return decryptBinary(ciphertext, iv, targetKey);
     },
@@ -183,11 +253,15 @@ export function useEncryption(): UseEncryptionReturn {
   const clearKey = useCallback(() => {
     setKey(null);
     sessionStorage.removeItem(VAULT_KEY_STORAGE);
+    sessionStorage.removeItem(SESSION_PERSISTENCE_KEY);
+    localStorage.removeItem(WRAPPED_VAULT_KEY_STORAGE);
   }, []);
 
   return {
     isReady: !!key || !isSupported,
     isSupported,
+    isBiometricsSupported,
+    hasBiometricKey,
     error,
     vaultKey: key,
     encryptLog,
@@ -198,6 +272,8 @@ export function useEncryption(): UseEncryptionReturn {
     exportKeyToBase64,
     initializeKey,
     unlockVault,
+    enableBiometricUnlock,
+    unlockWithBiometrics,
     clearKey,
   };
 }
