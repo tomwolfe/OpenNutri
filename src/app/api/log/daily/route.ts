@@ -53,21 +53,9 @@ export async function GET(request: NextRequest) {
       orderBy: [desc(foodLogs.timestamp)],
     });
 
-    // Calculate daily totals
-    const dailyTotals = logsWithItems.reduce(
-      (totals, log) => ({
-        calories: totals.calories + (log.totalCalories || 0),
-        protein: totals.protein + (log.logItems?.reduce((sum, item) => sum + (item.protein || 0), 0) || 0),
-        carbs: totals.carbs + (log.logItems?.reduce((sum, item) => sum + (item.carbs || 0), 0) || 0),
-        fat: totals.fat + (log.logItems?.reduce((sum, item) => sum + (item.fat || 0), 0) || 0),
-      }),
-      { calories: 0, protein: 0, carbs: 0, fat: 0 }
-    );
-
     return NextResponse.json({
       date: targetDate.toISOString().split('T')[0],
       logs: logsWithItems,
-      dailyTotals,
     });
   } catch (error) {
     console.error('Fetch logs error:', error);

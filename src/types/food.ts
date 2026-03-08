@@ -36,7 +36,20 @@ export interface DraftItem {
   servingGrams: number;
   isEnhancing?: boolean;
   notes?: string;
-  usdaMatch?: { fdcId: number; description: string };
+  usdaMatch?: { 
+    fdcId: number; 
+    description: string;
+    similarity?: number;
+  };
+  alternatives?: Array<{
+    fdcId: number;
+    description: string;
+    calories: number;
+    protein: number;
+    carbs: number;
+    fat: number;
+    similarity: number;
+  }>;
 }
 
 export const MEAL_TYPES = [

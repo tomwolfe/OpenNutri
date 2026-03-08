@@ -218,26 +218,37 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
     setSaveInProgress(true);
     try {
       const totalCalories = draftItems.reduce((sum, item) => sum + item.calories, 0);
+      const notes = draftItems.map(i => i.notes).filter(Boolean).join(' ') || null;
+      
       let encryptedData = null, encryptionIv = null;
       if (isReady) {
         try {
-          const result = await encryptLog(draftItems as unknown as LogItem[]);
+          // Encrypt FULL log data for privacy including imageUrl
+          const result = await encryptLog({
+            mealType: selectedMealType,
+            items: draftItems,
+            notes,
+            imageUrl,
+            timestamp: Date.now()
+          });
           encryptedData = result.encryptedData;
           encryptionIv = result.iv;
         } catch (err) {
           console.error('Encryption failed', err);
         }
       }
+
       const response = await fetch('/api/log/food', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          mealType: selectedMealType,
-          items: draftItems,
-          totalCalories,
+          // If encrypted, send minimal/generic plaintext data
+          mealType: encryptedData ? 'encrypted' : selectedMealType,
+          items: encryptedData ? [] : draftItems,
+          totalCalories: encryptedData ? 0 : totalCalories,
+          notes: encryptedData ? 'encrypted' : notes,
+          imageUrl: encryptedData ? null : imageUrl, // Encrypted URL prevents server from knowing which blob is linked to which user log
           aiConfidenceScore: 0.8,
-          imageUrl,
-          notes: draftItems.map(i => i.notes).filter(Boolean).join(' ') || null,
           encryptedData,
           encryptionIv,
         }),
@@ -385,19 +396,29 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
                 </div>
               )}
 
-              {(uploadProgress === 'review' || uploadProgress === 'complete') && displayItems.length > 0 && (
-                <MacroEditor
-                  items={displayItems as DraftItem[]}
-                  selectedMealType={selectedMealType}
-                  isEditing={isEditingItems}
-                  saveInProgress={saveInProgress}
-                  onUpdateItems={setDraftItems}
-                  onUpdateMealType={setSelectedMealType}
-                  onToggleEditing={() => setIsEditingItems(!isEditingItems)}
-                  onAddItem={() => setDraftItems([...draftItems, { foodName: '', calories: 0, protein: 0, carbs: 0, fat: 0, source: 'MANUAL', servingGrams: 100 }])}
-                  onRemoveItem={(index) => setDraftItems(draftItems.filter((_, i) => i !== index))}
-                  onSave={handleSaveDraft}
-                />
+              {(uploadProgress === 'streaming' || uploadProgress === 'review' || uploadProgress === 'complete') && displayItems.length > 0 && (
+                <div className={cn(
+                  "transition-all duration-500 ease-in-out",
+                  uploadProgress === 'streaming' ? "opacity-60 grayscale-[0.5]" : "opacity-100"
+                )}>
+                  <MacroEditor
+                    items={displayItems as DraftItem[]}
+                    selectedMealType={selectedMealType}
+                    isEditing={isEditingItems && uploadProgress !== 'streaming'}
+                    saveInProgress={saveInProgress}
+                    onUpdateItems={setDraftItems}
+                    onUpdateMealType={setSelectedMealType}
+                    onToggleEditing={() => setIsEditingItems(!isEditingItems)}
+                    onAddItem={() => setDraftItems([...draftItems, { foodName: '', calories: 0, protein: 0, carbs: 0, fat: 0, source: 'MANUAL', servingGrams: 100 }])}
+                    onRemoveItem={(index) => setDraftItems(draftItems.filter((_, i) => i !== index))}
+                    onSave={handleSaveDraft}
+                  />
+                  {uploadProgress === 'streaming' && (
+                    <div className="mt-2 text-[10px] text-blue-500 text-center animate-pulse">
+                      AI is typing out discoveries...
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}

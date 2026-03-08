@@ -135,34 +135,39 @@ export function ManualFoodEntryForm({ mealType, onEntryComplete }: ManualFoodEnt
         fat: Math.round(food.fat * (servingGrams / 100) * 10) / 10,
         source: 'USDA' as const,
       }));
+// E2E Encryption: Encrypt everything before sending
+let encryptedData = null;
+let encryptionIv = null;
 
-      // E2E Encryption: Encrypt the items array before sending
-      let encryptedData = null;
-      let encryptionIv = null;
+if (isReady) {
+  try {
+    // Encrypt full metadata for zero-knowledge privacy
+    const encryptionResult = await encryptLog({
+      mealType: selectedMealType,
+      items,
+      timestamp: Date.now()
+    });
+    encryptedData = encryptionResult.encryptedData;
+    encryptionIv = encryptionResult.iv;
+  } catch (err) {
+    console.error('Encryption failed, saving in plaintext...', err);
+  }
+}
 
-      if (isReady) {
-        try {
-          // Encrypt the entire items array as a JSON string
-          const encryptionResult = await encryptLog(items as unknown as LogItem[]);
-          encryptedData = encryptionResult.encryptedData;
-          encryptionIv = encryptionResult.iv;
-        } catch (err) {
-          console.error('Encryption failed, saving in plaintext...', err);
-        }
-      }
-      
-      const response = await fetch('/api/log/food', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mealType,
-          items,
-          totalCalories: totals.calories,
-          encryptedData,
-          encryptionIv,
-        }),
-      });
-
+const response = await fetch('/api/log/food', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    // If encrypted, only send 'encrypted' or generic values
+    mealType: encryptedData ? 'encrypted' : selectedMealType,
+    items: encryptedData ? [] : items,
+    totalCalories: encryptedData ? 0 : totals.calories,
+    encryptedData,
+    encryptionIv,
+  }),
+});
       if (!response.ok) {
         throw new Error('Failed to save food log');
       }

@@ -15,79 +15,70 @@ import { cosineDistance, desc, sql } from 'drizzle-orm';
 import { searchFoods, extractMacros, type USDAFoodItem } from '@/lib/usda';
 
 /**
+ * Match a food name to USDA entry and return multiple potential matches
+ */
+export async function matchFoodToUSDAWithAlternatives(
+  foodName: string,
+  limit: number = 5
+): Promise<USDAFoodItem[]> {
+  try {
+    const cleanName = cleanFoodDescription(foodName);
+    if (cleanName.length < 2) return [];
+
+    const embedding = await generateEmbedding(cleanName);
+    const queryVector = toVector(embedding);
+
+    // Search cache
+    const matches = await searchCacheBySimilarity(queryVector, limit);
+    
+    if (matches.length > 0) {
+      return matches.map(m => ({
+        fdcId: m.fdcId,
+        description: m.description,
+        dataType: m.dataType || 'Cached',
+        similarity: (m as any).similarity,
+        foodNutrients: [
+          { nutrientName: 'Energy', value: m.calories || 0, unitName: 'kcal' },
+          { nutrientName: 'Protein', value: m.protein || 0, unitName: 'g' },
+          { nutrientName: 'Carbohydrate, by difference', value: m.carbs || 0, unitName: 'g' },
+          { nutrientName: 'Total lipid (fat)', value: m.fat || 0, unitName: 'g' },
+        ],
+      }));
+    }
+
+    // USDA API Search Fallback
+    const results = await searchFoods(cleanName, 10, 1);
+    if (!results.foods || results.foods.length === 0) return [];
+
+    await cacheUSDAItems(results.foods);
+    
+    const freshMatches = await searchCacheBySimilarity(queryVector, limit);
+    return freshMatches.map(m => ({
+      fdcId: m.fdcId,
+      description: m.description,
+      dataType: m.dataType || 'Foundation',
+      similarity: (m as any).similarity,
+      foodNutrients: [
+        { nutrientName: 'Energy', value: m.calories || 0, unitName: 'kcal' },
+        { nutrientName: 'Protein', value: m.protein || 0, unitName: 'g' },
+        { nutrientName: 'Carbohydrate, by difference', value: m.carbs || 0, unitName: 'g' },
+        { nutrientName: 'Total lipid (fat)', value: m.fat || 0, unitName: 'g' },
+      ],
+    }));
+  } catch (error) {
+    console.error(`Failed to match "${foodName}" with alternatives:`, error);
+    return [];
+  }
+}
+
+/**
  * Match a food name to USDA entry using semantic search
  * @param foodName - AI-detected food name
  * @returns Best match USDA food item or null
  */
 export async function matchFoodToUSDA(foodName: string): Promise<USDAFoodItem | null> {
-  try {
-    const cleanName = cleanFoodDescription(foodName);
-    
-    if (cleanName.length < 2) {
-      return null;
-    }
-
-    // Generate embedding for the query
-    const embedding = await generateEmbedding(cleanName);
-    const queryVector = toVector(embedding);
-
-    // Search cache first using vector similarity
-    const cachedMatch = await searchCacheBySimilarity(queryVector, 3);
-    
-    if (cachedMatch && cachedMatch.length > 0) {
-      // Return the best match from cache
-      const best = cachedMatch[0];
-      console.log(`Cache hit (semantic) for "${foodName}" -> FDC ID: ${best.fdcId}`);
-      
-      return {
-        fdcId: best.fdcId,
-        description: best.description,
-        dataType: best.dataType || 'Cached',
-        foodNutrients: [
-          { nutrientName: 'Energy', value: best.calories || 0, unitName: 'kcal' },
-          { nutrientName: 'Protein', value: best.protein || 0, unitName: 'g' },
-          { nutrientName: 'Carbohydrate, by difference', value: best.carbs || 0, unitName: 'g' },
-          { nutrientName: 'Total lipid (fat)', value: best.fat || 0, unitName: 'g' },
-        ],
-      };
-    }
-
-    // Cache miss - search USDA API
-    const results = await searchFoods(cleanName, 10, 1);
-
-    if (!results.foods || results.foods.length === 0) {
-      return null;
-    }
-
-    // For new items, generate embeddings and cache them
-    await cacheUSDAItems(results.foods);
-
-    // Now search the cache again (just-cached items)
-    const freshMatch = await searchCacheBySimilarity(queryVector, 3);
-    
-    if (freshMatch && freshMatch.length > 0) {
-      const best = freshMatch[0];
-      console.log(`Fresh cache hit for "${foodName}" -> FDC ID: ${best.fdcId}`);
-      
-      return {
-        fdcId: best.fdcId,
-        description: best.description,
-        dataType: best.dataType || 'Foundation',
-        foodNutrients: [
-          { nutrientName: 'Energy', value: best.calories || 0, unitName: 'kcal' },
-          { nutrientName: 'Protein', value: best.protein || 0, unitName: 'g' },
-          { nutrientName: 'Carbohydrate, by difference', value: best.carbs || 0, unitName: 'g' },
-          { nutrientName: 'Total lipid (fat)', value: best.fat || 0, unitName: 'g' },
-        ],
-      };
-    }
-
-    // Fallback to first result if no semantic match
-    return results.foods[0] || null;
-  } catch (error) {
-    console.error(`Failed to semantically match "${foodName}" to USDA:`, error);
-    return null;
-  }
+  const matches = await matchFoodToUSDAWithAlternatives(foodName, 1);
+  return matches.length > 0 ? matches[0] : null;
 }
 
 /**
@@ -106,7 +97,6 @@ async function searchCacheBySimilarity(
   fat: number | null;
 }>> {
   try {
-    // Use cosine similarity to find nearest neighbors
     const similarity = sql<number>`1 - (${cosineDistance(usdaCache.embedding, queryVector)})`;
     
     const results = await db
@@ -121,7 +111,7 @@ async function searchCacheBySimilarity(
         similarity: similarity.as('similarity'),
       })
       .from(usdaCache)
-      .where(sql`${similarity} > 0.7`) // Only return good matches (>70% similar)
+      .where(sql`${similarity} > 0.5`) // Return more potential matches for fallback UI
       .orderBy(desc(similarity))
       .limit(limit);
 

@@ -88,35 +88,51 @@ export const useNutritionStore = create<NutritionStore>((set, get) => ({
       let processedLogs: FoodLog[] = [];
 
       // Decrypt logs if encryption is ready
-      if (isEncryptionReady && rawLogs.length > 0) {
+      if (rawLogs.length > 0) {
         processedLogs = await Promise.all(
-          rawLogs.map(async (log: FoodLog) => {
-            if (log.encryptedData && log.encryptionIv) {
+          rawLogs.map(async (log: any) => {
+            let items: LogItem[] = log.logItems || [];
+            
+            if (isEncryptionReady && log.encryptedData && log.encryptionIv) {
               try {
-                const decryptedItems = await decryptLog(log.encryptedData, log.encryptionIv);
-                // Handle both single item and array of items for backward compatibility
-                const items = Array.isArray(decryptedItems) ? decryptedItems : [decryptedItems];
-                return {
-                  ...log,
-                  items: items as LogItem[],
-                };
+                const decrypted: any = await decryptLog(log.encryptedData, log.encryptionIv);
+                
+                // Handle new complex encrypted object: { mealType, items, notes, imageUrl }
+                if (decrypted && typeof decrypted === 'object' && !Array.isArray(decrypted)) {
+                  if (decrypted.items) {
+                    items = decrypted.items;
+                    return {
+                      ...log,
+                      items,
+                      mealType: decrypted.mealType || log.mealType,
+                      notes: decrypted.notes || log.notes,
+                      imageUrl: decrypted.imageUrl || log.imageUrl,
+                    };
+                  }
+                }
+                
+                // Fallback for older format (just items array)
+                items = Array.isArray(decrypted) ? decrypted : [decrypted];
               } catch (err) {
                 console.error('Store: Failed to decrypt log:', log.id, err);
-                return log;
               }
             }
-            return log;
+            
+            return {
+              ...log,
+              items,
+            };
           })
         );
-      } else {
-        processedLogs = rawLogs;
       }
 
       set({ 
         logs: processedLogs, 
-        dailyTotals: data.dailyTotals || { calories: 0, protein: 0, carbs: 0, fat: 0 },
         isLoading: false 
       });
+      
+      // Calculate totals locally based on decrypted items
+      get().updateTotals();
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       set({ error: errorMessage, isLoading: false });

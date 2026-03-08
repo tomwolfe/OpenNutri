@@ -1,6 +1,7 @@
 'use client';
 
 import { useCoaching } from '@/hooks/useCoaching';
+import { useEncryption } from '@/hooks/useEncryption';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -100,7 +101,11 @@ function InsightIcon({ type }: InsightIconProps) {
 }
 
 export function CoachingDashboard() {
-  const { data, loading, error, refresh } = useCoaching();
+  const { decryptLog, isReady } = useEncryption();
+  const { data, loading, error, refresh } = useCoaching({
+    decryptLog,
+    isEncryptionReady: isReady
+  });
   const [applyingTarget, setApplyingTarget] = useState<string | null>(null);
 
   const applyTarget = async (

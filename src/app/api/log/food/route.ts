@@ -32,22 +32,22 @@ export async function POST(request: NextRequest) {
       encryptionSalt
     } = body;
 
-    // Validate request
-    if (!mealType || !items || !Array.isArray(items)) {
+    // Validate request - basic validation, more flexible for encrypted data
+    if (!encryptedData && (!mealType || !items || !Array.isArray(items))) {
       return NextResponse.json(
-        { error: 'Invalid request body' },
+        { error: 'Invalid request body: Missing items or encrypted data' },
         { status: 400 }
       );
     }
 
-    // Create verified food log
+    // Create food log - many fields now optional to support privacy
     const [foodLog] = await db
       .insert(foodLogs)
       .values({
         userId,
-        mealType,
-        totalCalories,
-        aiConfidenceScore,
+        mealType: mealType || 'unknown',
+        totalCalories: totalCalories || 0,
+        aiConfidenceScore: aiConfidenceScore || 0,
         isVerified: true,
         imageUrl,
         notes,
@@ -61,25 +61,20 @@ export async function POST(request: NextRequest) {
       throw new Error('Failed to create food log');
     }
 
-    // Create log items
-    const logItemsData = items.map((item: {
-      foodName: string;
-      calories: number;
-      protein: number;
-      carbs: number;
-      fat: number;
-      source: string;
-    }) => ({
-      logId: foodLog.id,
-      foodName: item.foodName,
-      calories: item.calories,
-      protein: item.protein,
-      carbs: item.carbs,
-      fat: item.fat,
-      source: item.source,
-    }));
+    // Create log items only if plaintext items are provided
+    if (items && Array.isArray(items) && items.length > 0) {
+      const logItemsData = items.map((item: any) => ({
+        logId: foodLog.id,
+        foodName: item.foodName,
+        calories: item.calories || 0,
+        protein: item.protein || 0,
+        carbs: item.carbs || 0,
+        fat: item.fat || 0,
+        source: item.source || 'MANUAL',
+      }));
 
-    await db.insert(logItems).values(logItemsData);
+      await db.insert(logItems).values(logItemsData);
+    }
 
     return NextResponse.json({
       success: true,

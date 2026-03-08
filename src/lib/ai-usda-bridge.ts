@@ -226,19 +226,41 @@ export async function enhanceWithUSDAData(
     usdaMatch?: {
       fdcId: number;
       description: string;
+      similarity?: number;
     };
+    alternatives?: Array<{
+      fdcId: number;
+      description: string;
+      calories: number;
+      protein: number;
+      carbs: number;
+      fat: number;
+      similarity: number;
+    }>;
   }>
 > {
   // Process items in parallel with rate limiting
   const enhancedItems = await Promise.all(
     aiItems.map(async (item) => {
-      // Try to match with USDA
-      const usdaMatch = await matchFoodToUSDA(item.name);
+      // Try to match with USDA - but use semantic directly to get alternatives
+      const { matchFoodToUSDAWithAlternatives } = await import('@/lib/ai-usda-semantic');
+      const results = await matchFoodToUSDAWithAlternatives(item.name);
+      
+      if (results && results.length > 0) {
+        const usdaMatch = results[0];
+        const alternatives = results.slice(1).map(alt => ({
+          fdcId: alt.fdcId,
+          description: alt.description,
+          calories: alt.foodNutrients.find(n => n.nutrientName === 'Energy')?.value || 0,
+          protein: alt.foodNutrients.find(n => n.nutrientName === 'Protein')?.value || 0,
+          carbs: alt.foodNutrients.find(n => n.nutrientName === 'Carbohydrate, by difference')?.value || 0,
+          fat: alt.foodNutrients.find(n => n.nutrientName === 'Total lipid (fat)')?.value || 0,
+          similarity: (alt as any).similarity || 0,
+        }));
 
-      if (usdaMatch) {
         const macros = extractMacros(usdaMatch);
         // Use USDA data if confidence is low or USDA match is strong
-        const useUSDA = item.confidence < 0.8 || usdaMatch.dataType === 'Foundation';
+        const useUSDA = item.confidence < 0.8 || (usdaMatch as any).similarity > 0.8;
 
         return {
           foodName: usdaMatch.description,
@@ -250,7 +272,9 @@ export async function enhanceWithUSDAData(
           usdaMatch: {
             fdcId: usdaMatch.fdcId,
             description: usdaMatch.description,
+            similarity: (usdaMatch as any).similarity,
           },
+          alternatives: alternatives.length > 0 ? alternatives : undefined,
         };
       }
 
