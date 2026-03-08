@@ -14,6 +14,7 @@ export interface USDAFoodItem {
   foodNutrients: FoodNutrient[];
   servingSize?: number;
   servingSizeUnit?: string;
+  similarity?: number;
 }
 
 export interface FoodNutrient {
@@ -108,5 +109,58 @@ export function extractMacros(food: USDAFoodItem) {
     fat: getNutrient('Total lipid (fat)'),
     fiber: getNutrient('Fiber, total dietary'),
     sugar: getNutrient('Sugars, total including NLEA'),
+  };
+}
+
+/**
+ * Calculate macros for a specific portion size based on 100g USDA data
+ * @param baseMacros - Macros per 100g
+ * @param quantity - Numeric quantity (e.g. 2)
+ * @param unit - Unit (e.g. "slice", "g", "cup")
+ * @param densityFactor - Optional density (g per unit) if known (e.g. 150g for 1 cup of some food)
+ */
+export function calculateMacrosByPortion(
+  baseMacros: { calories: number; protein: number; carbs: number; fat: number },
+  quantity: number,
+  unit: string,
+  densityFactor: number = 100 // Default to 100g per unit if unknown
+) {
+  let totalGrams = 100;
+
+  const unitLower = unit.toLowerCase().trim();
+  
+  // Standard weight units
+  if (unitLower === 'g' || unitLower === 'grams' || unitLower === 'gram') {
+    totalGrams = quantity;
+  } else if (unitLower === 'oz' || unitLower === 'ounce' || unitLower === 'ounces') {
+    totalGrams = quantity * 28.35;
+  } else if (unitLower === 'lb' || unitLower === 'pound' || unitLower === 'pounds') {
+    totalGrams = quantity * 453.59;
+  } else if (unitLower === 'kg' || unitLower === 'kilogram' || unitLower === 'kilograms') {
+    totalGrams = quantity * 1000;
+  } 
+  // Standard volume units (approximate density used)
+  else if (unitLower === 'cup' || unitLower === 'cups') {
+    totalGrams = quantity * 240; // Assume water-like density if no densityFactor provided
+  } else if (unitLower === 'tbsp' || unitLower === 'tablespoon' || unitLower === 'tablespoons') {
+    totalGrams = quantity * 15;
+  } else if (unitLower === 'tsp' || unitLower === 'teaspoon' || unitLower === 'teaspoons') {
+    totalGrams = quantity * 5;
+  }
+  // Discrete units
+  else {
+    // For "slice", "piece", "apple", etc., we use the densityFactor
+    // If AI provides 100 as default density, it effectively uses the base macros
+    totalGrams = quantity * (densityFactor || 100);
+  }
+
+  const ratio = totalGrams / 100;
+
+  return {
+    calories: Math.round(baseMacros.calories * ratio),
+    protein: Number((baseMacros.protein * ratio).toFixed(1)),
+    carbs: Number((baseMacros.carbs * ratio).toFixed(1)),
+    fat: Number((baseMacros.fat * ratio).toFixed(1)),
+    grams: Math.round(totalGrams)
   };
 }

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import { db, type DecryptedFoodLog, type LocalFoodLog } from '@/lib/db-local';
-import { decryptBatchInWorker } from '@/lib/worker-client';
+import { db } from '@/lib/db-local';
+import { syncLogsForDate } from '@/lib/sync-engine';
 
 export interface LogItem {
   foodName: string;
@@ -55,6 +55,7 @@ interface NutritionStore {
   setSelectedMealType: (mealType: string) => void;
   
   fetchLogs: (date: Date, userId: string | undefined, vaultKey: CryptoKey | null) => Promise<void>;
+  refreshFromDexie: (date: Date, userId: string) => Promise<void>;
   addLogOptimistic: (mealType: string, items: LogItem[], totalCalories: number) => string; // returns tempId
   removeLog: (logId: string) => Promise<void>;
   updateTotals: () => void;
@@ -78,113 +79,52 @@ export const useNutritionStore = create<NutritionStore>((set, get) => ({
   setManualEntryOpen: (isOpen) => set({ isManualEntryOpen: isOpen }),
   setSelectedMealType: (mealType) => set({ selectedMealType: mealType }),
 
+  refreshFromDexie: async (date, userId) => {
+    const dateStr = date.toISOString().split('T')[0];
+    const startOfDay = new Date(dateStr);
+    const endOfDay = new Date(dateStr);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const cachedDecrypted = await db.decryptedLogs
+      .where('timestamp')
+      .between(startOfDay, endOfDay)
+      .filter(log => log.userId === userId)
+      .toArray();
+
+    const processedLogs: FoodLog[] = cachedDecrypted.map(log => ({
+      id: log.id,
+      mealType: log.mealType || 'unknown',
+      totalCalories: log.totalCalories || 0,
+      aiConfidenceScore: 0,
+      isVerified: true,
+      timestamp: log.timestamp.toISOString(),
+      items: log.items as LogItem[],
+      notes: log.notes,
+      imageUrl: log.imageUrl,
+    }));
+
+    set({ logs: processedLogs });
+    get().updateTotals();
+  },
+
   fetchLogs: async (date, userId, vaultKey) => {
     if (!userId) return;
     
+    // 1. Instant Load from Local Dexie Cache
     set({ isLoading: true, error: null });
-    try {
-      const dateStr = date.toISOString().split('T')[0];
-      const startOfDay = new Date(dateStr);
-      const endOfDay = new Date(dateStr);
-      endOfDay.setHours(23, 59, 59, 999);
+    await get().refreshFromDexie(date, userId);
+    set({ isLoading: false });
 
-      // 1. Try to fetch from Local IndexedDB first (Dexie)
-      const cachedDecrypted = await db.decryptedLogs
-        .where('timestamp')
-        .between(startOfDay, endOfDay)
-        .filter(log => log.userId === userId)
-        .toArray();
-
-      if (cachedDecrypted.length > 0) {
-        // Map to FoodLog interface
-        const logs: FoodLog[] = cachedDecrypted.map(log => ({
-          id: log.id,
-          mealType: log.mealType || 'unknown',
-          totalCalories: log.totalCalories || 0,
-          aiConfidenceScore: 0,
-          isVerified: true,
-          timestamp: log.timestamp.toISOString(),
-          items: log.items as LogItem[],
-          notes: log.notes,
-        }));
-
-        set({ logs, isLoading: false });
-        get().updateTotals();
+    // 2. Background Sync (Pushes unsynced, Pulls new logs, Decrypts in worker)
+    // We trigger this without 'await' to avoid UI flicker/blocking
+    syncLogsForDate(date, userId, vaultKey).then((result) => {
+      if (result.success && result.count > 0) {
+        // Only refresh if new logs were actually pulled and decrypted
+        get().refreshFromDexie(date, userId);
       }
-
-      // 2. Fetch from server
-      const response = await fetch(`/api/log/daily?date=${dateStr}`);
-      if (!response.ok) throw new Error('Failed to fetch logs from server');
-      
-      const data = await response.json();
-      const rawLogs = (data.logs || []) as (LocalFoodLog & { logItems?: LogItem[] })[];
-      
-      // 3. Process and Decrypt server logs
-      const logsToDecrypt = rawLogs.filter(log => 
-        log.encryptedData && log.encryptionIv && vaultKey
-      );
-      
-      let decryptedResults: DecryptedFoodLog[] = [];
-      if (logsToDecrypt.length > 0 && vaultKey) {
-        decryptedResults = await decryptBatchInWorker(logsToDecrypt, vaultKey);
-      }
-
-      // 4. Merge results
-      const processedLogs: FoodLog[] = rawLogs.map(log => {
-        const decrypted = decryptedResults.find(d => d.id === log.id);
-        if (decrypted) {
-          return {
-            id: log.id,
-            mealType: decrypted.mealType || log.mealType || 'unknown',
-            totalCalories: decrypted.totalCalories || 0,
-            aiConfidenceScore: log.aiConfidenceScore || 0,
-            isVerified: log.isVerified,
-            timestamp: new Date(log.timestamp).toISOString(),
-            items: decrypted.items as LogItem[],
-            notes: decrypted.notes || log.notes,
-            imageUrl: decrypted.imageUrl || log.imageUrl,
-          };
-        }
-        return {
-          id: log.id,
-          mealType: log.mealType || 'unknown',
-          totalCalories: log.totalCalories || 0,
-          aiConfidenceScore: log.aiConfidenceScore || 0,
-          isVerified: log.isVerified,
-          timestamp: new Date(log.timestamp).toISOString(),
-          items: log.logItems || [],
-          notes: log.notes,
-          imageUrl: log.imageUrl,
-        };
-      });
-
-      // 5. Update Local Cache
-      await db.transaction('rw', db.foodLogs, db.decryptedLogs, async () => {
-        // Store raw encrypted logs
-        const localLogs: LocalFoodLog[] = rawLogs.map(log => ({
-          ...log,
-          timestamp: new Date(log.timestamp),
-          synced: true,
-        }));
-        await db.foodLogs.bulkPut(localLogs);
-
-        // Store decrypted logs for instant access next time
-        if (decryptedResults.length > 0) {
-          await db.decryptedLogs.bulkPut(decryptedResults);
-        }
-      });
-
-      set({ 
-        logs: processedLogs, 
-        isLoading: false 
-      });
-      
-      get().updateTotals();
-    } catch (error: unknown) {
-      console.error('fetchLogs error:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      set({ error: errorMessage, isLoading: false });
-    }
+    }).catch(err => {
+      console.error('Background Sync Error:', err);
+    });
   },
 
   addLogOptimistic: (mealType, items, totalCalories) => {

@@ -48,6 +48,8 @@ export async function POST(request: NextRequest) {
       fat_g: item.fat || 0,
       confidence: item.confidence || 0.7,
       portion_guess: item.portion_guess || '',
+      numeric_quantity: item.numeric_quantity || 1,
+      unit: item.unit || 'serving',
     }));
 
     // Enhance all items with USDA data in a single batch

@@ -36,7 +36,7 @@ export async function matchFoodToUSDAWithAlternatives(
         fdcId: m.fdcId,
         description: m.description,
         dataType: m.dataType || 'Cached',
-        similarity: (m as any).similarity,
+        similarity: (m as any).similarity, // Still need this because of sql similarity type but let's fix the interface above
         foodNutrients: [
           { nutrientName: 'Energy', value: m.calories || 0, unitName: 'kcal' },
           { nutrientName: 'Protein', value: m.protein || 0, unitName: 'g' },

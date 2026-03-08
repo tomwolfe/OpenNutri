@@ -34,7 +34,7 @@ export function MacroEditor({
 }: MacroEditorProps) {
   const [openAlternatives, setOpenAlternatives] = useState<number | null>(null);
 
-  const updateItemField = useCallback((index: number, field: keyof DraftItem, value: any) => {
+  const updateItemField = useCallback((index: number, field: keyof DraftItem, value: string | number) => {
     const newItems = items.map((item, i) => {
       if (i !== index) return item;
 
@@ -56,7 +56,7 @@ export function MacroEditor({
     onUpdateItems(newItems);
   }, [items, onUpdateItems]);
 
-  const selectAlternative = (itemIndex: number, alt: any) => {
+  const selectAlternative = (itemIndex: number, alt: NonNullable<DraftItem['alternatives']>[number]) => {
     const newItems = [...items];
     newItems[itemIndex] = {
       ...newItems[itemIndex],

@@ -63,7 +63,14 @@ export async function POST(request: NextRequest) {
 
     // Create log items only if plaintext items are provided
     if (items && Array.isArray(items) && items.length > 0) {
-      const logItemsData = items.map((item: any) => ({
+      const logItemsData = items.map((item: {
+        foodName: string;
+        calories?: number;
+        protein?: number;
+        carbs?: number;
+        fat?: number;
+        source?: string;
+      }) => ({
         logId: foodLog.id,
         foodName: item.foodName,
         calories: item.calories || 0,

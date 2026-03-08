@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { X, Check, Loader2, AlertTriangle, ScanLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getProductByBarcode, mapOFFToLogItem, OFFProduct } from '@/lib/openfoodfacts';
+import { BrowserMultiFormatReader } from '@zxing/library';
 
 interface BarcodeScannerProps {
   onProductFound: (item: ReturnType<typeof mapOFFToLogItem>) => void;
@@ -12,20 +13,27 @@ interface BarcodeScannerProps {
 
 export function BarcodeScanner({ onProductFound, onClose }: BarcodeScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const zxingReaderRef = useRef<BrowserMultiFormatReader | null>(null);
+  
   const [isSupported, setIsSupported] = useState<boolean | null>(null);
+  const [useZxing, setUseZxing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(true);
   const [foundProduct, setFoundProduct] = useState<OFFProduct | null>(null);
   const [isFetching, setIsFetching] = useState(false);
   const [lastScannedCode, setLastScannedCode] = useState<string | null>(null);
 
-  // Check for BarcodeDetector support
+  // Check for BarcodeDetector support and initialize ZXing as fallback
   useEffect(() => {
-    if (typeof window !== 'undefined' && 'BarcodeDetector' in window) {
-      setIsSupported(true);
-    } else {
-      setIsSupported(false);
-      setError('Barcode detection is not supported in this browser. Try Chrome or Edge on mobile.');
+    if (typeof window !== 'undefined') {
+      if ('BarcodeDetector' in window) {
+        setIsSupported(true);
+        setUseZxing(false);
+      } else {
+        setIsSupported(true); // We support it via ZXing
+        setUseZxing(true);
+        zxingReaderRef.current = new BrowserMultiFormatReader();
+      }
     }
   }, []);
 
@@ -58,12 +66,15 @@ export function BarcodeScanner({ onProductFound, onClose }: BarcodeScannerProps)
         const stream = videoRef.current.srcObject as MediaStream;
         stream.getTracks().forEach(track => track.stop());
       }
+      if (zxingReaderRef.current) {
+        zxingReaderRef.current.reset();
+      }
     };
   }, [isSupported, startCamera]);
 
-  // Scanning Logic
+  // Native BarcodeDetector Logic
   useEffect(() => {
-    if (!isSupported || !isScanning || foundProduct || isFetching) return;
+    if (!isSupported || useZxing || !isScanning || foundProduct || isFetching) return;
 
     let animationFrameId: number;
     // @ts-expect-error - BarcodeDetector is new
@@ -77,15 +88,13 @@ export function BarcodeScanner({ onProductFound, onClose }: BarcodeScannerProps)
           const barcodes = await barcodeDetector.detect(videoRef.current);
           if (barcodes.length > 0) {
             const code = barcodes[0].rawValue;
-            
-            // Avoid duplicate scans of the same code
             if (code !== lastScannedCode) {
               setLastScannedCode(code);
               handleBarcodeFound(code);
             }
           }
         } catch (err) {
-          console.error('Detection error:', err);
+          console.error('Native detection error:', err);
         }
       }
       animationFrameId = requestAnimationFrame(detect);
@@ -93,7 +102,45 @@ export function BarcodeScanner({ onProductFound, onClose }: BarcodeScannerProps)
 
     detect();
     return () => cancelAnimationFrame(animationFrameId);
-  }, [isSupported, isScanning, foundProduct, isFetching, lastScannedCode]);
+  }, [isSupported, useZxing, isScanning, foundProduct, isFetching, lastScannedCode]);
+
+  // ZXing Fallback Logic
+  useEffect(() => {
+    if (!isSupported || !useZxing || !isScanning || foundProduct || isFetching || !zxingReaderRef.current) return;
+
+    let isComponentMounted = true;
+    
+    const decode = async () => {
+      if (!videoRef.current || !isComponentMounted || !isScanning || foundProduct) return;
+
+      try {
+        // In this version of @zxing/library, decodeFromVideoElement might take only the element
+        // and return a Promise for a single result. We poll manually for continuous scanning.
+        const result = await zxingReaderRef.current?.decodeFromVideoElement(videoRef.current);
+        
+        if (result && isComponentMounted) {
+          const code = result.getText();
+          if (code !== lastScannedCode) {
+            setLastScannedCode(code);
+            handleBarcodeFound(code);
+          }
+        }
+      } catch (err) {
+        // ZXing throws when no barcode is found in the current frame
+      }
+
+      // Schedule next decode attempt if still scanning
+      if (isComponentMounted && isScanning && !foundProduct) {
+        setTimeout(decode, 250); // Poll every 250ms
+      }
+    };
+
+    decode();
+    return () => {
+      isComponentMounted = false;
+      zxingReaderRef.current?.reset();
+    };
+  }, [isSupported, useZxing, isScanning, foundProduct, isFetching, lastScannedCode]);
 
   const handleBarcodeFound = async (code: string) => {
     setIsFetching(true);
@@ -105,7 +152,6 @@ export function BarcodeScanner({ onProductFound, onClose }: BarcodeScannerProps)
         setFoundProduct(product);
       } else {
         setError(`No product found for barcode: ${code}`);
-        // Reset after 3 seconds to try again
         setTimeout(() => {
           setError(null);
           setIsScanning(true);
@@ -135,31 +181,29 @@ export function BarcodeScanner({ onProductFound, onClose }: BarcodeScannerProps)
 
   return (
     <div className="relative flex flex-col items-center bg-black rounded-lg overflow-hidden min-h-[400px]">
-      {/* Video Preview */}
       <div className="relative w-full aspect-video bg-gray-900 overflow-hidden">
         {isSupported && !foundProduct && (
           <video 
             ref={videoRef} 
             autoPlay 
             playsInline 
+            muted
             className="w-full h-full object-cover"
           />
         )}
         
-        {/* Scanning Overlay */}
         {isScanning && !foundProduct && !error && (
           <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
             <div className="w-64 h-48 border-2 border-white/50 rounded-lg relative overflow-hidden">
               <div className="absolute inset-0 bg-blue-500/10" />
               <ScanLine className="absolute w-full text-blue-400 animate-scan" />
             </div>
-            <p className="text-white text-sm mt-4 bg-black/50 px-3 py-1 rounded-full backdrop-blur-sm">
-              Align barcode within frame
+            <p className="text-white text-xs mt-4 bg-black/50 px-3 py-1 rounded-full backdrop-blur-sm">
+              {useZxing ? 'Scanning with ZXing (Fallback)...' : 'Align barcode within frame'}
             </p>
           </div>
         )}
 
-        {/* Error Overlay */}
         {error && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 p-6 text-center">
             <AlertTriangle className="h-12 w-12 text-yellow-500 mb-4" />
@@ -172,7 +216,6 @@ export function BarcodeScanner({ onProductFound, onClose }: BarcodeScannerProps)
           </div>
         )}
 
-        {/* Fetching State */}
         {isFetching && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60">
             <Loader2 className="h-10 w-10 text-white animate-spin mb-2" />
@@ -180,7 +223,6 @@ export function BarcodeScanner({ onProductFound, onClose }: BarcodeScannerProps)
           </div>
         )}
 
-        {/* Product Preview */}
         {foundProduct && (
           <div className="absolute inset-0 bg-white p-4 flex flex-col overflow-y-auto">
             <div className="flex items-center justify-between mb-4">

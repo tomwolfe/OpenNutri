@@ -6,7 +6,7 @@
  */
 
 import { createOpenAI } from '@ai-sdk/openai';
-import { createGoogleGenerationAI } from '@ai-sdk/google';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { streamObject } from 'ai';
 import { z } from 'zod';
@@ -28,7 +28,7 @@ const getAiProvider = () => {
 
   // Google Gemini
   if (providerName === 'google') {
-    return createGoogleGenerationAI({
+    return createGoogleGenerativeAI({
       apiKey: process.env.GOOGLE_GENERATION_AI_API_KEY,
     });
   }
@@ -94,7 +94,9 @@ export const FoodAnalysisSchema = z.object({
       carbs_g: z.number().describe('Carbohydrates in grams'),
       fat_g: z.number().describe('Fat in grams'),
       confidence: z.number().describe('Confidence score 0-1'),
-      portion_guess: z.string().describe('Estimated portion size'),
+      portion_guess: z.string().describe('Estimated portion size string (e.g., "2 large slices")'),
+      numeric_quantity: z.number().describe('Structured numeric quantity (e.g., 2)'),
+      unit: z.string().describe('Structured unit (e.g., "slice", "g", "cup", "oz")'),
       notes: z
         .string()
         .optional()

@@ -1,7 +1,6 @@
 'use client';
 
 import { Mic } from 'lucide-react';
-import { useCallback, useState } from 'react';
 
 interface VoiceCaptureProps {
   isListening: boolean;

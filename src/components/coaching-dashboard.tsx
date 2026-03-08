@@ -191,7 +191,7 @@ export function CoachingDashboard() {
                   variant={insight.type === 'calorie' || insight.type === 'protein' ? 'default' : 'outline'}
                   className="w-full h-9 gap-2 shadow-sm"
                   disabled={isApplyingAction}
-                  onClick={() => handleApplyAction(insight.id, insight.action)}
+                  onClick={() => handleApplyAction(insight.id, insight.action!)}
                 >
                   {isApplyingAction && lastActionId === insight.id ? (
                     <Loader2 className="w-4 h-4 animate-spin" />

@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useEncryption } from '@/hooks/useEncryption';
-import { LogItem } from '@/stores/use-nutrition-store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -139,35 +138,35 @@ export function ManualFoodEntryForm({ mealType, onEntryComplete }: ManualFoodEnt
 let encryptedData = null;
 let encryptionIv = null;
 
-if (isReady) {
-  try {
-    // Encrypt full metadata for zero-knowledge privacy
-    const encryptionResult = await encryptLog({
-      mealType: selectedMealType,
-      items,
-      timestamp: Date.now()
-    });
-    encryptedData = encryptionResult.encryptedData;
-    encryptionIv = encryptionResult.iv;
-  } catch (err) {
-    console.error('Encryption failed, saving in plaintext...', err);
-  }
-}
+    if (isReady) {
+      try {
+        // Encrypt full metadata for zero-knowledge privacy
+        const encryptionResult = await encryptLog({
+          mealType: mealType,
+          items,
+          timestamp: Date.now()
+        });
+        encryptedData = encryptionResult.encryptedData;
+        encryptionIv = encryptionResult.iv;
+      } catch (err) {
+        console.error('Encryption failed, saving in plaintext...', err);
+      }
+    }
 
-const response = await fetch('/api/log/food', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({
-    // If encrypted, only send 'encrypted' or generic values
-    mealType: encryptedData ? 'encrypted' : selectedMealType,
-    items: encryptedData ? [] : items,
-    totalCalories: encryptedData ? 0 : totals.calories,
-    encryptedData,
-    encryptionIv,
-  }),
-});
+    const response = await fetch('/api/log/food', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        // If encrypted, only send 'encrypted' or generic values
+        mealType: encryptedData ? 'encrypted' : mealType,
+        items: encryptedData ? [] : items,
+        totalCalories: encryptedData ? 0 : totals.calories,
+        encryptedData,
+        encryptionIv,
+      }),
+    });
       if (!response.ok) {
         throw new Error('Failed to save food log');
       }

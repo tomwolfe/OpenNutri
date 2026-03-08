@@ -8,7 +8,7 @@
  * Falls back to Levenshtein distance for edge cases.
  */
 
-import { searchFoods, extractMacros, type USDAFoodItem } from '@/lib/usda';
+import { searchFoods, extractMacros, type USDAFoodItem, calculateMacrosByPortion } from '@/lib/usda';
 import { getCachedUSDAMatch, cacheUSDAMatch } from '@/lib/ai-usda-cache';
 import { hybridMatch } from '@/lib/ai-usda-semantic';
 
@@ -214,6 +214,8 @@ export async function enhanceWithUSDAData(
     fat_g: number;
     confidence: number;
     portion_guess: string;
+    numeric_quantity: number;
+    unit: string;
   }>
 ): Promise<
   Array<{
@@ -258,16 +260,25 @@ export async function enhanceWithUSDAData(
           similarity: (alt as any).similarity || 0,
         }));
 
-        const macros = extractMacros(usdaMatch);
+        const baseMacros = extractMacros(usdaMatch);
+        
+        // Scale USDA macros by AI-detected portion
+        const scaledMacros = calculateMacrosByPortion(
+          baseMacros,
+          item.numeric_quantity || 1,
+          item.unit || 'serving',
+          100 // Default density if unknown
+        );
+
         // Use USDA data if confidence is low or USDA match is strong
         const useUSDA = item.confidence < 0.8 || (usdaMatch as any).similarity > 0.8;
 
         return {
           foodName: usdaMatch.description,
-          calories: useUSDA ? macros.calories : item.calories,
-          protein: useUSDA ? macros.protein : item.protein_g,
-          carbs: useUSDA ? macros.carbs : item.carbs_g,
-          fat: useUSDA ? macros.fat : item.fat_g,
+          calories: useUSDA ? scaledMacros.calories : item.calories,
+          protein: useUSDA ? scaledMacros.protein : item.protein_g,
+          carbs: useUSDA ? scaledMacros.carbs : item.carbs_g,
+          fat: useUSDA ? scaledMacros.fat : item.fat_g,
           source: 'USDA',
           usdaMatch: {
             fdcId: usdaMatch.fdcId,

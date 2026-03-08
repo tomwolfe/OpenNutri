@@ -9,17 +9,17 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import Image from 'next/image';
-import { X, CheckCircle, AlertCircle, Loader2, Edit2, WifiOff, Cloud } from 'lucide-react';
+import { X, CheckCircle, AlertCircle, Loader2, Edit2, WifiOff } from 'lucide-react';
 import { experimental_useObject as useObject } from '@ai-sdk/react';
 import { useOfflineQueue } from '@/hooks/use-offline-queue';
 import { useEncryption } from '@/hooks/useEncryption';
-import { LogItem } from '@/stores/use-nutrition-store';
 import { BarcodeScanner } from './barcode-scanner';
 import { CameraOverlay } from './dashboard/camera-overlay';
 import { MacroEditor } from './dashboard/macro-editor';
 import { VoiceCapture } from './dashboard/voice-capture';
-import { FoodAnalysisSchema, DraftItem, MEAL_TYPES } from '@/types/food';
+import { FoodAnalysisSchema, DraftItem } from '@/types/food';
 import { compressImage, formatBytes } from '@/lib/image-utils';
+import { cn } from '@/lib/utils';
 
 interface SnapToLogProps {
   onComplete?: (foodLog: {
@@ -63,7 +63,18 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
     schema: FoodAnalysisSchema,
     onFinish: (event) => {
       if (event.object?.items) {
-        const convertedItems = event.object.items.map((item: any) => ({
+        const convertedItems = event.object.items.map((item: {
+          name: string;
+          calories?: number;
+          protein_g?: number;
+          carbs_g?: number;
+          fat_g?: number;
+          source?: string;
+          notes?: string;
+          usdaMatch?: { fdcId: number; description: string };
+          numeric_quantity?: number;
+          unit?: string;
+        }) => ({
           foodName: item.name,
           calories: item.calories || 0,
           protein: item.protein_g || 0,
@@ -71,6 +82,8 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
           fat: item.fat_g || 0,
           source: item.source || 'AI_ESTIMATE',
           servingGrams: 100,
+          numericQuantity: item.numeric_quantity,
+          unit: item.unit,
           isEnhancing: false,
           notes: item.notes,
           usdaMatch: item.usdaMatch,
@@ -283,7 +296,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
   }, [previewUrl, imageUrl]);
 
   const displayItems = object?.items
-    ? object.items.map((item: any) => ({
+    ? (object.items as any[]).map((item) => ({
         foodName: item?.name ?? '',
         calories: item?.calories ?? 0,
         protein: item?.protein_g ?? 0,
@@ -291,6 +304,8 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
         fat: item?.fat_g ?? 0,
         source: 'AI_ESTIMATE',
         servingGrams: 100,
+        numericQuantity: item?.numeric_quantity,
+        unit: item?.unit,
       }))
     : draftItems;
 
@@ -348,8 +363,6 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
           {!previewUrl ? (
             <CameraOverlay 
               mode={mode} 
-              isOnline={isOnline} 
-              isIndexedDBAvailable={isIndexedDBAvailable}
               onModeChange={setMode}
               onCameraCapture={() => fileInputRef.current?.click()}
               onUploadClick={() => fileInputRef.current?.click()}

@@ -15,6 +15,7 @@ import { analyzeFoodImageStream, analyzeFoodTextStream } from '@/lib/ai-vision-s
 import { db } from '@/lib/db';
 import { aiUsage } from '@/db/schema';
 import { enhanceWithUSDAData } from '@/lib/ai-usda-bridge';
+import { deleteFoodImage } from '@/lib/blob';
 
 export const runtime = 'edge';
 export const maxDuration = 60;
@@ -25,8 +26,12 @@ export const maxDuration = 60;
  * Accepts imageUrl and mealTypeHint, streams AI analysis back to client.
  * Buffers complete AI result, enriches with USDA data server-side, then streams response.
  * Only logs AI usage if at least one item is identified with confidence > 0.5.
+ * 
+ * PURGES THE IMAGE IMMEDIATELY AFTER ANALYSIS for Zero-Knowledge security.
  */
 export async function POST(request: NextRequest) {
+  let imageUrlToDelete: string | null = null;
+  
   try {
     // Check authentication
     const session = await auth();
@@ -55,6 +60,11 @@ export async function POST(request: NextRequest) {
         { error: 'Image URL or text is required' },
         { status: 400 }
       );
+    }
+
+    // Track image for deletion after analysis
+    if (imageUrl && !imageUrl.startsWith('data:')) {
+      imageUrlToDelete = imageUrl;
     }
 
     // Fetch recent foods for context (last 7 days, top 20 most frequent)
@@ -93,6 +103,8 @@ export async function POST(request: NextRequest) {
           fat_g: number;
           confidence: number;
           portion_guess: string;
+          numeric_quantity: number;
+          unit: string;
           notes?: string;
         }) => ({
           name: item.name,
@@ -102,6 +114,8 @@ export async function POST(request: NextRequest) {
           fat_g: item.fat_g || 0,
           confidence: item.confidence || 0,
           portion_guess: item.portion_guess || '',
+          numeric_quantity: item.numeric_quantity || 1,
+          unit: item.unit || 'serving',
           notes: item.notes,
         }));
 
@@ -116,6 +130,8 @@ export async function POST(request: NextRequest) {
           fat_g: item.fat,
           confidence: usdaItems[index]?.confidence || 0.7,
           portion_guess: usdaItems[index]?.portion_guess || '',
+          numeric_quantity: usdaItems[index]?.numeric_quantity || 1,
+          unit: usdaItems[index]?.unit || 'serving',
           notes: usdaItems[index]?.notes,
           source: item.source,
           usdaMatch: item.usdaMatch,
@@ -152,6 +168,17 @@ export async function POST(request: NextRequest) {
       { error: error instanceof Error ? error.message : 'Failed to process image' },
       { status: 500 }
     );
+  } finally {
+    // IMMEDIATELY PURGE the unencrypted image from Vercel Blob storage
+    // This ensures that the AI's "eyes" are only on the data for as long as needed
+    if (imageUrlToDelete) {
+      try {
+        await deleteFoodImage(imageUrlToDelete);
+        console.log(`Successfully purged analysis image: ${imageUrlToDelete}`);
+      } catch (err) {
+        console.error('Failed to purge analysis image from Blob storage:', err);
+      }
+    }
   }
 }
 

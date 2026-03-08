@@ -17,7 +17,7 @@ import Image from 'next/image';
 import { BarcodeScanner } from '@/components/barcode-scanner';
 import { MacroEditor } from '@/components/dashboard/macro-editor';
 import { experimental_useObject as useObject } from '@ai-sdk/react';
-import { FoodAnalysisSchema } from '@/types/food';
+import { FoodAnalysisSchema, DraftItem } from '@/types/food';
 import { db } from '@/lib/db-local';
 
 interface UniversalEntryProps {
@@ -51,7 +51,7 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [items, setItems] = useState<LogItem[]>([]);
+  const [items, setItems] = useState<DraftItem[]>([]);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress>('idle');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -68,7 +68,7 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
   // Effect: Sync streaming items to local items
   useEffect(() => {
     if (object?.items) {
-      const streamingItems: LogItem[] = object.items.map((item) => ({
+      const streamingItems: DraftItem[] = (object.items as any[]).map((item) => ({
         foodName: item?.name ?? '',
         calories: item?.calories ?? 0,
         protein: item?.protein_g ?? 0,
@@ -76,8 +76,10 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
         fat: item?.fat_g ?? 0,
         source: 'AI_ESTIMATE',
         servingGrams: 100,
+        numericQuantity: item?.numeric_quantity,
+        unit: item?.unit,
       }));
-      setItems(streamingItems as LogItem[]);
+      setItems(streamingItems);
     }
   }, [object]);
 
@@ -134,7 +136,7 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
 
   // Handlers
   const handleAddFromSearch = (food: SearchResult) => {
-    const newItem: LogItem = {
+    const newItem: DraftItem = {
       foodName: food.description,
       calories: Math.round(food.calories),
       protein: food.protein,
@@ -317,15 +319,16 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
       {mode === 'barcode' && (
         <div className="border rounded-lg p-4 bg-gray-50">
           <BarcodeScanner 
-            onProductFound={(product) => {
+            onProductFound={(item) => {
               setItems(prev => [...prev, {
-                foodName: product.product_name,
-                calories: product.nutriments['energy-kcal_100g'] || 0,
-                protein: product.nutriments.proteins_100g || 0,
-                carbs: product.nutriments.carbohydrates_100g || 0,
-                fat: product.nutriments.fat_100g || 0,
-                source: 'AI_ESTIMATE',
+                foodName: item.foodName,
+                calories: item.calories,
+                protein: item.protein,
+                carbs: item.carbs,
+                fat: item.fat,
+                source: 'AI_ESTIMATE', // Keep as AI_ESTIMATE for editor consistency
                 servingGrams: 100,
+                notes: item.notes,
               }]);
               setMode('text');
               setUploadProgress('review');

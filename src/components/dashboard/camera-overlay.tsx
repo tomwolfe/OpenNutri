@@ -4,8 +4,6 @@ import { Camera, Upload, Mic, Barcode } from 'lucide-react';
 
 interface CameraOverlayProps {
   mode: 'vision' | 'barcode' | 'voice';
-  isOnline: boolean;
-  isIndexedDBAvailable: boolean;
   onModeChange: (mode: 'vision' | 'barcode' | 'voice') => void;
   onCameraCapture: () => void;
   onUploadClick: () => void;
@@ -13,8 +11,6 @@ interface CameraOverlayProps {
 
 export function CameraOverlay({
   mode,
-  isOnline,
-  isIndexedDBAvailable,
   onModeChange,
   onCameraCapture,
   onUploadClick,
