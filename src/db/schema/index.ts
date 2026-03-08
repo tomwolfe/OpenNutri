@@ -64,6 +64,8 @@ export const userTargets = pgTable('user_targets', {
   carbTarget: integer('carb_target'),
   fatTarget: integer('fat_target'),
   weightRecord: doublePrecision('weight_record'),
+  version: integer('version').default(1).notNull(),
+  deviceId: text('device_id'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({
   pk: primaryKey({ columns: [table.userId, table.date] }),
@@ -90,6 +92,8 @@ export const foodLogs = pgTable('food_logs', {
   encryptedData: text('encrypted_data').notNull(), // Encrypted log items (AES-GCM)
   encryptionIv: text('encryption_iv').notNull(), // IV for decryption
   encryptionSalt: text('encryption_salt'), // Salt for key derivation (optional if using user-level salt)
+  version: integer('version').default(1).notNull(),
+  deviceId: text('device_id'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({
   userIdIdx: index('food_logs_user_id_idx').on(table.userId),

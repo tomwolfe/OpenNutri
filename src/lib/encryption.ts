@@ -239,17 +239,88 @@ export function isCryptoAvailable(): boolean {
 }
 
 /**
+ * Encrypt binary data (e.g. image)
+ * @param data - ArrayBuffer or Uint8Array to encrypt
+ * @param key - Encryption key
+ * @returns Object with ciphertext (ArrayBuffer) and IV (Uint8Array)
+ */
+export async function encryptBinary(
+  data: ArrayBuffer | Uint8Array,
+  key: CryptoKey
+): Promise<{ ciphertext: ArrayBuffer; iv: Uint8Array }> {
+  try {
+    const iv = generateIV();
+    const ciphertext = await crypto.subtle.encrypt(
+      {
+        name: ENCRYPTION_ALGORITHM,
+        iv: iv.buffer as ArrayBuffer,
+      },
+      key,
+      data
+    );
+
+    return {
+      ciphertext,
+      iv,
+    };
+  } catch (error) {
+    console.error('Binary encryption failed:', error);
+    throw new Error('Failed to encrypt binary data');
+  }
+}
+
+/**
+ * Decrypt binary data
+ * @param ciphertext - Encrypted data (ArrayBuffer)
+ * @param iv - Initialization vector (ArrayBuffer or Uint8Array)
+ * @param key - Decryption key
+ * @returns Decrypted data as ArrayBuffer
+ */
+export async function decryptBinary(
+  ciphertext: ArrayBuffer,
+  iv: ArrayBuffer | Uint8Array,
+  key: CryptoKey
+): Promise<ArrayBuffer> {
+  try {
+    const decrypted = await crypto.subtle.decrypt(
+      {
+        name: ENCRYPTION_ALGORITHM,
+        iv: iv instanceof Uint8Array ? iv.buffer : iv,
+      },
+      key,
+      ciphertext
+    );
+
+    return decrypted;
+  } catch (error) {
+    console.error('Binary decryption failed:', error);
+    throw new Error('Failed to decrypt binary data');
+  }
+}
+
+/**
  * Food log entry structure for encryption
  */
 export interface EncryptedFoodLog {
-  foodName: string;
-  calories: number;
-  protein: number;
-  carbs: number;
-  fat: number;
+  foodName?: string;
+  calories?: number;
+  protein?: number;
+  carbs?: number;
+  fat?: number;
   mealType: string;
   timestamp: number;
   notes?: string;
+  items?: Array<{
+    foodName: string;
+    calories: number;
+    protein: number;
+    carbs: number;
+    fat: number;
+    notes?: string;
+    source?: string;
+  }>;
+  imageUrl?: string | null;
+  imageIv?: string | null;
 }
 
 /**

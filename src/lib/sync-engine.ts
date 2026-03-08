@@ -9,6 +9,19 @@ import { db, type LocalFoodLog, type DecryptedFoodLog, type LocalUserTarget } fr
 import { decryptBatchInWorker } from '@/lib/worker-client';
 
 /**
+ * Get or generate a persistent unique ID for this browser/device
+ */
+function getDeviceId(): string {
+  if (typeof window === 'undefined') return 'server';
+  let id = localStorage.getItem('opennutri_device_id');
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem('opennutri_device_id', id);
+  }
+  return id;
+}
+
+/**
  * Background sync process for a specific date
  * Performs delta-sync to minimize bandwidth and handle multi-device updates.
  */
@@ -19,10 +32,7 @@ export async function syncLogsForDate(
 ): Promise<{ success: boolean; count: number }> {
   try {
     const dateStr = date.toISOString().split('T')[0];
-    
-    // 0. Get the last sync timestamp for this date/user
-    // For simplicity in this version, we'll fetch everything for the date, 
-    // but the API now supports 'since' if we want to optimize further.
+    const deviceId = getDeviceId();
     
     // 1. PUSH: Find unsynced local logs and push to server
     const unsyncedLogs = await db.foodLogs
@@ -37,22 +47,20 @@ export async function syncLogsForDate(
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              id: log.id,
-              mealType: log.mealType,
-              totalCalories: log.totalCalories,
+              ...log,
               timestamp: log.timestamp.toISOString(),
-              imageUrl: log.imageUrl,
-              notes: log.notes,
-              encryptedData: log.encryptedData,
-              encryptionIv: log.encryptionIv,
-              encryptionSalt: log.encryptionSalt,
-              aiConfidenceScore: log.aiConfidenceScore,
-              updatedAt: log.updatedAt,
+              deviceId,
+              version: (log.version || 0) + 1, // Increment version on update
             }),
           });
 
           if (response.ok) {
-            await db.foodLogs.update(log.id, { synced: true });
+            const { logId } = await response.json();
+            await db.foodLogs.update(log.id, { 
+              synced: true, 
+              version: (log.version || 0) + 1,
+              deviceId 
+            });
           }
         } catch (err) {
           console.error(`SyncEngine: Failed to push log ${log.id}`, err);
@@ -61,7 +69,19 @@ export async function syncLogsForDate(
     }
 
     // 2. PULL: Fetch latest logs from server
-    const response = await fetch(`/api/log/daily?date=${dateStr}`);
+    // We only pull logs with a version higher than what we have locally for this date
+    const startOfDay = new Date(dateStr);
+    const endOfDay = new Date(dateStr);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const localLogsForDate = await db.foodLogs
+      .where('timestamp')
+      .between(startOfDay, endOfDay)
+      .toArray();
+    
+    const maxLocalVersion = Math.max(0, ...localLogsForDate.map(l => l.version || 0));
+
+    const response = await fetch(`/api/log/daily?date=${dateStr}&v=${maxLocalVersion}`);
     if (!response.ok) return { success: false, count: 0 };
     
     const data = await response.json();
@@ -69,20 +89,24 @@ export async function syncLogsForDate(
 
     if (serverLogs.length === 0) return { success: true, count: 0 };
 
-    // 3. MERGE: "Latest-Wins" strategy using updatedAt
+    // 3. MERGE: Update local Dexie with server data
     const logsToDecrypt: LocalFoodLog[] = [];
     
     await db.transaction('rw', db.foodLogs, db.decryptedLogs, async () => {
       for (const sLog of serverLogs) {
+        // Skip if this change originated from this device (and we already have it)
+        if (sLog.deviceId === deviceId) continue;
+
         const localLog = await db.foodLogs.get(sLog.id);
-        const serverUpdatedAt = new Date(sLog.updatedAt).getTime();
+        const serverVersion = sLog.version || 0;
+        const localVersion = localLog?.version || 0;
         
-        // If server version is newer or we don't have it locally, update local
-        if (!localLog || serverUpdatedAt > localLog.updatedAt) {
+        // If server version is higher, update local
+        if (!localLog || serverVersion > localVersion) {
           const newLocalLog: LocalFoodLog = {
             ...sLog,
             timestamp: new Date(sLog.timestamp),
-            updatedAt: serverUpdatedAt,
+            updatedAt: new Date(sLog.updatedAt).getTime(),
             synced: true,
           };
           await db.foodLogs.put(newLocalLog);
@@ -93,7 +117,7 @@ export async function syncLogsForDate(
         }
       }
 
-      // 4. DECRYPT & CACHE: Decrypt only the new/updated logs
+      // 4. DECRYPT & CACHE
       if (logsToDecrypt.length > 0 && vaultKey) {
         const decryptedResults = await decryptBatchInWorker(logsToDecrypt, vaultKey);
         if (decryptedResults.length > 0) {

@@ -40,25 +40,7 @@ export async function GET() {
       )
       .orderBy(userTargets.date);
 
-    // 2. Fetch food logs (including encryptedData)
-    const intakeLogs = await db
-      .select({
-        id: foodLogs.id,
-        timestamp: foodLogs.timestamp,
-        totalCalories: foodLogs.totalCalories,
-        encryptedData: foodLogs.encryptedData,
-        encryptionIv: foodLogs.encryptionIv,
-      })
-      .from(foodLogs)
-      .where(
-        and(
-          eq(foodLogs.userId, userId),
-          gte(foodLogs.timestamp, ninetyDaysAgo)
-        )
-      )
-      .orderBy(desc(foodLogs.timestamp));
-
-    // 3. Get current targets and weight goal
+    // 2. Get current targets and weight goal
     const today = new Date().toISOString().split('T')[0];
     const [user] = await db
       .select({ weightGoal: users.weightGoal })

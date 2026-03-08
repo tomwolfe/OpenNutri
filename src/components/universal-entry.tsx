@@ -15,11 +15,13 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import Image from 'next/image';
 import { BarcodeScanner } from '@/components/barcode-scanner';
+import { VoiceCapture } from '@/components/dashboard/voice-capture';
 import { MacroEditor } from '@/components/dashboard/macro-editor';
 import { experimental_useObject as useObject } from '@ai-sdk/react';
 import { FoodAnalysisSchema, DraftItem } from '@/types/food';
 import { db } from '@/lib/db-local';
 import { compressImage, formatBytes } from '@/lib/image-utils';
+import { cn } from '@/lib/utils';
 
 interface UniversalEntryProps {
   onComplete?: () => void;
@@ -43,7 +45,7 @@ type UploadProgress = 'idle' | 'uploading' | 'streaming' | 'review' | 'complete'
 
 export function UniversalEntry({ onComplete }: UniversalEntryProps) {
   const { data: session } = useSession();
-  const { vaultKey, encryptLog } = useEncryption();
+  const { vaultKey, encryptLog, encryptBinary, isReady } = useEncryption();
   const { selectedMealType, setSelectedMealType, fetchLogs, selectedDate } = useNutritionStore();
   const { isAvailable: isOnline } = useOfflineQueue();
 
@@ -55,10 +57,35 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
   const [items, setItems] = useState<DraftItem[]>([]);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress>('idle');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageIv, setImageIv] = useState<string | null>(null);
   const [compressionStats, setCompressionStats] = useState<{ original: number; compressed: number } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [transcript, setTranscript] = useState('');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const startListening = () => {
+    if (typeof window === 'undefined') return;
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+    setIsListening(true);
+    setTranscript('');
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.onresult = (event: any) => {
+      const text = event.results[0][0].transcript;
+      setTranscript(text);
+      setSearchQuery(text);
+      // Trigger AI analysis for natural language voice input
+      setUploadProgress('streaming');
+      setSearchResults([]);
+      submit({ text, mealTypeHint: selectedMealType });
+    };
+    recognition.onend = () => setIsListening(false);
+    recognition.start();
+  };
 
   // AI Streaming for Vision
   const { submit, object, isLoading: isStreaming } = useObject({
@@ -164,14 +191,41 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
       const compressedFile = new File([compressedBlob], 'food-analysis.webp', { type: 'image/webp' });
       setCompressionStats({ original: file.size, compressed: compressedBlob.size });
 
+      // 1. Upload PLAINTEXT image for AI analysis (will be purged by /api/analyze)
       const formData = new FormData();
       formData.append('image', compressedFile);
-      const res = await fetch('/api/blob/upload', { method: 'POST', body: formData });
-      if (!res.ok) throw new Error('Upload failed');
-      const { imageUrl } = await res.json();
-      
+      const uploadResponse = await fetch('/api/blob/upload', { method: 'POST', body: formData });
+      if (!uploadResponse.ok) throw new Error('Temp upload failed');
+      const { imageUrl: tempUrl } = await uploadResponse.json();
+
+      // 2. Encrypt and upload permanent version for Visual Diary
+      let vaultUrl = null;
+      let vaultIv = null;
+      if (isReady && encryptBinary) {
+        try {
+          const arrayBuffer = await compressedBlob.arrayBuffer();
+          const { ciphertext, iv } = await encryptBinary(arrayBuffer);
+          
+          const encryptedFile = new File([ciphertext], 'vault-image.bin', { type: 'application/octet-stream' });
+          const encryptedFormData = new FormData();
+          encryptedFormData.append('image', encryptedFile);
+          const encryptedUploadResponse = await fetch('/api/blob/upload', { method: 'POST', body: encryptedFormData });
+          if (encryptedUploadResponse.ok) {
+            const { imageUrl: eUrl } = await encryptedUploadResponse.json();
+            vaultUrl = eUrl;
+            // Convert IV to base64 for JSON storage
+            const binary = String.fromCharCode(...new Uint8Array(iv));
+            vaultIv = btoa(binary);
+          }
+        } catch (err) {
+          console.error('Encryption failed', err);
+        }
+      }
+
+      setImageUrl(vaultUrl || tempUrl);
+      setImageIv(vaultIv);
       setUploadProgress('streaming');
-      submit({ imageUrl, mealTypeHint: selectedMealType });
+      submit({ imageUrl: tempUrl, mealTypeHint: selectedMealType });
     } catch (err) {
       console.error('Upload failed', err);
       setUploadProgress('idle');
@@ -208,30 +262,34 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
 
       const totalCalories = items.reduce((sum, item) => sum + item.calories, 0);
       const notes = items.map(i => i.notes).filter(Boolean).join(' ');
+let encryptedData = null, encryptionIv = null;
+if (vaultKey) {
+  const result = await encryptLog({
+    mealType: selectedMealType,
+    items,
+    notes,
+    imageUrl,
+    imageIv,
+    timestamp: Date.now()
+  });
+  encryptedData = result.encryptedData;
+  encryptionIv = result.iv;
+}
 
-      let encryptedData = null, encryptionIv = null;
-      if (vaultKey) {
-        const result = await encryptLog({
-          mealType: selectedMealType,
-          items,
-          notes,
-          timestamp: Date.now()
-        });
-        encryptedData = result.encryptedData;
-        encryptionIv = result.iv;
-      }
+const response = await fetch('/api/log/food', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    mealType: encryptedData ? 'encrypted' : selectedMealType,
+    items: encryptedData ? [] : items,
+    totalCalories: encryptedData ? 0 : totalCalories,
+    notes: encryptedData ? 'encrypted' : notes,
+    imageUrl: encryptedData ? null : imageUrl,
+    encryptedData,
+    encryptionIv,
+  }),
+});
 
-      const response = await fetch('/api/log/food', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mealType: encryptedData ? 'encrypted' : selectedMealType,
-          items: encryptedData ? [] : items,
-          totalCalories: encryptedData ? 0 : totalCalories,
-          encryptedData,
-          encryptionIv,
-        }),
-      });
 
       if (!response.ok) throw new Error('Failed to save');
       
@@ -247,6 +305,15 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
     }
   };
 
+  const handleSmartTextSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!searchQuery.trim()) return;
+    
+    setUploadProgress('streaming');
+    setSearchResults([]);
+    submit({ text: searchQuery, mealTypeHint: selectedMealType });
+  };
+
   return (
     <div className="space-y-4">
       {/* Offline Warning */}
@@ -260,7 +327,7 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
       <div className="relative group">
         <div className="flex items-center gap-2 p-1 bg-gray-100 rounded-lg border focus-within:ring-2 focus-within:ring-blue-500 transition-all">
           <div className="flex items-center gap-1 pl-2">
-            {isSearching ? (
+            {(isSearching || isStreaming) ? (
               <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
             ) : (
               <Search className="w-4 h-4 text-gray-400" />
@@ -270,6 +337,7 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
             placeholder="Search food, scan, or analyze..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSmartTextSubmit()}
             onFocus={() => setMode('text')}
             className="border-none bg-transparent shadow-none focus-visible:ring-0 px-1"
           />
@@ -280,8 +348,8 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
             <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setMode('barcode')}>
               <Barcode className="w-4 h-4" />
             </Button>
-            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setMode('voice')}>
-              <Mic className="w-4 h-4" />
+            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => mode === 'voice' ? setMode('text') : setMode('voice')}>
+              <Mic className={cn("w-4 h-4", mode === 'voice' && "text-blue-600")} />
             </Button>
           </div>
         </div>
@@ -293,9 +361,39 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
           onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])} 
         />
 
+        {/* Voice Mode */}
+        {mode === 'voice' && (
+          <div className="mt-4">
+            <VoiceCapture
+              isListening={isListening}
+              transcript={transcript}
+              onStartListening={startListening}
+              onStopListening={() => setIsListening(false)}
+            />
+          </div>
+        )}
+
         {/* Search Results Dropdown */}
-        {searchResults.length > 0 && mode === 'text' && (
+        {(searchResults.length > 0 || searchQuery.length > 5) && mode === 'text' && !isStreaming && (
           <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-white border rounded-lg shadow-xl overflow-hidden">
+            {searchQuery.length > 5 && (
+              <button
+                className="w-full flex items-center justify-between p-3 hover:bg-blue-50 text-left border-b bg-blue-50/30"
+                onClick={() => handleSmartTextSubmit()}
+              >
+                <div className="flex flex-col">
+                  <div className="text-sm font-semibold text-blue-700 flex items-center gap-2">
+                    <Mic className="w-3 h-3" /> Analyze with AI
+                  </div>
+                  <div className="text-[10px] text-blue-500 truncate max-w-[250px]">
+                    "{searchQuery}"
+                  </div>
+                </div>
+                <div className="text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                  Smart
+                </div>
+              </button>
+            )}
             {searchResults.map((food) => (
               <button
                 key={food.fdcId}

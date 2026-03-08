@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { foodLogs, logItems } from '@/db/schema';
+import { eq } from 'drizzle-orm';
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,6 +22,7 @@ export async function POST(request: NextRequest) {
     const userId = session.user.id;
     const body = await request.json();
     const { 
+      id,
       mealType, 
       items, 
       totalCalories, 
@@ -29,7 +31,9 @@ export async function POST(request: NextRequest) {
       notes,
       encryptedData,
       encryptionIv,
-      encryptionSalt
+      encryptionSalt,
+      version = 1,
+      deviceId
     } = body;
 
     // Validate request - basic validation, more flexible for encrypted data
@@ -40,25 +44,43 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create food log - many fields now optional to support privacy
-    const [foodLog] = await db
-      .insert(foodLogs)
-      .values({
-        userId,
-        mealType: mealType || 'unknown',
-        totalCalories: totalCalories || 0,
-        aiConfidenceScore: aiConfidenceScore || 0,
-        isVerified: true,
-        imageUrl,
-        notes,
-        encryptedData,
-        encryptionIv,
-        encryptionSalt,
-      })
-      .returning();
+    // Create or update food log (Upsert)
+    const logData = {
+      userId,
+      mealType: mealType || 'unknown',
+      totalCalories: totalCalories || 0,
+      aiConfidenceScore: aiConfidenceScore || 0,
+      isVerified: true,
+      imageUrl,
+      notes,
+      encryptedData,
+      encryptionIv,
+      encryptionSalt,
+      version,
+      deviceId,
+      updatedAt: new Date(),
+    };
+
+    let foodLog;
+    if (id) {
+      // Update existing
+      const [updated] = await db
+        .update(foodLogs)
+        .set(logData)
+        .where(eq(foodLogs.id, id))
+        .returning();
+      foodLog = updated;
+    } else {
+      // Insert new
+      const [inserted] = await db
+        .insert(foodLogs)
+        .values(logData)
+        .returning();
+      foodLog = inserted;
+    }
 
     if (!foodLog) {
-      throw new Error('Failed to create food log');
+      throw new Error('Failed to create/update food log');
     }
 
     // Create log items only if plaintext items are provided

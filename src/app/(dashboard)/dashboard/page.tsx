@@ -30,7 +30,8 @@ import {
 } from '@/components/ui/dialog';
 import Image from 'next/image';
 import { Calendar } from '@/components/ui/calendar';
-import { Loader2, LogOut, Plus, Utensils, Settings } from 'lucide-react';
+import { Loader2, LogOut, Plus, Utensils, Settings, Image as ImageIcon } from 'lucide-react';
+import { EncryptedImage } from '@/components/encrypted-image';
 
 const MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'];
 
@@ -288,14 +289,30 @@ export default function DashboardPage() {
                                 </span>
                               )}
                               {log.imageUrl && (
-                                <div className="relative h-12 w-12 overflow-hidden rounded-md border bg-gray-100">
-                                  <Image
-                                    src={log.imageUrl}
-                                    alt="Meal photo"
-                                    fill
-                                    className="object-cover"
-                                    sizes="48px"
-                                  />
+                                <div className="relative h-12 w-12 overflow-hidden rounded-md border bg-gray-100 flex items-center justify-center">
+                                  {log.imageIv ? (
+                                    <EncryptedImage
+                                      imageUrl={log.imageUrl}
+                                      imageIv={log.imageIv}
+                                      alt="Meal photo"
+                                      fill
+                                      className="object-cover"
+                                      sizes="48px"
+                                    />
+                                  ) : (
+                                    <Image
+                                      src={log.imageUrl}
+                                      alt="Meal photo"
+                                      fill
+                                      className="object-cover"
+                                      sizes="48px"
+                                    />
+                                  )}
+                                </div>
+                              )}
+                              {!log.imageUrl && (
+                                <div className="h-12 w-12 flex items-center justify-center bg-gray-50 rounded-md border border-dashed text-gray-300">
+                                  <ImageIcon className="w-4 h-4" />
                                 </div>
                               )}
                             </div>

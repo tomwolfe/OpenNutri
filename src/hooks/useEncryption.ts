@@ -30,6 +30,8 @@ interface UseEncryptionReturn {
   vaultKey: CryptoKey | null;
   encryptLog: (log: unknown) => Promise<{ encryptedData: string; iv: string }>;
   decryptLog: (encryptedData: string, iv: string) => Promise<EncryptedFoodLog>;
+  encryptBinary: (data: ArrayBuffer | Uint8Array) => Promise<{ ciphertext: ArrayBuffer; iv: Uint8Array }>;
+  decryptBinary: (ciphertext: ArrayBuffer, iv: ArrayBuffer | Uint8Array) => Promise<ArrayBuffer>;
   initializeKey: (email: string, password: string) => Promise<VaultKeyData>;
   unlockVault: (password: string, salt: string, encryptedKey: string, iv: string) => Promise<void>;
   clearKey: () => void;
@@ -139,6 +141,30 @@ export function useEncryption(): UseEncryptionReturn {
     [key]
   );
 
+  // Encrypt binary data (e.g. image)
+  const encryptBinaryData = useCallback(
+    async (data: ArrayBuffer | Uint8Array): Promise<{ ciphertext: ArrayBuffer; iv: Uint8Array }> => {
+      if (!key) {
+        throw new Error('Vault not unlocked. Please log in first.');
+      }
+      const { encryptBinary } = await import('@/lib/encryption');
+      return encryptBinary(data, key);
+    },
+    [key]
+  );
+
+  // Decrypt binary data
+  const decryptBinaryData = useCallback(
+    async (ciphertext: ArrayBuffer, iv: ArrayBuffer | Uint8Array): Promise<ArrayBuffer> => {
+      if (!key) {
+        throw new Error('Vault not unlocked. Please log in first.');
+      }
+      const { decryptBinary } = await import('@/lib/encryption');
+      return decryptBinary(ciphertext, iv, key);
+    },
+    [key]
+  );
+
   // Clear key from memory
   const clearKey = useCallback(() => {
     setKey(null);
@@ -152,6 +178,8 @@ export function useEncryption(): UseEncryptionReturn {
     vaultKey: key,
     encryptLog,
     decryptLog,
+    encryptBinary: encryptBinaryData,
+    decryptBinary: decryptBinaryData,
     initializeKey,
     unlockVault,
     clearKey,

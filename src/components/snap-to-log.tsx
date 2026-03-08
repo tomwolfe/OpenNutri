@@ -50,10 +50,11 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
   const [draftItems, setDraftItems] = useState<DraftItem[]>([]);
   const [isEditingItems, setIsEditingItems] = useState(false);
   const [saveInProgress, setSaveInProgress] = useState(false);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null); // Permanent URL (encrypted if possible)
+  const [imageIv, setImageIv] = useState<string | null>(null);
   const [compressionStats, setCompressionStats] = useState<{ original: number; compressed: number } | null>(null);
   
-  const { encryptLog, isReady } = useEncryption();
+  const { encryptLog, encryptBinary, isReady } = useEncryption();
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [isSyncing, setIsSyncing] = useState(false);
   const { queueImage, syncQueue, isAvailable: isIndexedDBAvailable } = useOfflineQueue();
@@ -210,21 +211,48 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
         throw new Error('Failed to queue image');
       }
 
+      // 1. Upload PLAINTEXT image for AI analysis (will be purged by /api/analyze)
       const formData = new FormData();
       formData.append('image', compressedFile);
       const uploadResponse = await fetch('/api/blob/upload', { method: 'POST', body: formData });
-      if (!uploadResponse.ok) throw new Error('Upload failed');
-      const { imageUrl: uploadedImageUrl } = await uploadResponse.json();
-      setImageUrl(uploadedImageUrl);
+      if (!uploadResponse.ok) throw new Error('Temp upload failed');
+      const { imageUrl: tempUrl } = await uploadResponse.json();
+
+      // 2. Encrypt and upload permanent version for Visual Diary
+      let vaultUrl = null;
+      let vaultIv = null;
+      if (isReady && encryptBinary) {
+        try {
+          const arrayBuffer = await compressedBlob.arrayBuffer();
+          const { ciphertext, iv } = await encryptBinary(arrayBuffer);
+          
+          const encryptedFile = new File([ciphertext], 'vault-image.bin', { type: 'application/octet-stream' });
+          const encryptedFormData = new FormData();
+          encryptedFormData.append('image', encryptedFile);
+          const encryptedUploadResponse = await fetch('/api/blob/upload', { method: 'POST', body: encryptedFormData });
+          if (encryptedUploadResponse.ok) {
+            const { imageUrl: eUrl } = await encryptedUploadResponse.json();
+            vaultUrl = eUrl;
+            // Convert IV to base64 for JSON storage
+            const binary = String.fromCharCode(...new Uint8Array(iv));
+            vaultIv = btoa(binary);
+          }
+        } catch (err) {
+          console.error('Encryption failed', err);
+        }
+      }
+
+      setImageUrl(vaultUrl || tempUrl);
+      setImageIv(vaultIv);
       setUploadProgress('streaming');
-      submit({ imageUrl: uploadedImageUrl, mealTypeHint: selectedMealType });
+      submit({ imageUrl: tempUrl, mealTypeHint: selectedMealType });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Upload failed';
       setUploadError(errorMessage);
       setUploadProgress('idle');
       onError?.(errorMessage);
     }
-  }, [selectedFile, selectedMealType, isOnline, queueImage, onError, submit]);
+  }, [selectedFile, selectedMealType, isOnline, queueImage, onError, submit, isReady, encryptBinary]);
 
   const handleSaveDraft = useCallback(async () => {
     if (draftItems.length === 0) return;
@@ -241,7 +269,8 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
             mealType: selectedMealType,
             items: draftItems,
             notes,
-            imageUrl,
+            imageUrl, // This is the vaultUrl
+            imageIv,  // This is the vaultIv
             timestamp: Date.now()
           });
           encryptedData = result.encryptedData;
@@ -260,7 +289,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
           items: encryptedData ? [] : draftItems,
           totalCalories: encryptedData ? 0 : totalCalories,
           notes: encryptedData ? 'encrypted' : notes,
-          imageUrl: encryptedData ? null : imageUrl, // Encrypted URL prevents server from knowing which blob is linked to which user log
+          imageUrl: encryptedData ? null : imageUrl, // Server sees null if encrypted
           aiConfidenceScore: 0.8,
           encryptedData,
           encryptionIv,

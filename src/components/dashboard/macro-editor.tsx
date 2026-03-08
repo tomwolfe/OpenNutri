@@ -51,6 +51,20 @@ export function MacroEditor({
         };
       }
 
+      if (field === 'servingGrams') {
+        const val = Number(value);
+        const oldGrams = item.servingGrams || 100;
+        const ratio = val / oldGrams;
+        return {
+          ...item,
+          servingGrams: val,
+          calories: item.calories * ratio,
+          protein: item.protein * ratio,
+          carbs: item.carbs * ratio,
+          fat: item.fat * ratio,
+        };
+      }
+
       return { ...item, [field]: value };
     });
     onUpdateItems(newItems);
@@ -181,44 +195,53 @@ export function MacroEditor({
                         className="w-full px-2 py-1.5 text-sm border rounded bg-white"
                       />
                     </div>
-                    <div className="grid grid-cols-4 gap-2">
+                    <div className="grid grid-cols-5 gap-1.5 mt-2">
                       <div>
-                        <label className="text-[10px] uppercase font-bold text-gray-400">Cals</label>
+                        <label className="text-[9px] uppercase font-bold text-gray-400">Grams</label>
+                        <input
+                          type="number"
+                          value={Math.round(item.servingGrams || 100)}
+                          onChange={(e) => updateItemField(index, 'servingGrams', parseInt(e.target.value) || 0)}
+                          className="w-full px-1.5 py-1 text-xs border rounded bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] uppercase font-bold text-gray-400">Cals</label>
                         <input
                           type="number"
                           value={Math.round(item.calories)}
                           onChange={(e) => updateItemField(index, 'calories', parseInt(e.target.value) || 0)}
-                          className="w-full px-2 py-1.5 text-sm border rounded bg-white"
+                          className="w-full px-1.5 py-1 text-xs border rounded bg-white"
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] uppercase font-bold text-gray-400">P (g)</label>
+                        <label className="text-[9px] uppercase font-bold text-gray-400">P (g)</label>
                         <input
                           type="number"
                           step="0.1"
                           value={item.protein.toFixed(1)}
                           onChange={(e) => updateItemField(index, 'protein', parseFloat(e.target.value) || 0)}
-                          className="w-full px-2 py-1.5 text-sm border rounded bg-white"
+                          className="w-full px-1.5 py-1 text-xs border rounded bg-white"
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] uppercase font-bold text-gray-400">C (g)</label>
+                        <label className="text-[9px] uppercase font-bold text-gray-400">C (g)</label>
                         <input
                           type="number"
                           step="0.1"
                           value={item.carbs.toFixed(1)}
                           onChange={(e) => updateItemField(index, 'carbs', parseFloat(e.target.value) || 0)}
-                          className="w-full px-2 py-1.5 text-sm border rounded bg-white"
+                          className="w-full px-1.5 py-1 text-xs border rounded bg-white"
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] uppercase font-bold text-gray-400">F (g)</label>
+                        <label className="text-[9px] uppercase font-bold text-gray-400">F (g)</label>
                         <input
                           type="number"
                           step="0.1"
                           value={item.fat.toFixed(1)}
                           onChange={(e) => updateItemField(index, 'fat', parseFloat(e.target.value) || 0)}
-                          className="w-full px-2 py-1.5 text-sm border rounded bg-white"
+                          className="w-full px-1.5 py-1 text-xs border rounded bg-white"
                         />
                       </div>
                     </div>

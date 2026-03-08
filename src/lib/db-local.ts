@@ -31,6 +31,8 @@ export interface LocalFoodLog {
   encryptedData: string;
   encryptionIv: string;
   encryptionSalt: string | null;
+  version: number;
+  deviceId: string | null;
   synced: boolean;
   updatedAt: number; // Unix timestamp for sync delta
 }
@@ -44,6 +46,8 @@ export interface DecryptedFoodLog {
   items: unknown[];
   notes: string | null;
   imageUrl?: string | null;
+  imageIv?: string | null;
+  version?: number;
 }
 
 export interface LocalUserTarget {
@@ -54,6 +58,8 @@ export interface LocalUserTarget {
   carbTarget: number | null;
   fatTarget: number | null;
   weightRecord: number | null;
+  version: number;
+  deviceId: string | null;
   synced: boolean;
   updatedAt: number;
 }

@@ -22,6 +22,7 @@ export interface FoodLog {
   isVerified: boolean;
   timestamp: string;
   imageUrl?: string | null;
+  imageIv?: string | null;
   notes?: string | null;
   items: LogItem[];
   encryptedData?: string | null;
@@ -101,6 +102,7 @@ export const useNutritionStore = create<NutritionStore>((set, get) => ({
       items: log.items as LogItem[],
       notes: log.notes,
       imageUrl: log.imageUrl,
+      imageIv: log.imageIv,
     }));
 
     set({ logs: processedLogs });

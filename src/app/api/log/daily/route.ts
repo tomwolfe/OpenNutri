@@ -21,6 +21,8 @@ export async function GET(request: NextRequest) {
     const dateParam = searchParams.get('date');
     const sinceParam = searchParams.get('since');
 
+    const lastVersion = searchParams.get('v');
+
     // Default to today if no date provided
     const targetDate = dateParam ? new Date(dateParam) : new Date();
     targetDate.setHours(0, 0, 0, 0);
@@ -28,6 +30,8 @@ export async function GET(request: NextRequest) {
     const startDate = new Date(targetDate);
     const endDate = new Date(targetDate);
     endDate.setDate(endDate.getDate() + 1);
+
+    const { gt } = await import('drizzle-orm');
 
     // Build filters
     const filters = [
@@ -38,6 +42,10 @@ export async function GET(request: NextRequest) {
 
     if (sinceParam) {
       filters.push(gte(foodLogs.updatedAt, new Date(parseInt(sinceParam))));
+    }
+    
+    if (lastVersion) {
+      filters.push(gt(foodLogs.version, parseInt(lastVersion)));
     }
 
     // Fetch food logs with items in a single query using Drizzle Relational API
@@ -59,6 +67,8 @@ export async function GET(request: NextRequest) {
         encryptedData: true,
         encryptionIv: true,
         encryptionSalt: true,
+        version: true,
+        deviceId: true,
         updatedAt: true,
       },
       orderBy: [desc(foodLogs.timestamp)],
