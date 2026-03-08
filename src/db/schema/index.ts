@@ -85,9 +85,9 @@ export const foodLogs = pgTable('food_logs', {
   imageUrl: text('image_url'), // Vercel Blob URL for meal photo
   notes: text('notes'), // AI-generated explanations or user notes
   // E2E encryption fields (Phase 3)
-  encryptedData: text('encrypted_data'), // Encrypted log items (AES-GCM)
-  encryptionIv: text('encryption_iv'), // IV for decryption
-  encryptionSalt: text('encryption_salt'), // Salt for key derivation
+  encryptedData: text('encrypted_data').notNull(), // Encrypted log items (AES-GCM)
+  encryptionIv: text('encryption_iv').notNull(), // IV for decryption
+  encryptionSalt: text('encryption_salt'), // Salt for key derivation (optional if using user-level salt)
 }, (table) => ({
   userIdIdx: index('food_logs_user_id_idx').on(table.userId),
   timestampIdx: index('food_logs_timestamp_idx').on(table.timestamp),

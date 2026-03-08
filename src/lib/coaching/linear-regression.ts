@@ -333,6 +333,22 @@ export function calculateCalorieAdjustment(
 /**
  * Generate coaching insight based on data analysis
  */
+export interface IntakePoint {
+  timestamp: number;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+}
+
+export interface MacroTargets {
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  weightGoal: 'lose' | 'maintain' | 'gain';
+}
+
 export interface CoachingInsight {
   type: 'calorie' | 'protein' | 'carbs' | 'fat' | 'weight';
   trend: 'increasing' | 'decreasing' | 'stable';
@@ -355,20 +371,8 @@ export interface CoachingInsight {
  */
 export function generateCoachingInsights(
   weightData: Array<{ timestamp: number; weight: number }>,
-  intakeData: Array<{
-    timestamp: number;
-    calories: number;
-    protein: number;
-    carbs: number;
-    fat: number;
-  }>,
-  targets: {
-    calories: number;
-    protein: number;
-    carbs: number;
-    fat: number;
-    weightGoal: 'lose' | 'maintain' | 'gain';
-  }
+  intakeData: IntakePoint[],
+  targets: MacroTargets
 ): CoachingInsight[] {
   const insights: CoachingInsight[] = [];
 
@@ -528,7 +532,96 @@ export function generateCoachingInsights(
     });
   }
 
+  // Proactive Insight: Consistency & Streaks
+  const consistencyInsight = generateConsistencyInsight(intakeData);
+  if (consistencyInsight) {
+    insights.push(consistencyInsight);
+  }
+
+  // Proactive Insight: Specific Macro Deficiencies (e.g., Protein)
+  const macroDeficiencyInsight = generateMacroDeficiencyInsight(intakeData, targets);
+  if (macroDeficiencyInsight) {
+    insights.push(macroDeficiencyInsight);
+  }
+
   return insights;
+}
+
+/**
+ * Generate consistency and streak insights
+ */
+function generateConsistencyInsight(
+  intakeData: IntakePoint[],
+): CoachingInsight | null {
+  const now = Date.now();
+  const oneDay = 24 * 60 * 60 * 1000;
+  
+  // Calculate logging streak
+  let streak = 0;
+  const sortedIntake = [...intakeData].sort((a, b) => b.timestamp - a.timestamp);
+  
+  for (let i = 0; i < sortedIntake.length; i++) {
+    const dayDiff = Math.floor((now - sortedIntake[i].timestamp) / oneDay);
+    if (dayDiff === streak) {
+      streak++;
+    } else if (dayDiff > streak) {
+      break;
+    }
+  }
+
+  if (streak >= 3) {
+    return {
+      type: 'weight', // Use weight as a proxy for general progress
+      trend: 'stable',
+      confidence: 1,
+      recommendation: `You're on a ${streak}-day logging streak! Consistency is the #1 predictor of long-term success. Keep it up!`,
+      dataPoints: intakeData.length,
+    };
+  }
+
+  // Check for missing data
+  const lastLoggingDay = sortedIntake.length > 0 ? Math.floor((now - sortedIntake[0].timestamp) / oneDay) : 7;
+  if (lastLoggingDay >= 2) {
+    return {
+      type: 'calorie',
+      trend: 'decreasing',
+      confidence: 0.9,
+      recommendation: `We haven't seen any food logs for ${lastLoggingDay} days. Small, consistent entries are better than perfect ones!`,
+      dataPoints: intakeData.length,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Detect specific macro deficiencies over the last few days
+ */
+function generateMacroDeficiencyInsight(
+  intakeData: IntakePoint[],
+  targets: MacroTargets
+): CoachingInsight | null {
+  if (intakeData.length < 3) return null;
+
+  const last3Days = intakeData
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, 3);
+  
+  const avgProtein = last3Days.reduce((sum, d) => sum + d.protein, 0) / 3;
+  const proteinTarget = targets.protein;
+
+  if (avgProtein < proteinTarget * 0.7) {
+    return {
+      type: 'protein',
+      trend: 'decreasing',
+      confidence: 0.95,
+      recommendation: `You've been low on protein for the last 3 days (${Math.round(avgProtein)}g avg vs ${proteinTarget}g target). Muscle recovery might be stalling. Try adding a protein source to your next meal.`,
+      dataPoints: 3,
+      suggestedProtein: proteinTarget,
+    };
+  }
+
+  return null;
 }
 
 /**

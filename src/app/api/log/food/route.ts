@@ -20,7 +20,17 @@ export async function POST(request: NextRequest) {
 
     const userId = session.user.id;
     const body = await request.json();
-    const { mealType, items, totalCalories, aiConfidenceScore = 0, imageUrl, notes } = body;
+    const { 
+      mealType, 
+      items, 
+      totalCalories, 
+      aiConfidenceScore = 0, 
+      imageUrl, 
+      notes,
+      encryptedData,
+      encryptionIv,
+      encryptionSalt
+    } = body;
 
     // Validate request
     if (!mealType || !items || !Array.isArray(items)) {
@@ -41,6 +51,9 @@ export async function POST(request: NextRequest) {
         isVerified: true,
         imageUrl,
         notes,
+        encryptedData,
+        encryptionIv,
+        encryptionSalt,
       })
       .returning();
 

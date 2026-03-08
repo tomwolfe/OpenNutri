@@ -7,17 +7,12 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { users } from '@/db/schema';
+import { users, userKeys } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 
 const PASSWORD_HASH_SALT_ROUNDS = parseInt(process.env.PASSWORD_HASH_SALT_ROUNDS || '12', 10);
 const MIN_PASSWORD_LENGTH = 8;
-
-interface SignupRequest {
-  email: string;
-  password: string;
-}
 
 function validateEmail(email: string): boolean {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -33,7 +28,7 @@ function validatePassword(password: string): { valid: boolean; error?: string } 
 
 export async function POST(request: NextRequest) {
   try {
-    const body: SignupRequest = await request.json();
+    const body = await request.json();
 
     if (!body?.email || !body?.password) {
       return NextResponse.json(
@@ -42,7 +37,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { email, password } = body;
+    const { email, password, keyMetadata } = body;
 
     // Validate email format
     if (!validateEmail(email)) {
@@ -71,7 +66,7 @@ export async function POST(request: NextRequest) {
     if (existingUser) {
       return NextResponse.json(
         { error: 'An account with this email already exists' },
-        { status: 409 }
+        { status: 400 }
       );
     }
 
@@ -79,14 +74,28 @@ export async function POST(request: NextRequest) {
     const passwordHash = await bcrypt.hash(password, PASSWORD_HASH_SALT_ROUNDS);
     const userId = `user_${crypto.randomUUID().replace(/-/g, '')}`;
 
-    const [newUser] = await db
-      .insert(users)
-      .values({
-        id: userId,
-        email,
-        passwordHash,
-      })
-      .returning();
+    // Create user and their encryption key record in a transaction
+    const newUser = await db.transaction(async (tx) => {
+      const [user] = await tx
+        .insert(users)
+        .values({
+          id: userId,
+          email,
+          passwordHash,
+        })
+        .returning();
+
+      if (keyMetadata) {
+        await tx.insert(userKeys).values({
+          userId: user.id,
+          salt: keyMetadata.salt,
+          encryptedVaultKey: keyMetadata.encryptedKey,
+          encryptionIv: keyMetadata.iv,
+        });
+      }
+
+      return user;
+    });
 
     if (!newUser) {
       return NextResponse.json(

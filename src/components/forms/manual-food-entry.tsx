@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
+import { useEncryption } from '@/hooks/useEncryption';
+import { LogItem } from '@/stores/use-nutrition-store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -46,6 +48,7 @@ interface ManualFoodEntryFormProps {
 
 export function ManualFoodEntryForm({ mealType, onEntryComplete }: ManualFoodEntryFormProps) {
   const { data: session } = useSession();
+  const { encryptLog, isReady } = useEncryption();
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<USDAFood[]>([]);
   const [selectedFoods, setSelectedFoods] = useState<SelectedFood[]>([]);
@@ -123,22 +126,40 @@ export function ManualFoodEntryForm({ mealType, onEntryComplete }: ManualFoodEnt
 
     try {
       const totals = calculateTotals();
+      const items = selectedFoods.map(({ food, servingGrams }) => ({
+        foodName: food.description,
+        servingGrams,
+        calories: Math.round(food.calories * (servingGrams / 100)),
+        protein: Math.round(food.protein * (servingGrams / 100) * 10) / 10,
+        carbs: Math.round(food.carbs * (servingGrams / 100) * 10) / 10,
+        fat: Math.round(food.fat * (servingGrams / 100) * 10) / 10,
+        source: 'USDA' as const,
+      }));
+
+      // E2E Encryption: Encrypt the items array before sending
+      let encryptedData = null;
+      let encryptionIv = null;
+
+      if (isReady) {
+        try {
+          // Encrypt the entire items array as a JSON string
+          const encryptionResult = await encryptLog(items as unknown as LogItem[]);
+          encryptedData = encryptionResult.encryptedData;
+          encryptionIv = encryptionResult.iv;
+        } catch (err) {
+          console.error('Encryption failed, saving in plaintext...', err);
+        }
+      }
       
       const response = await fetch('/api/log/food', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           mealType,
-          items: selectedFoods.map(({ food, servingGrams }) => ({
-            foodName: food.description,
-            servingGrams,
-            calories: Math.round(food.calories * (servingGrams / 100)),
-            protein: Math.round(food.protein * (servingGrams / 100) * 10) / 10,
-            carbs: Math.round(food.carbs * (servingGrams / 100) * 10) / 10,
-            fat: Math.round(food.fat * (servingGrams / 100) * 10) / 10,
-            source: 'USDA' as const,
-          })),
+          items,
           totalCalories: totals.calories,
+          encryptedData,
+          encryptionIv,
         }),
       });
 

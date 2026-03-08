@@ -38,6 +38,18 @@ export async function GET(request: NextRequest) {
       with: {
         logItems: true,
       },
+      columns: {
+        id: true,
+        mealType: true,
+        totalCalories: true,
+        aiConfidenceScore: true,
+        isVerified: true,
+        timestamp: true,
+        imageUrl: true,
+        notes: true,
+        encryptedData: true,
+        encryptionIv: true,
+      },
       orderBy: [desc(foodLogs.timestamp)],
     });
 

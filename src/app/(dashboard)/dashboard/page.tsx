@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { ManualFoodEntryForm } from '@/components/forms/manual-food-entry';
@@ -12,6 +12,8 @@ import { WeightTracker } from '@/components/weight-tracker';
 import { WeightChart } from '@/components/weight-chart';
 import { OnboardingWizard } from '@/components/onboarding-wizard';
 import { QuickWeightInput } from '@/components/quick-weight-input';
+import { useEncryption } from '@/hooks/useEncryption';
+import { useNutritionStore } from '@/stores/use-nutrition-store';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -38,65 +40,36 @@ import Image from 'next/image';
 import { Calendar } from '@/components/ui/calendar';
 import { Loader2, LogOut, Plus, Utensils, Camera, Settings } from 'lucide-react';
 
-interface LogItem {
-  id: string;
-  foodName: string;
-  calories: number;
-  protein: number;
-  carbs: number;
-  fat: number;
-  source: string;
-}
-
-interface FoodLog {
-  id: string;
-  mealType: string;
-  totalCalories: number;
-  aiConfidenceScore: number;
-  isVerified: boolean;
-  timestamp: string;
-  imageUrl?: string | null;
-  items: LogItem[];
-}
-
-interface DailyLogs {
-  date: string;
-  logs: FoodLog[];
-  dailyTotals: {
-    calories: number;
-    protein: number;
-    carbs: number;
-    fat: number;
-  };
-}
-
 const MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'];
 
 export default function DashboardPage() {
   const { data: session, status } = useSession();
+  const { decryptLog, isReady } = useEncryption();
   const router = useRouter();
-  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
-  const [logs, setLogs] = useState<DailyLogs | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [selectedMealType, setSelectedMealType] = useState<string>('breakfast');
+
+  // Zustand Store
+  const {
+    selectedDate,
+    setSelectedDate,
+    logs: dailyLogs,
+    dailyTotals,
+    isLoading: loading,
+    fetchLogs,
+    selectedMealType,
+    setSelectedMealType,
+  } = useNutritionStore();
+
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [snapDialogOpen, setSnapDialogOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [checkingOnboarding, setCheckingOnboarding] = useState(true);
 
-  const fetchLogs = useCallback(async () => {
-    setLoading(true);
-    try {
-      const dateStr = selectedDate.toISOString().split('T')[0];
-      const response = await fetch(`/api/log/daily?date=${dateStr}`);
-      const data = await response.json();
-      setLogs(data);
-    } catch (error) {
-      console.error('Failed to fetch logs:', error);
-    } finally {
-      setLoading(false);
+  // Fetch logs when date or encryption status changes
+  useEffect(() => {
+    if (status === 'authenticated') {
+      fetchLogs(selectedDate, isReady, decryptLog);
     }
-  }, [selectedDate]);
+  }, [selectedDate, isReady, decryptLog, fetchLogs, status]);
 
   // Check if user needs onboarding
   useEffect(() => {
@@ -125,12 +98,6 @@ export default function DashboardPage() {
     }
   };
 
-  useEffect(() => {
-    if (status === 'authenticated') {
-      fetchLogs();
-    }
-  }, [status, fetchLogs]);
-
   if (status === 'loading' || checkingOnboarding) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -150,7 +117,7 @@ export default function DashboardPage() {
   }
 
   const getMealLogs = (mealType: string) => {
-    return logs?.logs.filter((log) => log.mealType === mealType) || [];
+    return dailyLogs.filter((log) => log.mealType === mealType);
   };
 
   const formatTime = (timestamp: string) => {
@@ -162,7 +129,7 @@ export default function DashboardPage() {
 
   const handleSnapComplete = () => {
     // Refresh logs to show new entry
-    fetchLogs();
+    fetchLogs(selectedDate, isReady, decryptLog);
     // Close dialog after short delay
     setTimeout(() => setSnapDialogOpen(false), 2000);
   };
@@ -228,36 +195,32 @@ export default function DashboardPage() {
                 <div className="flex h-32 items-center justify-center">
                   <Loader2 className="h-6 w-6 animate-spin" />
                 </div>
-              ) : logs ? (
+              ) : (
                 <div className="grid grid-cols-4 gap-4">
                   <div className="text-center">
                     <div className="text-3xl font-bold text-orange-500">
-                      {logs.dailyTotals.calories}
+                      {dailyTotals.calories}
                     </div>
                     <div className="text-sm text-muted-foreground">Calories</div>
                   </div>
                   <div className="text-center">
                     <div className="text-3xl font-bold text-blue-500">
-                      {Math.round(logs.dailyTotals.protein)}g
+                      {Math.round(dailyTotals.protein)}g
                     </div>
                     <div className="text-sm text-muted-foreground">Protein</div>
                   </div>
                   <div className="text-center">
                     <div className="text-3xl font-bold text-green-500">
-                      {Math.round(logs.dailyTotals.carbs)}g
+                      {Math.round(dailyTotals.carbs)}g
                     </div>
                     <div className="text-sm text-muted-foreground">Carbs</div>
                   </div>
                   <div className="text-center">
                     <div className="text-3xl font-bold text-purple-500">
-                      {Math.round(logs.dailyTotals.fat)}g
+                      {Math.round(dailyTotals.fat)}g
                     </div>
                     <div className="text-sm text-muted-foreground">Fat</div>
                   </div>
-                </div>
-              ) : (
-                <div className="text-center text-muted-foreground">
-                  No data for this date
                 </div>
               )}
             </CardContent>
@@ -284,12 +247,12 @@ export default function DashboardPage() {
 
               {/* Snap to Log */}
               <Dialog open={snapDialogOpen} onOpenChange={setSnapDialogOpen}>
-                <DialogTrigger>
+                <DialogTrigger render={
                   <Button className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700">
                     <Camera className="mr-2 h-4 w-4" />
                     Snap to Log
                   </Button>
-                </DialogTrigger>
+                } />
                 <DialogContent className="max-w-md">
                   <DialogHeader>
                     <DialogTitle>Snap to Log</DialogTitle>
@@ -303,12 +266,12 @@ export default function DashboardPage() {
 
               {/* Manual Entry */}
               <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-                <DialogTrigger>
+                <DialogTrigger render={
                   <Button className="w-full" variant="outline">
                     <Plus className="mr-2 h-4 w-4" />
                     Add Food Manually
                   </Button>
-                </DialogTrigger>
+                } />
                 <DialogContent className="max-w-2xl">
                   <DialogHeader>
                     <DialogTitle>Add Food to {selectedMealType}</DialogTitle>
@@ -333,7 +296,7 @@ export default function DashboardPage() {
                       mealType={selectedMealType}
                       onEntryComplete={() => {
                         setAddDialogOpen(false);
-                        fetchLogs();
+                        fetchLogs(selectedDate, isReady, decryptLog);
                       }}
                     />
                   </div>
@@ -398,9 +361,9 @@ export default function DashboardPage() {
                             </div>
                           </div>
                           <div className="space-y-1">
-                            {log.items.map((item) => (
+                            {log.items.map((item, idx) => (
                               <div
-                                key={item.id}
+                                key={`${log.id}-item-${idx}`}
                                 className="flex justify-between text-sm"
                               >
                                 <span>{item.foodName}</span>

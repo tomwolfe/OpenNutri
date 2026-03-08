@@ -27,7 +27,7 @@ interface UseEncryptionReturn {
   isReady: boolean;
   isSupported: boolean;
   error: string | null;
-  encryptLog: (log: EncryptedFoodLog) => Promise<{ encryptedData: string; iv: string }>;
+  encryptLog: (log: unknown) => Promise<{ encryptedData: string; iv: string }>;
   decryptLog: (encryptedData: string, iv: string) => Promise<EncryptedFoodLog>;
   initializeKey: (email: string, password: string) => Promise<VaultKeyData>;
   unlockVault: (password: string, salt: string, encryptedKey: string, iv: string) => Promise<void>;
@@ -118,11 +118,11 @@ export function useEncryption(): UseEncryptionReturn {
 
   // Encrypt a food log entry
   const encryptLog = useCallback(
-    async (log: EncryptedFoodLog): Promise<{ encryptedData: string; iv: string }> => {
+    async (log: unknown): Promise<{ encryptedData: string; iv: string }> => {
       if (!key) {
         throw new Error('Vault not unlocked. Please log in first.');
       }
-      return encryptFoodLog(log, key);
+      return encryptFoodLog(log as EncryptedFoodLog, key);
     },
     [key]
   );

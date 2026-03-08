@@ -100,6 +100,56 @@ export function analyzeFoodImageStream(
 }
 
 /**
+ * Analyze food description text with streaming
+ *
+ * @param text - Food description (e.g., "I had a 10oz steak and some mashed potatoes")
+ * @param mealTypeHint - Optional meal type hint
+ * @param recentFoods - Optional array of recently eaten foods with frequency data
+ * @returns AsyncIterableStream of the analysis
+ */
+export function analyzeFoodTextStream(
+  text: string,
+  mealTypeHint?: string | null,
+  recentFoods?: Array<{ name: string; freq: number }>
+) {
+  const apiKey = process.env.GLM_API_KEY;
+
+  if (!apiKey) {
+    throw new Error('GLM_API_KEY not configured');
+  }
+
+  // Build meal type context
+  const mealTypeContext =
+    mealTypeHint && mealTypeHint !== 'unclassified'
+      ? `The user is currently eating ${mealTypeHint}.`
+      : '';
+
+  // Build recent foods context with frequency weighting
+  const recentFoodsContext =
+    recentFoods && recentFoods.length > 0
+      ? `The user frequently eats these foods: ${recentFoods
+          .map((f) => f.name)
+          .join(', ')}.`
+      : '';
+
+  return streamObject({
+    model: glm('glm-4-flash'),
+    schema: FoodAnalysisSchema,
+    messages: [
+      {
+        role: 'system',
+        content: `You are a nutritionist AI. Analyze the food description text and return the nutritional info for each item. Return ONLY valid JSON matching the schema. ${mealTypeContext} ${recentFoodsContext}`,
+      },
+      {
+        role: 'user',
+        content: `I ate: ${text}`,
+      },
+    ],
+    temperature: 0.1,
+  });
+}
+
+/**
  * Calculate average confidence score from analysis results
  */
 export function calculateAverageConfidence(

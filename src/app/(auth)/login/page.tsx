@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import { useEncryption } from '@/hooks/useEncryption';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,6 +20,7 @@ type AuthMode = 'signin' | 'signup';
 
 export default function LoginPage() {
   const router = useRouter();
+  const { initializeKey, unlockVault } = useEncryption();
   const [mode, setMode] = useState<AuthMode>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -41,6 +43,23 @@ export default function LoginPage() {
       if (result?.error) {
         setError('Invalid email or password');
       } else {
+        // Step 2: Fetch encryption metadata and unlock vault
+        try {
+          const keyResponse = await fetch('/api/auth/keys');
+          if (keyResponse.ok) {
+            const keyData = await keyResponse.json();
+            await unlockVault(
+              password,
+              keyData.salt,
+              keyData.encryptedVaultKey,
+              keyData.encryptionIv
+            );
+          }
+        } catch (err) {
+          console.error('Failed to unlock vault:', err);
+          // Don't block login if vault unlock fails, but user won't see encrypted data
+        }
+
         router.push('/dashboard');
         router.refresh();
       }
@@ -68,20 +87,37 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
+      // Step 1: Generate E2E encryption vault key client-side
+      let keyMetadata = null;
+      try {
+        keyMetadata = await initializeKey(email, password);
+      } catch (err) {
+        console.error('Failed to initialize encryption vault:', err);
+        setError('Encryption setup failed. Please try again.');
+        setLoading(false);
+        return;
+      }
+
+      // Step 2: Send signup request with encryption metadata
       const response = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ 
+          email, 
+          password,
+          keyMetadata, // Store this on the server
+        }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
         setError(data.error || 'Failed to create account');
+        setLoading(false);
         return;
       }
 
-      // Auto sign in after successful signup
+      // Step 3: Auto sign in after successful signup
       const result = await signIn('credentials', {
         email,
         password,
@@ -91,6 +127,7 @@ export default function LoginPage() {
       if (result?.error) {
         setError('Account created but sign in failed. Please try logging in.');
       } else {
+        // Vault is already initialized in memory by initializeKey
         router.push('/dashboard');
         router.refresh();
       }

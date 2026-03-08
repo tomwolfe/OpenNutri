@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { getUserDailyAiScanCount } from '@/lib/ai-limits';
-import { analyzeFoodImageStream } from '@/lib/glm-vision-stream';
+import { analyzeFoodImageStream, analyzeFoodTextStream } from '@/lib/glm-vision-stream';
 import { db } from '@/lib/db';
 import { aiUsage } from '@/db/schema';
 import { enhanceWithUSDAData } from '@/lib/ai-usda-bridge';
@@ -48,11 +48,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Parse request body
-    const { imageUrl, mealTypeHint } = await request.json();
+    const { imageUrl, text, mealTypeHint } = await request.json();
 
-    if (!imageUrl) {
+    if (!imageUrl && !text) {
       return NextResponse.json(
-        { error: 'Image URL is required' },
+        { error: 'Image URL or text is required' },
         { status: 400 }
       );
     }
@@ -60,8 +60,14 @@ export async function POST(request: NextRequest) {
     // Fetch recent foods for context (last 7 days, top 20 most frequent)
     const recentFoods = await fetchRecentFoods(userId);
 
-    // Call GLM Vision API and get text stream
-    const result = await analyzeFoodImageStream(imageUrl, mealTypeHint, recentFoods);
+    // Call appropriate GLM API (Vision or Text)
+    let result;
+    if (imageUrl) {
+      result = await analyzeFoodImageStream(imageUrl, mealTypeHint, recentFoods);
+    } else {
+      result = await analyzeFoodTextStream(text, mealTypeHint, recentFoods);
+    }
+
     const textStream = await result.toTextStreamResponse();
     const fullText = await new Response(textStream.body).text();
 
