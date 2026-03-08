@@ -10,6 +10,69 @@ import { type CoachingInsight, type MacroTargets, type IntakePoint } from './coa
 let encryptionWorker: Worker | null = null;
 let coachingWorker: Worker | null = null;
 let syncWorker: Worker | null = null;
+let aiWorker: Worker | null = null;
+
+function getAIWorker(): Worker {
+  if (typeof window === 'undefined') {
+    throw new Error('Worker can only be used in the browser');
+  }
+  
+  if (!aiWorker) {
+    aiWorker = new Worker(
+      new URL('../workers/ai.worker.ts', import.meta.url)
+    );
+  }
+  
+  return aiWorker;
+}
+
+/**
+ * Generate text embedding in the AI worker
+ */
+export async function generateEmbeddingInWorker(text: string): Promise<number[]> {
+  const w = getAIWorker();
+
+  return new Promise((resolve, reject) => {
+    const handler = (event: MessageEvent) => {
+      const { type, embedding, error } = event.data;
+
+      if (type === 'embedding' && event.data.text === text) {
+        w.removeEventListener('message', handler);
+        resolve(embedding);
+      } else if (type === 'error') {
+        w.removeEventListener('message', handler);
+        reject(new Error(error));
+      }
+    };
+
+    w.addEventListener('message', handler);
+    w.postMessage({ type: 'embed', text });
+  });
+}
+
+/**
+ * Classify an image in the AI worker
+ */
+export async function classifyImageInWorker(image: unknown): Promise<any> {
+  const w = getAIWorker();
+
+  return new Promise((resolve, reject) => {
+    const handler = (event: MessageEvent) => {
+      const { type, results, error } = event.data;
+
+      if (type === 'results') {
+        w.removeEventListener('message', handler);
+        resolve(results);
+      } else if (type === 'error') {
+        w.removeEventListener('message', handler);
+        reject(new Error(error));
+      }
+    };
+
+    w.addEventListener('message', handler);
+    w.postMessage({ type: 'classify', image });
+  });
+}
 
 function getSyncWorker(): Worker {
   if (typeof window === 'undefined') {

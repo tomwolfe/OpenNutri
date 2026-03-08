@@ -18,10 +18,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Loader2, Save, User, Activity, Ruler, Scale, Calendar, Key, Shield } from 'lucide-react';
+import { Loader2, Save, User, Activity, Ruler, Scale, Calendar, Key, Shield, Fingerprint } from 'lucide-react';
 import { ACTIVITY_LEVELS, GENDERS } from '@/lib/tdee';
 import { RecoveryKitDialog } from '@/components/recovery-kit-dialog';
 import { SyncStatusCard } from '@/components/sync-status-card';
+import { useEncryption } from '@/hooks/useEncryption';
 
 interface UserProfile {
   id: string;
@@ -52,9 +53,11 @@ interface ProfileResponse {
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [enablingBio, setEnablingBio] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [recoveryDialogOpen, setRecoveryDialogOpen] = useState(false);
   const [hasRecoveryKey, setHasRecoveryKey] = useState(false);
+  const { vaultKey, isBiometricsSupported, hasBiometricKey, enableBiometricUnlock } = useEncryption();
   
   const [profile, setProfile] = useState<UserProfile>({
     id: '',
@@ -141,6 +144,41 @@ export default function SettingsPage() {
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleEnableBiometrics = async () => {
+    if (!profile.id) return;
+    setEnablingBio(true);
+    setMessage(null);
+
+    try {
+      const success = await enableBiometricUnlock(profile.id);
+      if (success) {
+        setMessage({ type: 'success', text: 'Biometric unlock enabled! You can now unlock your vault with your fingerprint/face.' });
+      } else {
+        throw new Error('Failed to enable biometric unlock');
+      }
+    } catch (error) {
+      setMessage({ 
+        type: 'error', 
+        text: error instanceof Error ? error.message : 'Failed to enable biometric unlock. Your device might not support the required security features.' 
+      });
+    } finally {
+      setEnablingBio(false);
+    }
+  };
+
+  const handleDisableBiometrics = async () => {
+    if (!confirm('Are you sure you want to disable biometric unlock?')) return;
+    
+    try {
+      const { db } = await import('@/lib/db-local');
+      await db.vaultKeys.where('userId').equals(profile.id).delete();
+      // Force a re-render/re-check of hasBiometricKey
+      window.location.reload(); 
+    } catch (error) {
+      setMessage({ type: 'error', text: 'Failed to disable biometric unlock' });
     }
   };
 
@@ -448,77 +486,133 @@ export default function SettingsPage() {
             Security & Recovery
           </CardTitle>
           <CardDescription>
-            Protect your encrypted data with a recovery key
+            Manage your encryption keys and biometric settings
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-            <h4 className="font-semibold text-blue-900 mb-2">Why You Need a Recovery Key</h4>
-            <ul className="text-sm text-blue-800 space-y-1">
-              <li>• Your data is encrypted end-to-end with your password</li>
-              <li>• If you forget your password, the ONLY way to recover your data is with your recovery key</li>
-              <li>• The recovery key consists of 24 words that you must store securely</li>
-              <li>• Without it, your data is permanently lost if you forget your password</li>
-            </ul>
+        <CardContent className="space-y-6">
+          {/* Biometric Unlock Section */}
+          <div className="space-y-4">
+            <h4 className="font-semibold flex items-center gap-2">
+              <Fingerprint className="h-5 w-5 text-primary" />
+              Biometric Unlock
+            </h4>
+            <div className="p-4 bg-primary/5 border border-primary/10 rounded-lg">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">Use FaceID / TouchID</p>
+                  <p className="text-xs text-muted-foreground">
+                    Unlock your encrypted data instantly without typing your password.
+                    Your biometrics are never shared with OpenNutri.
+                  </p>
+                </div>
+                {!isBiometricsSupported ? (
+                  <div className="text-xs px-2 py-1 bg-muted rounded text-muted-foreground">
+                    Not Supported
+                  </div>
+                ) : hasBiometricKey ? (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleDisableBiometrics}
+                    className="text-destructive hover:text-destructive"
+                  >
+                    Disable
+                  </Button>
+                ) : (
+                  <Button 
+                    size="sm" 
+                    onClick={handleEnableBiometrics}
+                    disabled={enablingBio || !vaultKey}
+                  >
+                    {enablingBio ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      'Enable'
+                    )}
+                  </Button>
+                )}
+              </div>
+              {!vaultKey && isBiometricsSupported && !hasBiometricKey && (
+                <p className="text-[10px] text-amber-600 mt-2 italic">
+                  * Unlock your vault with your password first to enable biometrics.
+                </p>
+              )}
+            </div>
           </div>
 
-          {hasRecoveryKey ? (
-            <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-              <div className="flex items-start gap-3">
-                <Key className="h-5 w-5 text-green-600 mt-0.5" />
-                <div>
-                  <h4 className="font-semibold text-green-900">Recovery Key Active</h4>
-                  <p className="text-sm text-green-700 mt-1">
-                    You have already generated a recovery key. Make sure you&apos;ve stored it in a secure location.
-                  </p>
-                </div>
-              </div>
+          <div className="border-t pt-6">
+            <h4 className="font-semibold flex items-center gap-2 mb-4">
+              <Key className="h-5 w-5 text-primary" />
+              Data Recovery
+            </h4>
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg mb-4">
+              <h4 className="font-semibold text-blue-900 mb-2">Why You Need a Recovery Key</h4>
+              <ul className="text-sm text-blue-800 space-y-1">
+                <li>• Your data is encrypted end-to-end with your password</li>
+                <li>• If you forget your password, the ONLY way to recover your data is with your recovery key</li>
+                <li>• The recovery key consists of 24 words that you must store securely</li>
+                <li>• Without it, your data is permanently lost if you forget your password</li>
+              </ul>
             </div>
-          ) : (
-            <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
-              <div className="flex items-start gap-3">
-                <Shield className="h-5 w-5 text-amber-600 mt-0.5" />
-                <div>
-                  <h4 className="font-semibold text-amber-900">No Recovery Key</h4>
-                  <p className="text-sm text-amber-700 mt-1">
-                    You haven&apos;t generated a recovery key yet. Your data is at risk if you forget your password.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
 
-          <div className="flex gap-3">
-            <Button
-              onClick={() => setRecoveryDialogOpen(true)}
-              className="flex-1"
-              variant={hasRecoveryKey ? 'outline' : 'default'}
-            >
-              <Key className="h-4 w-4 mr-2" />
-              {hasRecoveryKey ? 'View/Regenerate Recovery Key' : 'Generate Recovery Key'}
-            </Button>
-            {hasRecoveryKey && (
-              <Button
-                onClick={async () => {
-                  if (confirm('Are you sure you want to revoke your recovery key? Your old mnemonics will no longer work.')) {
-                    try {
-                      const response = await fetch('/api/auth/recovery-key/revoke', {
-                        method: 'POST',
-                      });
-                      if (response.ok) {
-                        setHasRecoveryKey(false);
-                        setMessage({ type: 'success', text: 'Recovery key revoked successfully' });
-                      }
-                    } catch (_error) {
-                      setMessage({ type: 'error', text: 'Failed to revoke recovery key' });
-                    }
-                  }
-                }}
-                variant="destructive"
-              >
-                Revoke
-              </Button>
+            {hasRecoveryKey ? (
+              <div className="p-4 bg-green-50 border border-green-200 rounded-lg mb-4">
+                <div className="flex items-start gap-3">
+                  <Key className="h-5 w-5 text-green-600 mt-0.5" />
+                  <div>
+                    <h4 className="font-semibold text-green-900">Recovery Key Active</h4>
+                    <p className="text-sm text-green-700 mt-1">
+                      You have already generated a recovery key. Make sure you&apos;ve stored it in a secure location.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg mb-4">
+                <div className="flex items-start gap-3">
+                  <Shield className="h-5 w-5 text-amber-600 mt-0.5" />
+                  <div>
+                    <h4 className="font-semibold text-amber-900">No Recovery Key</h4>
+                    <p className="text-sm text-amber-700 mt-1">
+                      You haven&apos;t generated a recovery key yet. Your data is at risk if you forget your password.
+                    </p>
+                  </div>
+                </div>
+              </div>
             )}
+
+            <div className="flex gap-3">
+              <Button
+                onClick={() => setRecoveryDialogOpen(true)}
+                className="flex-1"
+                variant={hasRecoveryKey ? 'outline' : 'default'}
+              >
+                <Key className="h-4 w-4 mr-2" />
+                {hasRecoveryKey ? 'View/Regenerate Recovery Key' : 'Generate Recovery Key'}
+              </Button>
+              {hasRecoveryKey && (
+                <Button
+                  onClick={async () => {
+                    if (confirm('Are you sure you want to revoke your recovery key? Your old mnemonics will no longer work.')) {
+                      try {
+                        const response = await fetch('/api/auth/recovery-key/revoke', {
+                          method: 'POST',
+                        });
+                        if (response.ok) {
+                          setHasRecoveryKey(false);
+                          setMessage({ type: 'success', text: 'Recovery key revoked successfully' });
+                        }
+                      } catch (_error) {
+                        setMessage({ type: 'error', text: 'Failed to revoke recovery key' });
+                      }
+                    }
+                  }}
+                  variant="destructive"
+                >
+                  Revoke
+                </Button>
+              )}
+            </div>
           </div>
 
           <div className="text-xs text-muted-foreground pt-4 border-t">

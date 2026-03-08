@@ -8,49 +8,103 @@
  * dynamically adjusts to the "noise" in daily measurements.
  */
 
+/**
+ * Advanced Kalman Filter for Weight Tracking (2D State)
+ *
+ * Tracks both "True Weight" and "Velocity" (rate of change).
+ * 
+ * Separates body mass from water weight noise and provides 
+ * a more accurate trend prediction.
+ */
+
 export class WeightKalmanFilter {
-  private x: number; // State (Estimated weight)
-  private p: number; // Error covariance (Estimate uncertainty)
-  private q: number; // Process noise covariance (How much weight can realistically change per day)
-  private r: number; // Measurement noise covariance (How much scale/water noise we expect)
+  private x: [number, number]; // State: [weight, velocity]
+  private p: [[number, number], [number, number]]; // Covariance matrix
+  private q: [[number, number], [number, number]]; // Process noise
+  private r: number; // Default measurement noise
 
   /**
    * @param initialWeight - The first weight measurement
-   * @param processNoise - Default 0.01 (Weight change is slow)
-   * @param measurementNoise - Default 1.5 (Daily water weight/scale noise is high)
    */
-  constructor(initialWeight: number, processNoise: number = 0.01, measurementNoise: number = 1.5) {
-    this.x = initialWeight;
-    this.p = 1.0; // Start with some initial uncertainty
-    this.q = processNoise;
-    this.r = measurementNoise;
+  constructor(initialWeight: number) {
+    this.x = [initialWeight, 0];
+    this.p = [[1, 0], [0, 1]];
+    
+    // Process noise: how much weight and velocity can change
+    const qWeight = 0.001;
+    const qVelocity = 0.00001;
+    this.q = [[qWeight, 0], [0, qVelocity]];
+    
+    this.r = 1.0; // Base measurement noise
   }
 
   /**
    * Update the filter with a new measurement
    * @param measurement - New scale reading
+   * @param customNoise - Optional noise override (e.g. for high sodium days)
    * @returns The new estimated "true" weight
    */
-  public update(measurement: number): number {
+  public update(measurement: number, customNoise?: number): number {
+    const r = customNoise || this.r;
+
     // 1. Predict
-    // x = x (State stays same in simple 1D model between steps)
-    this.p = this.p + this.q;
+    // x = F * x (where F = [1 1; 0 1] for weight + velocity)
+    const newWeight = this.x[0] + this.x[1];
+    const newVelocity = this.x[1];
+    this.x = [newWeight, newVelocity];
+
+    // p = F * p * F' + q
+    const p00 = this.p[0][0] + this.p[0][1] + this.p[1][0] + this.p[1][1] + this.q[0][0];
+    const p01 = this.p[0][1] + this.p[1][1] + this.q[0][1];
+    const p10 = this.p[1][0] + this.p[1][1] + this.q[1][0];
+    const p11 = this.p[1][1] + this.q[1][1];
+    this.p = [[p00, p01], [p10, p11]];
 
     // 2. Update
-    const k = this.p / (this.p + this.r); // Kalman gain
-    this.x = this.x + k * (measurement - this.x);
-    this.p = (1 - k) * this.p;
+    // y = z - H * x (where H = [1 0])
+    const y = measurement - this.x[0];
 
-    return this.x;
+    // s = H * p * H' + r
+    const s = this.p[0][0] + r;
+
+    // k = p * H' * s^-1
+    const k: [number, number] = [this.p[0][0] / s, this.p[1][0] / s];
+
+    // x = x + k * y
+    this.x[0] = this.x[0] + k[0] * y;
+    this.x[1] = this.x[1] + k[1] * y;
+
+    // p = (I - k * H) * p
+    const newP00 = (1 - k[0]) * this.p[0][0];
+    const newP01 = (1 - k[0]) * this.p[0][1];
+    const newP10 = -k[1] * this.p[0][0] + this.p[1][0];
+    const newP11 = -k[1] * this.p[0][1] + this.p[1][1];
+    this.p = [[newP00, newP01], [newP10, newP11]];
+
+    return this.x[0];
   }
 
   /**
-   * Process a series of weights
+   * Get the current estimated rate of change (kg/day)
    */
-  public static filter(weights: number[], processNoise: number = 0.01, measurementNoise: number = 1.5): number[] {
-    if (weights.length === 0) return [];
+  public getVelocity(): number {
+    return this.x[1];
+  }
+
+  /**
+   * Process a series of weights with optional metadata
+   */
+  public static filter(
+    entries: Array<{ weight: number; highSodium?: boolean; highCarbs?: boolean }>
+  ): number[] {
+    if (entries.length === 0) return [];
     
-    const kf = new WeightKalmanFilter(weights[0], processNoise, measurementNoise);
-    return weights.map(w => kf.update(w));
+    const kf = new WeightKalmanFilter(entries[0].weight);
+    return entries.map(e => {
+      let noise = 1.5; // Default measurement noise
+      if (e.highSodium) noise += 2.0;
+      if (e.highCarbs) noise += 1.0;
+      return kf.update(e.weight, noise);
+    });
   }
 }

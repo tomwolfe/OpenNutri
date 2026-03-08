@@ -64,6 +64,8 @@ export const userTargets = pgTable('user_targets', {
   carbTarget: integer('carb_target'),
   fatTarget: integer('fat_target'),
   weightRecord: doublePrecision('weight_record'),
+  highSodium: boolean('high_sodium').default(false),
+  highCarbs: boolean('high_carbs').default(false),
   yjsData: text('yjs_data'), // CRDT data for conflict-free sync
   version: integer('version').default(1).notNull(),
   deviceId: text('device_id'),

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Card,
   CardContent,
@@ -27,16 +28,22 @@ interface UserTarget {
   proteinTarget: number | null;
   carbTarget: number | null;
   fatTarget: number | null;
+  highSodium?: boolean;
+  highCarbs?: boolean;
 }
 
 interface WeightEntry {
   date: string;
   weight: number;
+  highSodium?: boolean;
+  highCarbs?: boolean;
 }
 
 export function WeightTracker() {
   const [open, setOpen] = useState(false);
   const [weight, setWeight] = useState('');
+  const [highSodium, setHighSodium] = useState(false);
+  const [highCarbs, setHighCarbs] = useState(false);
   const [date, setDate] = useState(new Date());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +64,8 @@ export function WeightTracker() {
           .map((t: UserTarget) => ({
             date: t.date,
             weight: t.weightRecord as number,
+            highSodium: t.highSodium,
+            highCarbs: t.highCarbs,
           }))
           .sort((a: WeightEntry, b: WeightEntry) => 
             new Date(a.date).getTime() - new Date(b.date).getTime()
@@ -96,6 +105,8 @@ export function WeightTracker() {
         body: JSON.stringify({
           date: dateStr,
           weightRecord: weightValue,
+          highSodium,
+          highCarbs,
         }),
       });
 
@@ -107,6 +118,8 @@ export function WeightTracker() {
 
       setSuccess(true);
       setWeight('');
+      setHighSodium(false);
+      setHighCarbs(false);
       fetchWeightHistory();
 
       // Close dialog after success
@@ -234,6 +247,12 @@ export function WeightTracker() {
                             day: 'numeric',
                           })}
                         </span>
+                        {(entry.highSodium || entry.highCarbs) && (
+                          <div className="flex gap-1">
+                            {entry.highSodium && <span className="text-[10px] bg-amber-100 text-amber-700 px-1 rounded">Na</span>}
+                            {entry.highCarbs && <span className="text-[10px] bg-blue-100 text-blue-700 px-1 rounded">CHO</span>}
+                          </div>
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{entry.weight.toFixed(1)} kg</span>
@@ -283,6 +302,25 @@ export function WeightTracker() {
                 onChange={(e) => setWeight(e.target.value)}
                 required
               />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex items-center space-x-2">
+                <Checkbox 
+                  id="highSodium" 
+                  checked={highSodium} 
+                  onCheckedChange={(checked) => setHighSodium(!!checked)} 
+                />
+                <Label htmlFor="highSodium" className="text-xs">High Sodium</Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Checkbox 
+                  id="highCarbs" 
+                  checked={highCarbs} 
+                  onCheckedChange={(checked) => setHighCarbs(!!checked)} 
+                />
+                <Label htmlFor="highCarbs" className="text-xs">High Carbs</Label>
+              </div>
             </div>
 
             {error && (

@@ -4,15 +4,27 @@
  * Generates vector embeddings for semantic food matching.
  * Uses Zhipu GLM embedding API (same provider as vision).
  */
+import { generateEmbeddingInWorker } from './worker-client';
 
 /**
  * Generate embedding vector for a text string
- * Uses GLM embedding model (same as vision for consistency)
+ * Uses Local Transformers.js in browser, GLM API on server.
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
+  // Use Web Worker in browser for local-first, zero-cost embeddings
+  if (typeof window !== 'undefined') {
+    try {
+      return await generateEmbeddingInWorker(text);
+    } catch (err) {
+      console.warn('Local embedding failed, falling back to API', err);
+    }
+  }
+
   const apiKey = process.env.GLM_API_KEY;
-  
+
   if (!apiKey) {
+// ... (rest of function)
+
     console.warn('GLM_API_KEY not configured, returning zero vector');
     return new Array(1024).fill(0);
   }

@@ -59,6 +59,8 @@ export interface LocalUserTarget {
   carbTarget: number | null;
   fatTarget: number | null;
   weightRecord: number | null;
+  highSodium?: boolean;
+  highCarbs?: boolean;
   yjsData?: string | null; // Base64 encoded Yjs update
   version: number;
   deviceId: string | null;
@@ -103,6 +105,25 @@ export interface LocalHealthData {
   updatedAt: number;
 }
 
+export interface LocalVaultKey {
+  userId: string;
+  credentialId: string;
+  encryptedVaultKey: string; // Base64
+  iv: string; // Base64
+  updatedAt: number;
+}
+
+export interface LocalSemanticMatch {
+  id: string; // fdcId string or foodName
+  description: string;
+  embedding: number[];
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  lastUsed: number;
+}
+
 export class OpenNutriDB extends Dexie {
   pendingImages!: Table<PendingImage>;
   foodLogs!: Table<LocalFoodLog>;
@@ -112,10 +133,12 @@ export class OpenNutriDB extends Dexie {
   decryptedImages!: Table<DecryptedImage>;
   userRecipes!: Table<LocalUserRecipe>;
   healthData!: Table<LocalHealthData>;
+  vaultKeys!: Table<LocalVaultKey>;
+  localSemanticCache!: Table<LocalSemanticMatch>;
 
   constructor() {
     super('OpenNutriDB');
-    this.version(6).stores({
+    this.version(8).stores({
       pendingImages: 'id, timestamp',
       foodLogs: 'id, userId, timestamp, synced, updatedAt',
       decryptedLogs: 'id, userId, timestamp',
@@ -124,6 +147,8 @@ export class OpenNutriDB extends Dexie {
       decryptedImages: 'id, timestamp',
       userRecipes: 'id, userId, name, synced, updatedAt',
       healthData: '[userId+date], userId, date',
+      vaultKeys: 'userId, credentialId',
+      localSemanticCache: 'id, lastUsed',
     });
   }
 

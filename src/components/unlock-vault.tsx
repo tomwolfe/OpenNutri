@@ -11,8 +11,9 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useEncryption } from '@/hooks/useEncryption';
+import { useSession } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -24,7 +25,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Lock, KeyRound } from 'lucide-react';
+import { Lock, KeyRound, Fingerprint } from 'lucide-react';
 
 interface UnlockVaultProps {
   onUnlocked: () => void;
@@ -34,7 +35,9 @@ interface UnlockVaultProps {
 export function UnlockVault({ onUnlocked, onError }: UnlockVaultProps) {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { unlockVault } = useEncryption();
+  const [isBioLoading, setIsBioLoading] = useState(false);
+  const { unlockVault, unlockWithBiometrics, isBiometricsSupported, hasBiometricKey } = useEncryption();
+  const { data: session } = useSession();
 
   const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,6 +70,25 @@ export function UnlockVault({ onUnlocked, onError }: UnlockVaultProps) {
     }
   };
 
+  const handleBiometricUnlock = async () => {
+    if (!session?.user?.id) return;
+    setIsBioLoading(true);
+
+    try {
+      const success = await unlockWithBiometrics(session.user.id);
+      if (success) {
+        onUnlocked();
+      } else {
+        onError?.('Biometric unlock failed. Please use your password.');
+      }
+    } catch (error) {
+      console.error('Biometric unlock error:', error);
+      onError?.('Biometric unlock failed.');
+    } finally {
+      setIsBioLoading(false);
+    }
+  };
+
   return (
     <div className="flex min-h-[60vh] items-center justify-center p-4">
       <Card className="w-full max-w-md">
@@ -82,6 +104,34 @@ export function UnlockVault({ onUnlocked, onError }: UnlockVaultProps) {
         </CardHeader>
         <form onSubmit={handleUnlock}>
           <CardContent className="space-y-4">
+            {isBiometricsSupported && hasBiometricKey && (
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full py-8 text-lg flex flex-col items-center gap-2 mb-4"
+                onClick={handleBiometricUnlock}
+                disabled={isBioLoading || isLoading}
+              >
+                {isBioLoading ? (
+                  <span className="h-8 w-8 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                ) : (
+                  <Fingerprint className="h-8 w-8 text-primary" />
+                )}
+                <span>Unlock with Biometrics</span>
+              </Button>
+            )}
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-background px-2 text-muted-foreground">
+                  {isBiometricsSupported && hasBiometricKey ? 'Or use password' : 'Enter password'}
+                </span>
+              </div>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
               <div className="relative">
@@ -94,13 +144,13 @@ export function UnlockVault({ onUnlocked, onError }: UnlockVaultProps) {
                   onChange={(e) => setPassword(e.target.value)}
                   className="pl-10"
                   required
-                  autoFocus
+                  autoFocus={!hasBiometricKey}
                 />
               </div>
             </div>
           </CardContent>
           <CardFooter className="flex flex-col space-y-2">
-            <Button type="submit" className="w-full" disabled={isLoading}>
+            <Button type="submit" className="w-full" disabled={isLoading || isBioLoading}>
               {isLoading ? (
                 <>
                   <span className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />

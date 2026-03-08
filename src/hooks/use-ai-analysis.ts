@@ -46,27 +46,75 @@ export function useAiAnalysis({
           usdaMatch: item?.usdaMatch,
         }));
         
+import { searchLocalHistory, addToLocalCache } from '@/lib/ai-local-semantic';
+
+// ... (existing interfaces)
+
         onItemsIdentified(aiItems);
         onUploadProgress?.('review');
 
-        // USDA Enrichment
+        // USDA Enrichment with Local Cache Fallback
         try {
-          const res = await fetch('/api/food/usda/batch', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ items: aiItems }),
-          });
-          
-          if (res.ok) {
-            const enrichedData = await res.json();
-            onItemsIdentified(enrichedData.items.map((item: DraftItem) => ({
-              ...item,
-              source: item.source || 'USDA',
-              isEnhancing: false,
-            })));
-          } else {
-            onItemsIdentified(aiItems.map(item => ({ ...item, isEnhancing: false })));
+          const enrichedItems = [...aiItems];
+          const itemsToFetch: number[] = [];
+
+          // 1. Try local semantic match first
+          for (let i = 0; i < enrichedItems.length; i++) {
+            const item = enrichedItems[i];
+            const localMatch = await searchLocalHistory(item.foodName);
+            
+            if (localMatch) {
+              enrichedItems[i] = {
+                ...item,
+                calories: localMatch.calories,
+                protein: localMatch.protein,
+                carbs: localMatch.carbs,
+                fat: localMatch.fat,
+                source: 'LOCAL_CACHE',
+                isEnhancing: false,
+              };
+            } else {
+              itemsToFetch.push(i);
+            }
           }
+
+          // 2. Only fetch remaining items from server
+          if (itemsToFetch.length > 0) {
+            const fetchItems = itemsToFetch.map(idx => enrichedItems[idx]);
+            const res = await fetch('/api/food/usda/batch', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ items: fetchItems }),
+            });
+            
+            if (res.ok) {
+              const enrichedData = await res.json();
+              const serverItems = enrichedData.items as DraftItem[];
+              
+              serverItems.forEach((item, idx) => {
+                const originalIdx = itemsToFetch[idx];
+                enrichedItems[originalIdx] = {
+                  ...item,
+                  source: item.source || 'USDA',
+                  isEnhancing: false,
+                };
+
+                // 3. Add to local cache for future use
+                if (item.foodName && item.calories) {
+                  addToLocalCache({
+                    id: item.usdaMatch?.fdcId || item.foodName,
+                    description: item.foodName,
+                    calories: item.calories,
+                    protein: item.protein || 0,
+                    carbs: item.carbs || 0,
+                    fat: item.fat || 0,
+                  });
+                }
+              });
+            }
+          }
+
+          onItemsIdentified(enrichedItems);
         } catch (err) {
           console.error('USDA enrichment failed:', err);
           onItemsIdentified(aiItems.map(item => ({ ...item, isEnhancing: false })));

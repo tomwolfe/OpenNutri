@@ -17,6 +17,7 @@ if (navigator.gpu) {
 }
 
 let classifier: any = null;
+let embedder: any = null;
 
 // Initialize the model with WebGPU device if possible
 async function getClassifier() {
@@ -37,26 +38,36 @@ async function getClassifier() {
   }
 }
 
+async function getEmbedder() {
+  if (embedder) return embedder;
+  
+  try {
+    // all-MiniLM-L6-v2 is small (23MB) and efficient for embeddings
+    embedder = await pipeline('feature-extraction', 'xenova/all-MiniLM-L6-v2', {
+      device: navigator.gpu ? 'webgpu' : 'wasm',
+    });
+    return embedder;
+  } catch (err) {
+    console.warn('WebGPU initialization failed for embedder, falling back to WASM', err);
+    embedder = await pipeline('feature-extraction', 'xenova/all-MiniLM-L6-v2', {
+      device: 'wasm',
+    });
+    return embedder;
+  }
+}
+
 /**
  * Find the closest macro match for a label
  */
-function getMacrosForLabel(label: string) {
-  const normalized = label.toLowerCase();
-  for (const [key, value] of Object.entries(FOOD_MACROS)) {
-    if (normalized.includes(key) || key.includes(normalized)) {
-      return value;
-    }
-  }
-  return null;
-}
+// ... (keep getMacrosForLabel)
 
 // Listen for messages from the main thread
 self.onmessage = async (event) => {
-  const { type, image } = event.data;
+  const { type, image, text } = event.data;
 
   if (type === 'classify') {
     try {
-      const model = await getClassifier() as (image: unknown) => Promise<Array<{ label: string; score: number }>>;
+      const model = await getClassifier();
       const rawResults = await model(image);
       
       // Enrich results with macro estimates
@@ -68,6 +79,16 @@ self.onmessage = async (event) => {
       self.postMessage({ type: 'results', results });
     } catch (error) {
       console.error('Worker: classification failed', error);
+      self.postMessage({ type: 'error', error: String(error) });
+    }
+  } else if (type === 'embed') {
+    try {
+      const model = await getEmbedder();
+      const output = await model(text, { pooling: 'mean', normalize: true });
+      const embedding = Array.from(output.data);
+      self.postMessage({ type: 'embedding', embedding, text });
+    } catch (error) {
+      console.error('Worker: embedding generation failed', error);
       self.postMessage({ type: 'error', error: String(error) });
     }
   }
