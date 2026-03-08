@@ -31,7 +31,7 @@ export const maxDuration = 60;
  */
 export async function POST(request: NextRequest) {
   let imageUrlToDelete: string | null = null;
-  
+
   try {
     // Check authentication
     const session = await auth();
@@ -62,7 +62,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Track image for deletion after analysis
+    // Track image for deletion after analysis (only if it's a Vercel Blob URL, not Base64)
+    // Base64 images are held in memory and automatically discarded after function execution
     if (imageUrl && !imageUrl.startsWith('data:')) {
       imageUrlToDelete = imageUrl;
     }
@@ -169,8 +170,9 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   } finally {
-    // IMMEDIATELY PURGE the unencrypted image from Vercel Blob storage
-    // This ensures that the AI's "eyes" are only on the data for as long as needed
+    // PURGE the unencrypted image from Vercel Blob storage (if applicable)
+    // Base64 images never touch storage - they're held in memory and automatically discarded
+    // This ensures Zero-Knowledge: plaintext images never persist on our servers
     if (imageUrlToDelete) {
       try {
         await deleteFoodImage(imageUrlToDelete);

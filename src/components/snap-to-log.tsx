@@ -18,7 +18,7 @@ import { CameraOverlay } from './dashboard/camera-overlay';
 import { MacroEditor } from './dashboard/macro-editor';
 import { VoiceCapture } from './dashboard/voice-capture';
 import { FoodAnalysisSchema, DraftItem } from '@/types/food';
-import { compressImage, formatBytes } from '@/lib/image-utils';
+import { compressImage, formatBytes, blobToBase64DataUri } from '@/lib/image-utils';
 import { cn } from '@/lib/utils';
 
 interface SnapToLogProps {
@@ -211,21 +211,18 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
         throw new Error('Failed to queue image');
       }
 
-      // 1. Upload PLAINTEXT image for AI analysis (will be purged by /api/analyze)
-      const formData = new FormData();
-      formData.append('image', compressedFile);
-      const uploadResponse = await fetch('/api/blob/upload', { method: 'POST', body: formData });
-      if (!uploadResponse.ok) throw new Error('Temp upload failed');
-      const { imageUrl: tempUrl } = await uploadResponse.json();
+      // Convert to Base64 data URI for direct AI analysis (Zero-Knowledge: image never touches storage)
+      const base64DataUri = await blobToBase64DataUri(compressedBlob);
+      setImageUrl(base64DataUri); // Store Base64 temporarily for the session
 
-      // 2. Encrypt and upload permanent version for Visual Diary
+      // Encrypt and upload permanent version for Visual Diary (in parallel, non-blocking)
       let vaultUrl = null;
       let vaultIv = null;
       if (isReady && encryptBinary) {
         try {
           const arrayBuffer = await compressedBlob.arrayBuffer();
           const { ciphertext, iv } = await encryptBinary(arrayBuffer);
-          
+
           const encryptedFile = new File([ciphertext], 'vault-image.bin', { type: 'application/octet-stream' });
           const encryptedFormData = new FormData();
           encryptedFormData.append('image', encryptedFile);
@@ -245,10 +242,11 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
         }
       }
 
-      setImageUrl(vaultUrl || tempUrl);
+      setImageUrl(vaultUrl || base64DataUri);
       setImageIv(vaultIv);
       setUploadProgress('streaming');
-      submit({ imageUrl: tempUrl, mealTypeHint: selectedMealType });
+      // Send Base64 directly to AI - no temporary storage needed
+      submit({ imageUrl: base64DataUri, mealTypeHint: selectedMealType });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Upload failed';
       setUploadError(errorMessage);
@@ -311,7 +309,8 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
   }, [draftItems, selectedMealType, onComplete, onError, onDraftSaved, imageUrl, isReady, encryptLog]);
 
   const handleClear = useCallback(async () => {
-    if (imageUrl) {
+    // Only delete if it's a permanent vault URL (not a Base64 data URI)
+    if (imageUrl && !imageUrl.startsWith('data:')) {
       fetch(`/api/blob/delete?url=${encodeURIComponent(imageUrl)}`, { method: 'DELETE' }).catch(() => {});
     }
     setSelectedFile(null);

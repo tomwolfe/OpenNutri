@@ -12,7 +12,7 @@ import { WeightChart } from '@/components/weight-chart';
 import { OnboardingWizard } from '@/components/onboarding-wizard';
 import { QuickWeightInput } from '@/components/quick-weight-input';
 import { useEncryption } from '@/hooks/useEncryption';
-import { useNutritionStore } from '@/stores/use-nutrition-store';
+import { useDailyLogs } from '@/hooks/use-daily-logs';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -40,26 +40,28 @@ export default function DashboardPage() {
   const { vaultKey } = useEncryption();
   const router = useRouter();
 
-  // Zustand Store
+  // State for selected date
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+
+  // useDailyLogs Hook (reactive Dexie queries)
   const {
-    selectedDate,
-    setSelectedDate,
     logs: dailyLogs,
     dailyTotals,
     isLoading: loading,
-    fetchLogs,
-  } = useNutritionStore();
+    triggerSync,
+    removeLog,
+  } = useDailyLogs(selectedDate, session?.user?.id, vaultKey);
 
   const [snapDialogOpen, setSnapDialogOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [checkingOnboarding, setCheckingOnboarding] = useState(true);
 
-  // Fetch logs when date or encryption status changes
+  // Trigger background sync when authenticated
   useEffect(() => {
-    if (status === 'authenticated' && session?.user?.id) {
-      fetchLogs(selectedDate, session.user.id, vaultKey);
+    if (status === 'authenticated' && session?.user?.id && vaultKey) {
+      triggerSync(session.user.id, vaultKey).catch(console.error);
     }
-  }, [selectedDate, vaultKey, fetchLogs, status, session?.user?.id]);
+  }, [status, session?.user?.id, vaultKey, triggerSync]);
 
   // Check if user needs onboarding
   useEffect(() => {

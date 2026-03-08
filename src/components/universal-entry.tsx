@@ -3,11 +3,11 @@
 import { useState, useRef, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useEncryption } from '@/hooks/useEncryption';
-import { useNutritionStore, type LogItem } from '@/stores/use-nutrition-store';
 import { useOfflineQueue } from '@/hooks/use-offline-queue';
-import { 
-  Loader2, Search, Camera, Barcode, Mic, Plus, 
-  CheckCircle, WifiOff 
+import { useDailyLogs } from '@/hooks/use-daily-logs';
+import {
+  Loader2, Search, Camera, Barcode, Mic, Plus,
+  CheckCircle, WifiOff
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,7 +20,7 @@ import { MacroEditor } from '@/components/dashboard/macro-editor';
 import { experimental_useObject as useObject } from '@ai-sdk/react';
 import { FoodAnalysisSchema, DraftItem } from '@/types/food';
 import { db } from '@/lib/db-local';
-import { compressImage, formatBytes } from '@/lib/image-utils';
+import { compressImage, formatBytes, blobToBase64DataUri } from '@/lib/image-utils';
 import { cn } from '@/lib/utils';
 
 interface UniversalEntryProps {
@@ -46,7 +46,9 @@ type UploadProgress = 'idle' | 'uploading' | 'streaming' | 'review' | 'complete'
 export function UniversalEntry({ onComplete }: UniversalEntryProps) {
   const { data: session } = useSession();
   const { vaultKey, encryptLog, encryptBinary, isReady } = useEncryption();
-  const { selectedMealType, setSelectedMealType, fetchLogs, selectedDate } = useNutritionStore();
+  const [selectedMealType, setSelectedMealType] = useState('breakfast');
+  const [selectedDate] = useState(new Date());
+  const { triggerSync } = useDailyLogs(selectedDate, session?.user?.id, vaultKey);
   const { isAvailable: isOnline } = useOfflineQueue();
 
   // State
@@ -191,21 +193,18 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
       const compressedFile = new File([compressedBlob], 'food-analysis.webp', { type: 'image/webp' });
       setCompressionStats({ original: file.size, compressed: compressedBlob.size });
 
-      // 1. Upload PLAINTEXT image for AI analysis (will be purged by /api/analyze)
-      const formData = new FormData();
-      formData.append('image', compressedFile);
-      const uploadResponse = await fetch('/api/blob/upload', { method: 'POST', body: formData });
-      if (!uploadResponse.ok) throw new Error('Temp upload failed');
-      const { imageUrl: tempUrl } = await uploadResponse.json();
+      // Convert to Base64 data URI for direct AI analysis (Zero-Knowledge: image never touches storage)
+      const base64DataUri = await blobToBase64DataUri(compressedBlob);
+      setImageUrl(base64DataUri); // Store Base64 temporarily for the session
 
-      // 2. Encrypt and upload permanent version for Visual Diary
+      // Encrypt and upload permanent version for Visual Diary (in parallel, non-blocking)
       let vaultUrl = null;
       let vaultIv = null;
       if (isReady && encryptBinary) {
         try {
           const arrayBuffer = await compressedBlob.arrayBuffer();
           const { ciphertext, iv } = await encryptBinary(arrayBuffer);
-          
+
           const encryptedFile = new File([ciphertext], 'vault-image.bin', { type: 'application/octet-stream' });
           const encryptedFormData = new FormData();
           encryptedFormData.append('image', encryptedFile);
@@ -225,10 +224,11 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
         }
       }
 
-      setImageUrl(vaultUrl || tempUrl);
+      setImageUrl(vaultUrl || base64DataUri);
       setImageIv(vaultIv);
       setUploadProgress('streaming');
-      submit({ imageUrl: tempUrl, mealTypeHint: selectedMealType });
+      // Send Base64 directly to AI - no temporary storage needed
+      submit({ imageUrl: base64DataUri, mealTypeHint: selectedMealType });
     } catch (err) {
       console.error('Upload failed', err);
       setUploadProgress('idle');
@@ -295,11 +295,15 @@ const response = await fetch('/api/log/food', {
 
 
       if (!response.ok) throw new Error('Failed to save');
-      
+
       setUploadProgress('complete');
       setTimeout(() => {
         onComplete?.();
-        if (session?.user?.id) fetchLogs(selectedDate, session.user.id, vaultKey);
+        // Dexie live query will automatically update the UI
+        // Trigger background sync to push to server
+        if (session?.user?.id && vaultKey) {
+          triggerSync(session.user.id, vaultKey).catch(console.error);
+        }
       }, 1000);
     } catch (err) {
       console.error('Save failed', err);
