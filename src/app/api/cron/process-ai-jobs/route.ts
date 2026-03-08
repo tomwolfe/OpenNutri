@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { processAiJobsQueue } from '@/workers/ai-jobs-processor';
+import { auth } from '@/lib/auth';
 
 export const maxDuration = 60; // 60 seconds max for cron job
 
@@ -29,7 +30,11 @@ export async function POST(request: NextRequest) {
   // Skip secret check in development
   if (process.env.NODE_ENV === 'production' && cronSecret) {
     if (!authHeader || authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      // Fallback: Check if the request is coming from an authenticated client session
+      const session = await auth();
+      if (!session?.user?.id) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
     }
   }
 

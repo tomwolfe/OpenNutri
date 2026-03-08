@@ -146,6 +146,13 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
 
       setJobId(data.jobId);
       setUploadProgress('analyzing');
+
+      // Trigger immediate processing from the client
+      fetch(`/api/cron/process-ai-jobs?jobId=${data.jobId}`, {
+        method: 'POST',
+      }).catch((err) => {
+        console.error('Immediate processing trigger failed:', err);
+      });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Upload failed';
       onError?.(errorMessage);
