@@ -99,9 +99,50 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
   const [isEditingItems, setIsEditingItems] = useState(false);
   const [saveInProgress, setSaveInProgress] = useState(false);
   const [currentStatus, setCurrentStatus] = useState<string>('');
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [isEnhancingUsda, setIsEnhancingUsda] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Client-side USDA enhancement (runs in background after AI analysis)
+  const enhanceItemsWithUSDA = useCallback(async (items: DraftItem[]) => {
+    setIsEnhancingUsda(true);
+
+    try {
+      // Enhance each item in parallel
+      const enhancedItems = await Promise.all(
+        items.map(async (item) => {
+          try {
+            const response = await fetch(`/api/food/usda?query=${encodeURIComponent(item.foodName)}`);
+            if (response.ok) {
+              const data = await response.json();
+              if (data.foods && data.foods.length > 0) {
+                const usdaFood = data.foods[0];
+                // Found a USDA match - use official data
+                return {
+                  ...item,
+                  foodName: usdaFood.description,
+                  calories: usdaFood.calories || item.calories,
+                  protein: usdaFood.protein || item.protein,
+                  carbs: usdaFood.carbohydrate || item.carbs,
+                  fat: usdaFood.totalLipid || item.fat,
+                  source: 'USDA',
+                };
+              }
+            }
+          } catch {
+            // Ignore individual item errors, keep AI estimate
+          }
+          return item;
+        })
+      );
+
+      setDraftItems(enhancedItems);
+    } finally {
+      setIsEnhancingUsda(false);
+    }
+  }, []);
 
   // Handle file selection
   const handleFileSelect = useCallback((file: File) => {
@@ -208,8 +249,11 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
               } else if (message.type === 'result') {
                 // Analysis complete
                 setDraftItems(message.items);
+                setImageUrl(message.imageUrl);
                 setUploadProgress('review');
                 setCurrentStatus('');
+                // Trigger client-side USDA enhancement
+                enhanceItemsWithUSDA(message.items);
               } else if (message.type === 'error') {
                 throw new Error(message.error);
               }
@@ -233,7 +277,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
     } finally {
       abortControllerRef.current = null;
     }
-  }, [selectedFile, selectedMealType, onError]);
+  }, [selectedFile, selectedMealType, onError, enhanceItemsWithUSDA]);
 
   // Save draft as verified food log
   const handleSaveDraft = useCallback(async () => {
@@ -285,7 +329,22 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
   }, [draftItems, selectedMealType, onComplete, onError, onDraftSaved]);
 
   // Clear selection and reset
-  const handleClear = useCallback(() => {
+  const handleClear = useCallback(async () => {
+    // Cleanup blob image if it exists and wasn't saved
+    if (imageUrl && uploadProgress !== 'complete') {
+      try {
+        await fetch('/api/blob/delete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ imageUrl }),
+        });
+      } catch (err) {
+        console.error('Failed to delete blob image:', err);
+      }
+    }
+
     setSelectedFile(null);
     setPreviewUrl(null);
     setDraftItems([]);
@@ -294,6 +353,8 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
     setUploadProgress('idle');
     setStreamError(null);
     setCurrentStatus('');
+    setImageUrl(null);
+    setIsEnhancingUsda(false);
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
@@ -301,7 +362,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-  }, []);
+  }, [imageUrl, uploadProgress]);
 
   // Update item field
   const updateItemField = useCallback((index: number, field: keyof DraftItem, value: number | string) => {
@@ -546,6 +607,12 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
                     Food Items ({draftItems.length})
                   </h4>
                   <div className="flex gap-2">
+                    {isEnhancingUsda && (
+                      <span className="text-xs text-blue-600 flex items-center gap-1">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Enhancing...
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={() => setIsEditingItems(!isEditingItems)}

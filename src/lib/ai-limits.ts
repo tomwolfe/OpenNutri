@@ -2,16 +2,16 @@
  * AI Rate Limiting and Quota Management
  *
  * Implements daily scan limits for free tier users.
- * Uses food_logs table to track AI-assisted entries.
+ * Uses ai_usage table to track API executions (not just saved logs).
  */
 
 import { db } from '@/lib/db';
-import { foodLogs, users } from '@/db/schema';
+import { aiUsage, users } from '@/db/schema';
 import { eq, and, gte, sql } from 'drizzle-orm';
 
 /**
  * Get the number of AI scans a user has performed today
- * Counts food logs with AI confidence score > 0 (AI-assisted entries)
+ * Counts ai_usage entries (API executions, regardless of save)
  * @param userId - User ID to check
  * @returns Number of AI scans today
  */
@@ -19,15 +19,14 @@ export async function getUserDailyAiScanCount(userId: string): Promise<number> {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // Count food logs with AI confidence score (AI-assisted entries)
+  // Count ai_usage entries (API executions)
   const result = await db
     .select({ count: sql<number>`count(*)` })
-    .from(foodLogs)
+    .from(aiUsage)
     .where(
       and(
-        eq(foodLogs.userId, userId),
-        gte(foodLogs.timestamp, today),
-        sql`${foodLogs.aiConfidenceScore} > 0`
+        eq(aiUsage.userId, userId),
+        gte(aiUsage.timestamp, today)
       )
     );
 

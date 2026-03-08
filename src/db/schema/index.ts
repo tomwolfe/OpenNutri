@@ -19,41 +19,15 @@ import {
 import { relations } from 'drizzle-orm';
 
 // ============================================
-// NextAuth Tables (required for Auth.js v5)
+// AI Usage Tracking Table
 // ============================================
-export const accounts = pgTable('accounts', {
+export const aiUsage = pgTable('ai_usage', {
+  id: uuid('id').defaultRandom().primaryKey(),
   userId: text('user_id')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  type: text('type').notNull(),
-  provider: text('provider').notNull(),
-  providerAccountId: text('provider_account_id').notNull(),
-  refresh_token: text('refresh_token'),
-  access_token: text('access_token'),
-  expires_at: integer('expires_at'),
-  token_type: text('token_type'),
-  scope: text('scope'),
-  id_token: text('id_token'),
-  session_state: text('session_state'),
-}, (table) => ({
-  pk: { primaryKey: { columns: [table.provider, table.providerAccountId] } },
-}));
-
-export const sessions = pgTable('sessions', {
-  sessionToken: text('session_token').primaryKey(),
-  userId: text('user_id')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  expires: timestamp('expires', { withTimezone: true }).notNull(),
+    .references(() => users.id, { onDelete: 'cascade' })
+    .notNull(),
+  timestamp: timestamp('timestamp', { withTimezone: true }).defaultNow(),
 });
-
-export const verificationTokens = pgTable('verification_tokens', {
-  identifier: text('identifier').notNull(),
-  token: text('token').notNull(),
-  expires: timestamp('expires', { withTimezone: true }).notNull(),
-}, (table) => ({
-  pk: { primaryKey: { columns: [table.identifier, table.token] } },
-}));
 
 // ============================================
 // Users Table
@@ -128,6 +102,14 @@ export const logItems = pgTable('log_items', {
 export const usersRelations = relations(users, ({ many }) => ({
   userTargets: many(userTargets),
   foodLogs: many(foodLogs),
+  aiUsage: many(aiUsage),
+}));
+
+export const aiUsageRelations = relations(aiUsage, ({ one }) => ({
+  user: one(users, {
+    fields: [aiUsage.userId],
+    references: [users.id],
+  }),
 }));
 
 export const userTargetsRelations = relations(userTargets, ({ one }) => ({
@@ -158,6 +140,9 @@ export const logItemsRelations = relations(logItems, ({ one }) => ({
 
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+
+export type AiUsage = typeof aiUsage.$inferSelect;
+export type NewAiUsage = typeof aiUsage.$inferInsert;
 
 export type UserTargets = typeof userTargets.$inferSelect;
 export type NewUserTargets = typeof userTargets.$inferInsert;

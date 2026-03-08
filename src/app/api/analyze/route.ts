@@ -17,7 +17,8 @@ import { auth } from '@/lib/auth';
 import { uploadFoodImage } from '@/lib/blob';
 import { getUserDailyAiScanCount } from '@/lib/ai-limits';
 import { analyzeFoodImageStream } from '@/lib/glm-vision-stream';
-import { enhanceWithUSDAData } from '@/lib/ai-usda-bridge';
+import { db } from '@/lib/db';
+import { aiUsage } from '@/db/schema';
 
 export const runtime = 'edge';
 export const maxDuration = 120; // Allow up to 2 minutes for streaming
@@ -125,6 +126,9 @@ export async function POST(request: NextRequest) {
     // Upload to Vercel Blob (File is natively supported)
     const imageUrl = await uploadFoodImage(file, userId);
 
+    // Log AI usage BEFORE starting analysis (closes the rate limit loophole)
+    await db.insert(aiUsage).values({ userId });
+
     // Send initial status
     write({
       type: 'status',
@@ -173,49 +177,34 @@ export async function POST(request: NextRequest) {
           return;
         }
 
-        write({
-          type: 'status',
-          status: 'enhancing',
-          message: 'Enhancing with USDA data...',
-        });
-
-        // Enhance AI results with USDA data
-        const enhancedItems = await enhanceWithUSDAData(analysisResult.items);
-
-        const usdaMatchCount = enhancedItems.filter(
-          (item) => item.source === 'USDA'
-        ).length;
-
-        // Calculate confidence and calories
+        // Calculate confidence and calories from AI estimates
         const avgConfidence = analysisResult.items.reduce(
           (sum, item) => sum + (item.confidence || 0),
           0
         ) / analysisResult.items.length;
 
-        const totalCalories = enhancedItems.reduce(
-          (sum, item) => sum + item.calories,
+        const totalCalories = analysisResult.items.reduce(
+          (sum, item) => sum + (item.calories || 0),
           0
         );
 
-        // Convert to draft format
-        const draftItems = enhancedItems.map((item) => ({
-          foodName: item.foodName,
+        // Convert to draft format (USDA enhancement moved to client-side)
+        const draftItems = analysisResult.items.map((item) => ({
+          foodName: item.name,
           calories: item.calories,
-          protein: item.protein,
-          carbs: item.carbs,
-          fat: item.fat,
-          source: item.source,
+          protein: item.protein_g,
+          carbs: item.carbs_g,
+          fat: item.fat_g,
+          source: 'AI_ESTIMATE',
           servingGrams: 100, // Default serving size
-          usdaMatch: 'usdaMatch' in item ? item.usdaMatch : undefined,
         }));
 
-        // Send final result
+        // Send final result immediately (no USDA wait)
         write({
           type: 'result',
           items: draftItems,
           totalCalories,
           aiConfidenceScore: avgConfidence,
-          usdaMatchCount,
           imageUrl,
         });
 
