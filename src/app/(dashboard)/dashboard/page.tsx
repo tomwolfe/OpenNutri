@@ -10,6 +10,7 @@ import { CoachingDashboard } from '@/components/coaching-dashboard';
 import { DataExport } from '@/components/data-export';
 import { WeightTracker } from '@/components/weight-tracker';
 import { WeightChart } from '@/components/weight-chart';
+import { OnboardingWizard } from '@/components/onboarding-wizard';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -32,6 +33,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import Image from 'next/image';
 import { Calendar } from '@/components/ui/calendar';
 import { Loader2, LogOut, Plus, Utensils, Camera, Settings } from 'lucide-react';
 
@@ -52,6 +54,7 @@ interface FoodLog {
   aiConfidenceScore: number;
   isVerified: boolean;
   timestamp: string;
+  imageUrl?: string | null;
   items: LogItem[];
 }
 
@@ -77,6 +80,8 @@ export default function DashboardPage() {
   const [selectedMealType, setSelectedMealType] = useState<string>('breakfast');
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [snapDialogOpen, setSnapDialogOpen] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [checkingOnboarding, setCheckingOnboarding] = useState(true);
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
@@ -92,13 +97,40 @@ export default function DashboardPage() {
     }
   }, [selectedDate]);
 
+  // Check if user needs onboarding
+  useEffect(() => {
+    if (status === 'authenticated') {
+      checkOnboardingNeeded();
+    }
+  }, [status]);
+
+  const checkOnboardingNeeded = async () => {
+    try {
+      const response = await fetch('/api/profile');
+      if (response.ok) {
+        const data = await response.json();
+        // Show onboarding if profile is incomplete (missing key fields)
+        const needsOnboarding =
+          !data.profile?.birthDate ||
+          !data.profile?.gender ||
+          !data.profile?.heightCm ||
+          !data.profile?.activityLevel;
+        setShowOnboarding(needsOnboarding);
+      }
+    } catch (error) {
+      console.error('Failed to check onboarding:', error);
+    } finally {
+      setCheckingOnboarding(false);
+    }
+  };
+
   useEffect(() => {
     if (status === 'authenticated') {
       fetchLogs();
     }
   }, [status, fetchLogs]);
 
-  if (status === 'loading') {
+  if (status === 'loading' || checkingOnboarding) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin" />
@@ -109,6 +141,11 @@ export default function DashboardPage() {
   if (status === 'unauthenticated') {
     router.push('/login');
     return null;
+  }
+
+  // Show onboarding wizard if needed
+  if (showOnboarding) {
+    return <OnboardingWizard onComplete={() => setShowOnboarding(false)} />;
   }
 
   const getMealLogs = (mealType: string) => {
@@ -334,11 +371,24 @@ export default function DashboardPage() {
                             <span className="text-xs text-muted-foreground">
                               {formatTime(log.timestamp)}
                             </span>
-                            {log.isVerified && (
-                              <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">
-                                Verified
-                              </span>
-                            )}
+                            <div className="flex items-center gap-2">
+                              {log.isVerified && (
+                                <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">
+                                  Verified
+                                </span>
+                              )}
+                              {log.imageUrl && (
+                                <div className="relative h-12 w-12 overflow-hidden rounded-md border bg-gray-100">
+                                  <Image
+                                    src={log.imageUrl}
+                                    alt="Meal photo"
+                                    fill
+                                    className="object-cover"
+                                    sizes="48px"
+                                  />
+                                </div>
+                              )}
+                            </div>
                           </div>
                           <div className="space-y-1">
                             {log.items.map((item) => (

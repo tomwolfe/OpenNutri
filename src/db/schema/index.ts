@@ -77,6 +77,7 @@ export const foodLogs = pgTable('food_logs', {
   totalCalories: integer('total_calories'),
   aiConfidenceScore: doublePrecision('ai_confidence_score'), // >0 for AI-assisted, 0/null for manual
   isVerified: boolean('is_verified').default(false),
+  imageUrl: text('image_url'), // Vercel Blob URL for meal photo
 }, (table) => ({
   userIdIdx: index('food_logs_user_id_idx').on(table.userId),
   timestampIdx: index('food_logs_timestamp_idx').on(table.timestamp),

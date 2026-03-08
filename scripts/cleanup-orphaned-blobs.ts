@@ -2,8 +2,15 @@
  * Cleanup Orphaned Blob Images
  *
  * Deletes images from Vercel Blob that are:
- * - Older than 7 days
+ * - Older than 24 hours
  * - Not referenced by any food_log in the database
+ *
+ * This script handles cleanup for:
+ * - Images from abandoned/cancelled AI scans
+ * - Images where the user closed the tab before saving
+ *
+ * Images that are successfully saved are kept in the database
+ * and shown as meal photo thumbnails in the dashboard.
  *
  * Run weekly via Vercel Cron or manually.
  */
@@ -21,37 +28,38 @@ const sql = neon(process.env.DATABASE_URL!);
 /**
  * Configuration
  */
-const MAX_AGE_DAYS = 7; // Delete images older than 7 days
+const MAX_AGE_HOURS = 24; // Delete images older than 24 hours (changed from 7 days)
 const BATCH_SIZE = 100; // Process in batches to avoid rate limits
 
 /**
  * Get all image URLs referenced in food_logs
- * Note: Currently images are deleted after save, so this is for future-proofing
  */
 async function getReferencedImageUrls(): Promise<Set<string>> {
   try {
     // Check if image_url column exists in food_logs
     const columnCheck: any = await sql.query(`
-      SELECT column_name 
-      FROM information_schema.columns 
+      SELECT column_name
+      FROM information_schema.columns
       WHERE table_name = 'food_logs' AND column_name = 'image_url';
     `);
-    
+
     const columns = Array.isArray(columnCheck) ? columnCheck : columnCheck?.rows || [];
-    
+
     if (columns.length === 0) {
-      // No image_url column in food_logs (current architecture)
-      // All blobs are potentially orphaned if not cleaned up on cancel
+      // No image_url column in food_logs
+      // All blobs are potentially orphaned
+      console.log('   ⚠️  image_url column not found in food_logs table');
       return new Set();
     }
 
     const result: any = await sql.query(`
-      SELECT DISTINCT image_url 
-      FROM food_logs 
+      SELECT DISTINCT image_url
+      FROM food_logs
       WHERE image_url IS NOT NULL;
     `);
 
     const rows = Array.isArray(result) ? result : result?.rows || [];
+    console.log(`   ✓ Found ${rows.length} referenced image(s) in database`);
     return new Set(rows.map((r: any) => r.image_url));
   } catch (error) {
     console.error('Error checking referenced images:', error);
@@ -109,10 +117,10 @@ async function cleanupOrphanedBlobs() {
   console.log('🧹 Starting orphaned blob cleanup...\n');
 
   const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - MAX_AGE_DAYS);
+  cutoffDate.setHours(cutoffDate.getHours() - MAX_AGE_HOURS);
 
   console.log(`📅 Cutoff date: ${cutoffDate.toISOString()}`);
-  console.log(`   (Deleting blobs older than ${MAX_AGE_DAYS} days not referenced in DB)\n`);
+  console.log(`   (Deleting blobs older than ${MAX_AGE_HOURS} hours not referenced in DB)\n`);
 
   // Get referenced images
   console.log('🔍 Checking database for referenced images...');

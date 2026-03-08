@@ -13,7 +13,7 @@
 
 'use client';
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import Image from 'next/image';
 import { Camera, Upload, X, CheckCircle, AlertCircle, Loader2, Edit2, Save } from 'lucide-react';
 import { experimental_useObject as useObject } from '@ai-sdk/react';
@@ -42,6 +42,7 @@ interface DraftItem {
   fat: number;
   source: string;
   servingGrams: number;
+  isEnhancing?: boolean; // Track per-item enhancement status
 }
 
 interface SnapToLogProps {
@@ -81,39 +82,8 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
   const [isEditingItems, setIsEditingItems] = useState(false);
   const [saveInProgress, setSaveInProgress] = useState(false);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [isEnhancingUsda, setIsEnhancingUsda] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Cleanup: Delete blob image if component unmounts without saving
-  useEffect(() => {
-    return () => {
-      // Only cleanup if we have an image that wasn't saved
-      if (imageUrl && uploadProgress !== 'complete' && uploadProgress !== 'idle') {
-        fetch('/api/blob/delete', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ imageUrl }),
-        }).catch((err) => console.error('Cleanup blob deletion:', err));
-      }
-    };
-  }, [imageUrl, uploadProgress]);
-
-  // Proactive cleanup using sendBeacon for reliable "cleanup on close"
-  useEffect(() => {
-    const handleUnload = () => {
-      // Use navigator.sendBeacon for reliable cleanup when user closes/refreshes page
-      if (imageUrl && uploadProgress !== 'complete' && uploadProgress !== 'idle') {
-        const blob = new Blob([JSON.stringify({ imageUrl })], { type: 'application/json' });
-        navigator.sendBeacon('/api/blob/delete', blob);
-      }
-    };
-
-    window.addEventListener('beforeunload', handleUnload);
-    return () => window.removeEventListener('beforeunload', handleUnload);
-  }, [imageUrl, uploadProgress]);
 
   // Vercel AI SDK useObject hook for native streaming
   const { submit, object } = useObject({
@@ -121,7 +91,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
     schema: FoodAnalysisSchema,
     onFinish: async (event) => {
       if (event.object?.items) {
-        // Convert AI response to draft format
+        // Convert AI response to draft format with enhancement tracking
         const convertedItems = event.object.items.map((item) => ({
           foodName: item.name,
           calories: item.calories || 0,
@@ -130,13 +100,14 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
           fat: item.fat_g || 0,
           source: 'AI_ESTIMATE',
           servingGrams: 100,
+          isEnhancing: true, // Mark as being enhanced
         }));
 
         setDraftItems(convertedItems);
         setUploadProgress('review');
 
-        // Trigger batch USDA enhancement
-        await enhanceItemsWithUSDA(convertedItems);
+        // Enhance items individually for smoother UX
+        await enhanceItemsIndividually(convertedItems);
       }
     },
     onError: (err) => {
@@ -147,27 +118,39 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
     },
   });
 
-  // Client-side USDA enhancement (batch request)
-  const enhanceItemsWithUSDA = useCallback(async (items: DraftItem[]) => {
-    setIsEnhancingUsda(true);
+  // Enhance items individually for smoother UX (no global "pop-in")
+  const enhanceItemsIndividually = useCallback(async (items: DraftItem[]) => {
+    // Process each item one at a time for visible progress
+    const enhancedItems = [...items];
 
-    try {
-      const response = await fetch('/api/food/usda/batch', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ items }),
-      });
+    for (let i = 0; i < enhancedItems.length; i++) {
+      try {
+        const response = await fetch('/api/food/usda/batch', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ items: [enhancedItems[i]] }),
+        });
 
-      if (response.ok) {
-        const data = await response.json();
-        setDraftItems(data.items);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.items && data.items[0]) {
+            // Update this specific item with USDA data
+            enhancedItems[i] = {
+              ...data.items[0],
+              isEnhancing: false,
+            };
+            setDraftItems([...enhancedItems]);
+          }
+        } else {
+          // Mark enhancement as complete even on error
+          enhancedItems[i].isEnhancing = false;
+        }
+      } catch {
+        // Ignore errors, keep AI estimates
+        enhancedItems[i].isEnhancing = false;
       }
-    } catch {
-      // Ignore errors, keep AI estimates
-    } finally {
-      setIsEnhancingUsda(false);
     }
   }, []);
 
@@ -263,6 +246,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
           items: draftItems,
           totalCalories,
           aiConfidenceScore: 0.8,
+          imageUrl, // Save the image URL for future reference
         }),
       });
 
@@ -272,14 +256,8 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
         throw new Error(data.error || 'Failed to save log');
       }
 
-      // Cleanup: Delete the temporary image from Vercel Blob
-      if (imageUrl) {
-        fetch('/api/blob/delete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageUrl }),
-        }).catch((err) => console.error('Failed to cleanup blob:', err));
-      }
+      // Image is now saved with the log - no cleanup needed
+      // The weekly cron job will handle orphaned blobs after 24h
 
       setUploadProgress('complete');
       onDraftSaved?.();
@@ -304,22 +282,13 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
 
   // Clear selection and reset
   const handleClear = useCallback(async () => {
-    // Cleanup blob image if it exists and wasn't saved
-    if (imageUrl && uploadProgress !== 'complete') {
-      try {
-        await fetch('/api/blob/delete', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ imageUrl }),
-        });
-      } catch (err) {
-        console.error('Failed to delete blob image:', err);
-      }
-    }
+    // Note: We no longer delete blobs immediately on cancel
+    // The weekly cron job handles orphaned blobs after 24h
 
     setSelectedFile(null);
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
     setPreviewUrl(null);
     setDraftItems([]);
     setSelectedMealType('unclassified');
@@ -327,11 +296,10 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
     setUploadProgress('idle');
     setUploadError(null);
     setImageUrl(null);
-    setIsEnhancingUsda(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-  }, [imageUrl, uploadProgress]);
+  }, [previewUrl]);
 
   // Update item field
   const updateItemField = useCallback((index: number, field: keyof DraftItem, value: number | string) => {
@@ -409,6 +377,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
         fat: item?.fat_g ?? 0,
         source: 'AI_ESTIMATE',
         servingGrams: 100,
+        isEnhancing: false,
       }))
     : draftItems;
 
@@ -600,12 +569,6 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
                       Food Items ({displayItems.length})
                     </h4>
                     <div className="flex gap-2">
-                      {isEnhancingUsda && (
-                        <span className="text-xs text-blue-600 flex items-center gap-1">
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                          Enhancing...
-                        </span>
-                      )}
                       <button
                         type="button"
                         onClick={() => setIsEditingItems(!isEditingItems)}
@@ -633,9 +596,17 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
                         className="p-3 bg-gray-50 rounded-lg border border-gray-200"
                       >
                         <div className="flex justify-between items-start mb-2">
-                          <p className="text-sm font-medium text-gray-900">
-                            {item.foodName}
-                          </p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium text-gray-900">
+                              {item.foodName}
+                            </p>
+                            {item.isEnhancing && (
+                              <span className="text-xs text-blue-600 flex items-center gap-1">
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                                Matching USDA...
+                              </span>
+                            )}
+                          </div>
                           {isEditingItems && (
                             <button
                               type="button"

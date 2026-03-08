@@ -3,9 +3,12 @@
  *
  * Automatically matches AI-detected food items with USDA database entries
  * to provide more accurate and "official" nutritional data.
+ *
+ * Uses in-memory LRU cache for faster repeated lookups.
  */
 
 import { searchFoods, extractMacros, type USDAFoodItem } from '@/lib/usda';
+import { getCachedUSDAMatch, cacheUSDAMatch } from '@/lib/ai-usda-cache';
 
 /**
  * Calculate Levenshtein distance between two strings
@@ -63,6 +66,15 @@ function stringSimilarity(str1: string, str2: string): number {
  */
 export async function matchFoodToUSDA(foodName: string): Promise<USDAFoodItem | null> {
   try {
+    // Check cache first
+    const cachedFdcId = getCachedUSDAMatch(foodName);
+    if (cachedFdcId) {
+      console.log(`Cache hit for "${foodName}" -> FDC ID: ${cachedFdcId}`);
+      // Fetch full details from cache or API
+      const details = await getFoodDetailsWithCache(cachedFdcId);
+      return details;
+    }
+
     // Clean up the food name for better search
     const cleanName = foodName
       .replace(/\b(?:grilled|fried|baked|roasted|steamed|boiled)\b/gi, '')
@@ -84,9 +96,30 @@ export async function matchFoodToUSDA(foodName: string): Promise<USDAFoodItem | 
     // Find best match using Levenshtein distance and word overlap
     const bestMatch = findBestMatch(cleanName, results.foods);
 
+    // Cache the result if we found a good match
+    if (bestMatch) {
+      console.log(`Caching "${foodName}" -> FDC ID: ${bestMatch.fdcId}`);
+      cacheUSDAMatch(foodName, bestMatch.fdcId);
+    }
+
     return bestMatch || null;
   } catch (error) {
     console.error(`Failed to match "${foodName}" to USDA:`, error);
+    return null;
+  }
+}
+
+/**
+ * Get food details with additional caching layer
+ */
+async function getFoodDetailsWithCache(fdcId: number): Promise<USDAFoodItem | null> {
+  try {
+    // The USDA search already uses Next.js caching, but we can add
+    // an extra layer here if needed for frequently accessed items
+    const { getFoodDetails } = await import('@/lib/usda');
+    return await getFoodDetails(fdcId);
+  } catch (error) {
+    console.error(`Failed to fetch food details for FDC ID ${fdcId}:`, error);
     return null;
   }
 }
