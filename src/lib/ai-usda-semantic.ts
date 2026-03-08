@@ -29,7 +29,7 @@ export async function matchFoodToUSDAWithAlternatives(
     const queryVector = toVector(embedding);
 
     // Search cache
-    const matches = await searchCacheBySimilarity(queryVector, limit);
+    const matches = await searchCacheBySimilarity(queryVector, cleanName, limit);
     
     if (matches.length > 0) {
       return matches.map(m => ({
@@ -52,7 +52,7 @@ export async function matchFoodToUSDAWithAlternatives(
 
     await cacheUSDAItems(results.foods);
     
-    const freshMatches = await searchCacheBySimilarity(queryVector, limit);
+    const freshMatches = await searchCacheBySimilarity(queryVector, cleanName, limit);
     return freshMatches.map(m => ({
       fdcId: m.fdcId,
       description: m.description,
@@ -82,10 +82,11 @@ export async function matchFoodToUSDA(foodName: string): Promise<USDAFoodItem | 
 }
 
 /**
- * Search USDA cache by vector similarity
+ * Search USDA cache by vector similarity with a two-stage hybrid approach
  */
 async function searchCacheBySimilarity(
   queryVector: string,
+  foodName: string,
   limit: number = 5
 ): Promise<Array<{
   fdcId: number;
@@ -100,6 +101,44 @@ async function searchCacheBySimilarity(
   try {
     const similarity = sql<number>`1 - (${cosineDistance(usdaCache.embedding, queryVector)})`;
     
+    // Stage 1: Broad Text Match (BM25-lite)
+    // We fetch a larger pool of potential matches using text search
+    const textMatchPool = await db
+      .select({
+        fdcId: usdaCache.fdcId,
+        description: usdaCache.description,
+        dataType: usdaCache.dataType,
+        calories: usdaCache.calories,
+        protein: usdaCache.protein,
+        carbs: usdaCache.carbs,
+        fat: usdaCache.fat,
+      })
+      .from(usdaCache)
+      .where(sql`${usdaCache.description} ILIKE ${`%${foodName}%`}`)
+      .limit(50);
+
+    if (textMatchPool.length > 0) {
+      // Stage 2: Vector Reranking on the text pool
+      const reranked = await db
+        .select({
+          fdcId: usdaCache.fdcId,
+          description: usdaCache.description,
+          dataType: usdaCache.dataType,
+          calories: usdaCache.calories,
+          protein: usdaCache.protein,
+          carbs: usdaCache.carbs,
+          fat: usdaCache.fat,
+          similarity: similarity.as('similarity'),
+        })
+        .from(usdaCache)
+        .where(sql`${usdaCache.fdcId} IN (${textMatchPool.map(r => r.fdcId)})`)
+        .orderBy(desc(similarity))
+        .limit(limit);
+      
+      if (reranked.length > 0) return reranked;
+    }
+
+    // Fallback: Pure vector search if text match yielded nothing
     const results = await db
       .select({
         fdcId: usdaCache.fdcId,
@@ -112,7 +151,7 @@ async function searchCacheBySimilarity(
         similarity: similarity.as('similarity'),
       })
       .from(usdaCache)
-      .where(sql`${similarity} > 0.5`) // Return more potential matches for fallback UI
+      .where(sql`${similarity} > 0.5`)
       .orderBy(desc(similarity))
       .limit(limit);
 

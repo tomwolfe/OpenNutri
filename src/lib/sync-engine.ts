@@ -5,10 +5,7 @@
  * Powered by Yjs CRDTs for robust multi-device synchronization.
  */
 
-import { db, type LocalFoodLog, type LocalUserTarget } from '@/lib/db-local';
-import { decryptBatchInWorker } from '@/lib/worker-client';
-import { mergeCrdt, encodeYDoc, createYDoc, applyYUpdate } from '@/lib/crdt';
-import * as Y from 'yjs';
+import { db } from '@/lib/db-local';
 
 /**
  * Sync conflict representation
@@ -20,78 +17,6 @@ export interface SyncConflict {
   serverVersion: number;
   localData?: unknown;
   serverData?: unknown;
-}
-
-/**
- * Domain-aware conflict resolution for food logs
- */
-function resolveLogConflict(
-  localLog: LocalFoodLog | undefined,
-  serverLog: LocalFoodLog
-): { mergedUpdate: string; mergedData: Record<string, unknown> } {
-  // 1. Initial CRDT merge (handles property-level merge)
-  const { mergedUpdate, mergedData } = mergeCrdt(
-    localLog?.yjsData || null,
-    serverLog.yjsData || null,
-    localLog || serverLog,
-    serverLog
-  );
-
-  if (!localLog) return { mergedUpdate, mergedData: mergedData as Record<string, unknown> };
-
-  // 2. Domain-aware overrides
-  const doc = new Y.Doc();
-  applyYUpdate(doc, mergedUpdate);
-  const map = doc.getMap('data');
-  let needsOverride = false;
-  const currentData = mergedData as Record<string, unknown>;
-
-  // Rule: Prefer verified data
-  if (localLog.isVerified && !serverLog.isVerified) {
-    if (!currentData.isVerified) {
-      map.set('isVerified', true);
-      map.set('totalCalories', localLog.totalCalories);
-      map.set('mealType', localLog.mealType);
-      map.set('aiConfidenceScore', localLog.aiConfidenceScore);
-      // If we have local verified data, we MUST preserve the encrypted payload too
-      map.set('encryptedData', localLog.encryptedData);
-      map.set('encryptionIv', localLog.encryptionIv);
-      needsOverride = true;
-    }
-  } else if (!localLog.isVerified && serverLog.isVerified) {
-    if (!currentData.isVerified) {
-      map.set('isVerified', true);
-      map.set('totalCalories', serverLog.totalCalories);
-      map.set('mealType', serverLog.mealType);
-      map.set('aiConfidenceScore', serverLog.aiConfidenceScore);
-      map.set('encryptedData', serverLog.encryptedData);
-      map.set('encryptionIv', serverLog.encryptionIv);
-      needsOverride = true;
-    }
-  } 
-  // Rule: If neither/both verified, prefer higher AI confidence
-  else if (localLog.aiConfidenceScore !== null && serverLog.aiConfidenceScore !== null) {
-    const diff = (localLog.aiConfidenceScore || 0) - (serverLog.aiConfidenceScore || 0);
-    if (Math.abs(diff) > 0.05) {
-      const preferred = diff > 0 ? localLog : serverLog;
-      if (currentData.aiConfidenceScore !== preferred.aiConfidenceScore) {
-        map.set('aiConfidenceScore', preferred.aiConfidenceScore);
-        map.set('totalCalories', preferred.totalCalories);
-        map.set('encryptedData', preferred.encryptedData);
-        map.set('encryptionIv', preferred.encryptionIv);
-        needsOverride = true;
-      }
-    }
-  }
-
-  if (needsOverride) {
-    return {
-      mergedUpdate: encodeYDoc(doc),
-      mergedData: map.toJSON() as Record<string, unknown>
-    };
-  }
-
-  return { mergedUpdate, mergedData: currentData };
 }
 
 /**
@@ -125,201 +50,37 @@ function setLastSyncTimestamp(timestamp: number): void {
 }
 
 /**
- * Ensure an item has yjsData by seeding it if missing
- */
-function ensureYjsData<T extends { yjsData?: string | null }>(item: T): T {
-  if (!item.yjsData) {
-    const doc = createYDoc(item as Record<string, unknown>);
-    return { ...item, yjsData: encodeYDoc(doc) };
-  }
-  return item;
-}
-
-/**
- * Global Delta Sync
- * Pulls all changes since last sync and pushes local changes.
+ * Global Delta Sync (Offloaded to Worker)
  */
 export async function syncDelta(
   userId: string,
   vaultKey: CryptoKey | null
 ): Promise<{ success: boolean; pulled: number; pushed: number; conflicts?: SyncConflict[] }> {
   try {
+    const { syncDeltaInWorker, decryptBatchInWorker } = await import('@/lib/worker-client');
     const deviceId = getDeviceId();
     const since = getLastSyncTimestamp();
 
-    // 1. PUSH: Find all unsynced local data
-    let unsyncedLogs = await db.foodLogs
-      .filter(log => !log.synced && log.userId === userId)
-      .toArray();
+    // 1. Offload the main sync logic to the worker
+    const { pulled, pushed, serverTime } = await syncDeltaInWorker(userId, deviceId, since);
 
-    let unsyncedTargets = await db.userTargets
-      .filter(target => !target.synced && target.userId === userId)
-      .toArray();
-
-    // Seed yjsData for items that don't have it yet (migration step)
-    unsyncedLogs = unsyncedLogs.map(ensureYjsData);
-    unsyncedTargets = unsyncedTargets.map(ensureYjsData);
-
-    let pushed = 0;
-
-    if (unsyncedLogs.length > 0 || unsyncedTargets.length > 0) {
-      console.log(`SyncEngine: Pushing ${unsyncedLogs.length} logs and ${unsyncedTargets.length} targets...`);
-
-      const pushPayload = {
-        logs: unsyncedLogs.map(log => ({
-          ...log,
-          timestamp: log.timestamp.toISOString(),
-          deviceId,
-          version: (log.version || 0) + 1,
-        })),
-        targets: unsyncedTargets.map(target => ({
-          ...target,
-          deviceId,
-          version: (target.version || 0) + 1,
-        })),
-      };
-
-      const response = await fetch('/api/sync/delta/push', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(pushPayload),
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        const serverConflicts = result.conflicts || [];
-        
-        // Mark pushed items as synced, unless they conflicted
-        if (unsyncedLogs.length > 0) {
-          for (const log of unsyncedLogs) {
-            const hasConflict = serverConflicts.some((c: { type: string; id: string }) => c.type === 'log' && c.id === log.id);
-            if (hasConflict) {
-              console.warn(`SyncEngine: Conflict detected for log ${log.id}, skipping sync mark`);
-              continue;
-            }
-
-            await db.foodLogs.update(log.id, {
-              synced: true,
-              yjsData: log.yjsData,
-              version: (log.version || 0) + 1,
-              deviceId,
-            });
-            pushed++;
-          }
-        }
-
-        if (unsyncedTargets.length > 0) {
-          for (const target of unsyncedTargets) {
-            const hasConflict = serverConflicts.some((c: { type: string; id: string }) => c.type === 'target' && c.id === `${userId}-${target.date}`);
-            if (hasConflict) {
-              console.warn(`SyncEngine: Conflict detected for target ${target.date}, skipping sync mark`);
-              continue;
-            }
-
-            await db.userTargets.update([target.userId, target.date], {
-              synced: true,
-              yjsData: target.yjsData,
-              version: (target.version || 0) + 1,
-              deviceId,
-            });
-            pushed++;
-          }
-        }
-      }
-    }
-
-    // 2. PULL: Fetch all changes since last sync
-    const response = await fetch(`/api/sync/delta?since=${since}`);
-    if (!response.ok) {
-      return { success: false, pulled: 0, pushed };
-    }
-
-    const data = await response.json();
-    const serverLogs = (data.logs || []) as LocalFoodLog[];
-    const serverTargets = (data.targets || []) as LocalUserTarget[];
-
-    let pulled = 0;
-
-    // 3. MERGE: Update local Dexie with server data
-    const logsToDecrypt: LocalFoodLog[] = [];
-
-    await db.transaction('rw', db.foodLogs, db.decryptedLogs, db.userTargets, async () => {
-      // Merge logs using Domain-Aware strategy
-      for (const sLog of serverLogs) {
-        if (sLog.deviceId === deviceId) continue;
-
-        const localLog = await db.foodLogs.get(sLog.id);
-        
-        // Use Domain-Aware Merge
-        const { mergedUpdate, mergedData } = resolveLogConflict(localLog, sLog);
-        const currentData = mergedData as Record<string, unknown>;
-
-        // If local had changes that were merged, we need to push the merged result back
-        const hasLocalChanges = localLog && !localLog.synced;
-        const isActuallyDifferent = mergedUpdate !== sLog.yjsData;
-        const needsRePush = hasLocalChanges || isActuallyDifferent;
-
-        const newLocalLog: LocalFoodLog = {
-          ...sLog,
-          ...currentData,
-          yjsData: mergedUpdate,
-          timestamp: new Date((currentData.timestamp as string | number | Date) || sLog.timestamp),
-          updatedAt: Date.now(),
-          synced: !needsRePush,
-          version: Math.max(localLog?.version || 0, sLog.version || 0) + 1,
-        } as LocalFoodLog;
-
-        await db.foodLogs.put(newLocalLog);
-
-        if (newLocalLog.encryptedData && newLocalLog.encryptionIv && vaultKey) {
-          logsToDecrypt.push(newLocalLog);
-        }
-
-        pulled++;
-      }
-
-
-      // Merge targets using CRDT strategy
-      for (const sTarget of serverTargets) {
-        if (sTarget.deviceId === deviceId) continue;
-
-        const localTarget = await db.userTargets.get([sTarget.userId, sTarget.date]);
-        
-        // CRDT Merge
-        const { mergedUpdate, mergedData } = mergeCrdt(
-          localTarget?.yjsData || null,
-          sTarget.yjsData || null,
-          localTarget || sTarget,
-          sTarget
-        );
-        const currentData = mergedData as Record<string, unknown>;
-
-        const hasLocalChanges = localTarget && !localTarget.synced;
-        const isActuallyDifferent = mergedUpdate !== sTarget.yjsData;
-        const needsRePush = hasLocalChanges || isActuallyDifferent;
-
-        await db.userTargets.put({
-          ...sTarget,
-          ...currentData,
-          yjsData: mergedUpdate,
-          synced: !needsRePush,
-          updatedAt: Date.now(),
-          version: Math.max(localTarget?.version || 0, sTarget.version || 0) + 1,
-        } as LocalUserTarget);
-        pulled++;
-      }
-
-      // 4. DECRYPT & CACHE logs
-      if (logsToDecrypt.length > 0 && vaultKey) {
+    // 2. Handle decryption (optional, could also be moved to sync worker if desired)
+    // For now we still do batch decryption on the main thread's trigger but in its own worker
+    if (pulled > 0 && vaultKey) {
+      // Find logs that were just pulled and need decryption
+      const logsToDecrypt = await db.foodLogs
+        .filter(log => log.updatedAt >= Date.now() - 5000) // Rough filter for just-pulled
+        .toArray();
+      
+      if (logsToDecrypt.length > 0) {
         const decryptedResults = await decryptBatchInWorker(logsToDecrypt, vaultKey);
         if (decryptedResults.length > 0) {
           await db.decryptedLogs.bulkPut(decryptedResults);
         }
       }
-    });
+    }
 
-    setLastSyncTimestamp(data.serverTime || Date.now());
-
+    setLastSyncTimestamp(serverTime);
     return { success: true, pulled, pushed };
   } catch (error) {
     console.error('SyncEngine: Delta sync error', error);

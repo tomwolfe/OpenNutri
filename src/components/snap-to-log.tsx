@@ -385,7 +385,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
       setUploadProgress('idle');
       onError?.(errorMessage);
     }
-  }, [selectedFile, selectedMealType, isOnline, queueImage, onError, submit, isReady, vaultKey, encryptBinary, generateSessionKey, exportKeyToBase64]);
+  }, [selectedFile, previewUrl, selectedMealType, isOnline, queueImage, onError, submit, isReady, vaultKey, encryptBinary, generateSessionKey, exportKeyToBase64, enrichItemsWithUsda]);
 
   const handleSaveDraft = useCallback(async () => {
     if (draftItems.length === 0) return;

@@ -55,17 +55,17 @@ export async function POST(request: NextRequest) {
     const contentType = request.headers.get('content-type') || '';
 
     let isEncrypted = false;
-    let sessionKeyBase64: string | null = null;
-    let ivBase64: string | null = null;
+    let sessionKeyBase64: string | null = request.headers.get('x-session-key');
+    let ivBase64: string | null = request.headers.get('x-session-iv');
 
     if (contentType.includes('multipart/form-data')) {
       const formData = await request.formData();
       const imageFile = formData.get('image') as File | null;
       textInput = formData.get('text') as string | null;
       mealTypeHint = formData.get('mealTypeHint') as string | null;
-      isEncrypted = formData.get('isEncrypted') === 'true';
-      sessionKeyBase64 = formData.get('sessionKey') as string | null;
-      ivBase64 = formData.get('iv') as string | null;
+      isEncrypted = formData.get('isEncrypted') === 'true' || !!sessionKeyBase64;
+      sessionKeyBase64 = sessionKeyBase64 || (formData.get('sessionKey') as string | null);
+      ivBase64 = ivBase64 || (formData.get('iv') as string | null);
 
       if (imageFile) {
         imageSource = await imageFile.arrayBuffer();
@@ -77,9 +77,9 @@ export async function POST(request: NextRequest) {
       
       textInput = text;
       mealTypeHint = hint;
-      isEncrypted = enc;
-      sessionKeyBase64 = key;
-      ivBase64 = iv;
+      isEncrypted = enc || !!sessionKeyBase64;
+      sessionKeyBase64 = sessionKeyBase64 || key;
+      ivBase64 = ivBase64 || iv;
 
       if (imageUrl) {
         if (imageUrl.startsWith('data:')) {

@@ -62,6 +62,7 @@ export function getYData<T = unknown>(base64Update: string): T {
 
 /**
  * Merges server and local updates using CRDT logic
+ * Supports nested Y.Array for 'items' to prevent array-overwrite conflicts
  */
 export function mergeCrdt(
   localUpdate: string | null,
@@ -70,14 +71,22 @@ export function mergeCrdt(
   serverFallback: Record<string, unknown>
 ): { mergedUpdate: string; mergedData: unknown } {
   const doc = new Y.Doc();
+  const map = doc.getMap('data');
   
   // 1. Start with server state (as baseline)
   if (serverUpdate) {
     applyYUpdate(doc, serverUpdate);
   } else {
     // If no server update, seed with server fallback data
-    const map = doc.getMap('data');
-    Object.entries(serverFallback).forEach(([k, v]) => map.set(k, v));
+    Object.entries(serverFallback).forEach(([k, v]) => {
+      if (k === 'items' && Array.isArray(v)) {
+        const yArray = new Y.Array();
+        yArray.insert(0, v);
+        map.set(k, yArray);
+      } else {
+        map.set(k, v);
+      }
+    });
   }
 
   // 2. Apply local state
@@ -85,10 +94,25 @@ export function mergeCrdt(
     applyYUpdate(doc, localUpdate);
   } else {
     // If no local update, apply local fallback data as local changes
-    const map = doc.getMap('data');
     Object.entries(localFallback).forEach(([k, v]) => {
-      // Only set if different or missing to avoid unnecessary history
-      if (map.get(k) !== v) map.set(k, v);
+      // Handle special case for items array to use Y.Array fragments
+      if (k === 'items' && Array.isArray(v)) {
+        let yArray = map.get(k);
+        if (!(yArray instanceof Y.Array)) {
+          yArray = new Y.Array();
+          map.set(k, yArray);
+        }
+        
+        // Very simple diffing: if lengths match and items look similar, don't re-insert
+        // In a real app, we'd use IDs for items to merge accurately.
+        const currentItems = (yArray as Y.Array<unknown>).toArray();
+        if (JSON.stringify(currentItems) !== JSON.stringify(v)) {
+          (yArray as Y.Array<unknown>).delete(0, (yArray as Y.Array<unknown>).length);
+          (yArray as Y.Array<unknown>).insert(0, v);
+        }
+      } else if (map.get(k) !== v) {
+        map.set(k, v);
+      }
     });
   }
 

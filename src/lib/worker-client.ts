@@ -9,6 +9,52 @@ import { type CoachingInsight, type MacroTargets, type IntakePoint } from './coa
 
 let encryptionWorker: Worker | null = null;
 let coachingWorker: Worker | null = null;
+let syncWorker: Worker | null = null;
+
+function getSyncWorker(): Worker {
+  if (typeof window === 'undefined') {
+    throw new Error('Worker can only be used in the browser');
+  }
+  
+  if (!syncWorker) {
+    syncWorker = new Worker(
+      new URL('../workers/sync.worker.ts', import.meta.url)
+    );
+  }
+  
+  return syncWorker;
+}
+
+/**
+ * Perform sync delta in a web worker
+ */
+export async function syncDeltaInWorker(
+  userId: string,
+  deviceId: string,
+  lastSyncTimestamp: number
+): Promise<{ pulled: number; pushed: number; serverTime: number }> {
+  const w = getSyncWorker();
+
+  return new Promise((resolve, reject) => {
+    const handler = (event: MessageEvent) => {
+      const { type, payload } = event.data;
+
+      if (type === 'SYNC_DELTA_SUCCESS') {
+        w.removeEventListener('message', handler);
+        resolve(payload);
+      } else if (type === 'ERROR') {
+        w.removeEventListener('message', handler);
+        reject(new Error(payload));
+      }
+    };
+
+    w.addEventListener('message', handler);
+    w.postMessage({
+      type: 'SYNC_DELTA',
+      payload: { userId, deviceId, lastSyncTimestamp }
+    });
+  });
+}
 
 function getEncryptionWorker(): Worker {
   if (typeof window === 'undefined') {
