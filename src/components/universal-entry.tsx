@@ -214,7 +214,10 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
             const { imageUrl: eUrl } = await encryptedUploadResponse.json();
             vaultUrl = eUrl;
             // Convert IV to base64 for JSON storage
-            const binary = String.fromCharCode(...new Uint8Array(iv));
+            const ivArray = new Uint8Array(iv);
+            const binary = Array.from(ivArray)
+              .map(byte => String.fromCharCode(byte))
+              .join('');
             vaultIv = btoa(binary);
           }
         } catch (err) {

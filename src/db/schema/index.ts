@@ -203,6 +203,10 @@ export const userKeys = pgTable('user_keys', {
   encryptionIv: text('encryption_iv').notNull(), // IV for decryption
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   lastRotated: timestamp('last_rotated', { withTimezone: true }),
+  // Recovery key fields (BIP-39 mnemonic backup)
+  recoveryKeySalt: text('recovery_key_salt'), // Salt for recovery key derivation
+  encryptedRecoveryKey: text('encrypted_recovery_key'), // Master key encrypted with recovery key
+  recoveryKeyIv: text('recovery_key_iv'), // IV for recovery key decryption
 });
 
 export const userKeysRelations = relations(userKeys, ({ one }) => ({

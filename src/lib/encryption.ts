@@ -250,13 +250,19 @@ export async function encryptBinary(
 ): Promise<{ ciphertext: ArrayBuffer; iv: Uint8Array }> {
   try {
     const iv = generateIV();
+    // Ensure data is an ArrayBuffer (not SharedArrayBuffer)
+    const dataBuffer = data instanceof Uint8Array ? data.buffer.slice(
+      data.byteOffset,
+      data.byteOffset + data.byteLength
+    ) as ArrayBuffer : data;
+    
     const ciphertext = await crypto.subtle.encrypt(
       {
         name: ENCRYPTION_ALGORITHM,
         iv: iv.buffer as ArrayBuffer,
       },
       key,
-      data
+      dataBuffer
     );
 
     return {
@@ -282,10 +288,15 @@ export async function decryptBinary(
   key: CryptoKey
 ): Promise<ArrayBuffer> {
   try {
+    // Ensure IV is an ArrayBuffer (not SharedArrayBuffer)
+    const ivBuffer = iv instanceof Uint8Array
+      ? iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength) as ArrayBuffer
+      : iv;
+    
     const decrypted = await crypto.subtle.decrypt(
       {
         name: ENCRYPTION_ALGORITHM,
-        iv: iv instanceof Uint8Array ? iv.buffer : iv,
+        iv: ivBuffer,
       },
       key,
       ciphertext

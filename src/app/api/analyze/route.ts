@@ -209,7 +209,7 @@ async function fetchRecentFoods(
       .innerJoin(foodLogs, eq(logItems.logId, foodLogs.id))
       .where(eq(foodLogs.userId, userId))
       .orderBy(desc(foodLogs.timestamp))
-      .limit(50);
+      .limit(100);
 
     // Aggregate by food name: calculate frequency
     const foodMap = new Map<string, number>();
@@ -227,9 +227,9 @@ async function fetchRecentFoods(
       freq,
     }));
 
-    // Sort by frequency and return top 5
+    // Sort by frequency and return top 20 (increased from 5 for better context)
     foods.sort((a, b) => b.freq - a.freq);
-    return foods.slice(0, 5);
+    return foods.slice(0, 20);
   } catch (error) {
     console.error('Failed to fetch recent foods:', error);
     return [];

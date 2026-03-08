@@ -37,6 +37,9 @@ export async function GET() {
       salt: keys.salt,
       encryptedVaultKey: keys.encryptedVaultKey,
       encryptionIv: keys.encryptionIv,
+      recoveryKeySalt: keys.recoveryKeySalt || null,
+      encryptedRecoveryKey: keys.encryptedRecoveryKey || null,
+      recoveryKeyIv: keys.recoveryKeyIv || null,
     });
   } catch (error) {
     console.error('Fetch keys error:', error);

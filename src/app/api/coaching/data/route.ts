@@ -61,7 +61,7 @@ export async function GET() {
 
     return NextResponse.json({
       weightRecords,
-      intakeLogs,
+      intakeLogs: [], // Food logs are encrypted - client has the decryption key
       targets: {
         calories: targets?.calorieTarget || 2000,
         protein: targets?.proteinTarget || 150,

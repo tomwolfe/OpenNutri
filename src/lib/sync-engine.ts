@@ -1,8 +1,8 @@
 /**
  * Sync Engine for OpenNutri
- * 
+ *
  * Handles bidirectional synchronization between Dexie (local) and Neon (cloud).
- * Uses a delta-sync strategy with 'updatedAt' timestamps.
+ * Uses a delta-sync strategy with timestamps.
  */
 
 import { db, type LocalFoodLog, type DecryptedFoodLog, type LocalUserTarget } from '@/lib/db-local';
@@ -19,6 +19,178 @@ function getDeviceId(): string {
     localStorage.setItem('opennutri_device_id', id);
   }
   return id;
+}
+
+/**
+ * Get the last sync timestamp from localStorage
+ */
+function getLastSyncTimestamp(): number {
+  if (typeof window === 'undefined') return 0;
+  const stored = localStorage.getItem('opennutri_last_sync');
+  return stored ? parseInt(stored) : 0;
+}
+
+/**
+ * Set the last sync timestamp in localStorage
+ */
+function setLastSyncTimestamp(timestamp: number): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem('opennutri_last_sync', timestamp.toString());
+}
+
+/**
+ * Global Delta Sync
+ * Pulls all changes since last sync and pushes local changes.
+ * This is more efficient than date-based sync for multi-device scenarios.
+ */
+export async function syncDelta(
+  userId: string,
+  vaultKey: CryptoKey | null
+): Promise<{ success: boolean; pulled: number; pushed: number }> {
+  try {
+    const deviceId = getDeviceId();
+    const since = getLastSyncTimestamp();
+
+    // 1. PUSH: Find all unsynced local data
+    const unsyncedLogs = await db.foodLogs
+      .filter(log => !log.synced && log.userId === userId)
+      .toArray();
+
+    const unsyncedTargets = await db.userTargets
+      .filter(target => !target.synced && target.userId === userId)
+      .toArray();
+
+    let pushed = 0;
+
+    if (unsyncedLogs.length > 0 || unsyncedTargets.length > 0) {
+      console.log(`SyncEngine: Pushing ${unsyncedLogs.length} logs and ${unsyncedTargets.length} targets...`);
+
+      const pushPayload = {
+        logs: unsyncedLogs.map(log => ({
+          ...log,
+          timestamp: log.timestamp.toISOString(),
+          deviceId,
+          version: (log.version || 0) + 1,
+        })),
+        targets: unsyncedTargets.map(target => ({
+          ...target,
+          deviceId,
+          version: (target.version || 0) + 1,
+        })),
+      };
+
+      const response = await fetch('/api/sync/delta/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pushPayload),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+
+        // Mark pushed items as synced
+        if (unsyncedLogs.length > 0) {
+          for (const log of unsyncedLogs) {
+            await db.foodLogs.update(log.id, {
+              synced: true,
+              version: (log.version || 0) + 1,
+              deviceId,
+            });
+          }
+        }
+
+        if (unsyncedTargets.length > 0) {
+          for (const target of unsyncedTargets) {
+            await db.userTargets.update([target.userId, target.date], {
+              synced: true,
+              version: (target.version || 0) + 1,
+              deviceId,
+            });
+          }
+        }
+
+        pushed = unsyncedLogs.length + unsyncedTargets.length;
+      }
+    }
+
+    // 2. PULL: Fetch all changes since last sync
+    const response = await fetch(`/api/sync/delta?since=${since}`);
+    if (!response.ok) {
+      return { success: false, pulled: 0, pushed };
+    }
+
+    const data = await response.json();
+    const serverLogs = (data.logs || []) as LocalFoodLog[];
+    const serverTargets = (data.targets || []) as LocalUserTarget[];
+
+    let pulled = 0;
+
+    // 3. MERGE: Update local Dexie with server data
+    const logsToDecrypt: LocalFoodLog[] = [];
+
+    await db.transaction('rw', db.foodLogs, db.decryptedLogs, db.userTargets, async () => {
+      // Merge logs
+      for (const sLog of serverLogs) {
+        // Skip if this change originated from this device
+        if (sLog.deviceId === deviceId) continue;
+
+        const localLog = await db.foodLogs.get(sLog.id);
+        const serverVersion = sLog.version || 0;
+        const localVersion = localLog?.version || 0;
+
+        // If server version is higher, update local
+        if (!localLog || serverVersion > localVersion) {
+          const newLocalLog: LocalFoodLog = {
+            ...sLog,
+            timestamp: new Date(sLog.timestamp),
+            updatedAt: new Date(sLog.updatedAt).getTime(),
+            synced: true,
+          };
+          await db.foodLogs.put(newLocalLog);
+
+          if (newLocalLog.encryptedData && newLocalLog.encryptionIv && vaultKey) {
+            logsToDecrypt.push(newLocalLog);
+          }
+
+          pulled++;
+        }
+      }
+
+      // Merge targets
+      for (const sTarget of serverTargets) {
+        if (sTarget.deviceId === deviceId) continue;
+
+        const localTarget = await db.userTargets.get([sTarget.userId, sTarget.date]);
+        const serverUpdatedAt = new Date(sTarget.updatedAt).getTime();
+        const localUpdatedAt = localTarget?.updatedAt || 0;
+
+        if (!localTarget || serverUpdatedAt > localUpdatedAt) {
+          await db.userTargets.put({
+            ...sTarget,
+            synced: true,
+            updatedAt: serverUpdatedAt,
+          });
+          pulled++;
+        }
+      }
+
+      // 4. DECRYPT & CACHE logs
+      if (logsToDecrypt.length > 0 && vaultKey) {
+        const decryptedResults = await decryptBatchInWorker(logsToDecrypt, vaultKey);
+        if (decryptedResults.length > 0) {
+          await db.decryptedLogs.bulkPut(decryptedResults);
+        }
+      }
+    });
+
+    // 5. Update last sync timestamp
+    setLastSyncTimestamp(data.serverTime || Date.now());
+
+    return { success: true, pulled, pushed };
+  } catch (error) {
+    console.error('SyncEngine: Delta sync error', error);
+    return { success: false, pulled: 0, pushed: 0 };
+  }
 }
 
 /**

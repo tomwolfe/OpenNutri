@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { db } from '@/lib/db-local';
-import { syncLogsForDate } from '@/lib/sync-engine';
+import { syncDelta } from '@/lib/sync-engine';
 
 export interface LogItem {
   foodName: string;
@@ -111,21 +111,21 @@ export const useNutritionStore = create<NutritionStore>((set, get) => ({
 
   fetchLogs: async (date, userId, vaultKey) => {
     if (!userId) return;
-    
+
     // 1. Instant Load from Local Dexie Cache
     set({ isLoading: true, error: null });
     await get().refreshFromDexie(date, userId);
     set({ isLoading: false });
 
-    // 2. Background Sync (Pushes unsynced, Pulls new logs, Decrypts in worker)
-    // We trigger this without 'await' to avoid UI flicker/blocking
-    syncLogsForDate(date, userId, vaultKey).then((result) => {
-      if (result.success && result.count > 0) {
-        // Only refresh if new logs were actually pulled and decrypted
+    // 2. Background Delta Sync (Pushes unsynced, Pulls all changes since last sync)
+    // This is more efficient than date-based sync for multi-device scenarios
+    syncDelta(userId, vaultKey).then((result) => {
+      if (result.success && result.pulled > 0) {
+        // Refresh if new logs were pulled
         get().refreshFromDexie(date, userId);
       }
     }).catch(err => {
-      console.error('Background Sync Error:', err);
+      console.error('Delta Sync Error:', err);
     });
   },
 

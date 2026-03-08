@@ -126,10 +126,10 @@ export function analyzeFoodImageStream(
       ? `The user is currently eating ${mealTypeHint}. Focus on foods typical for this meal.`
       : '';
 
-  // Build recent foods context
+  // Build recent foods context with stronger guidance
   const recentFoodsContext =
     recentFoods && recentFoods.length > 0
-      ? `The user frequently eats: ${recentFoods.map((f) => f.name).join(', ')}.`
+      ? `PRIORITY CONTEXT: The user's top ${recentFoods.length} most frequently eaten foods this week are: ${recentFoods.map((f, i) => `${i + 1}. ${f.name} (${f.freq} times)`).join(', ')}. If the image is ambiguous, strongly prefer these foods in your analysis. This helps reduce hallucinations and improves accuracy.`
       : '';
 
   return streamObject({
@@ -138,7 +138,7 @@ export function analyzeFoodImageStream(
     messages: [
       {
         role: 'system',
-        content: `You are a nutritionist AI. Analyze the food image. Return ONLY valid JSON matching the schema. If unsure, estimate conservatively. Set confidence < 0.5 if unclear. ${mealTypeContext} ${recentFoodsContext}`,
+        content: `You are a nutritionist AI analyzing food images. Return ONLY valid JSON matching the schema. If unsure, estimate conservatively. Set confidence < 0.5 if unclear. ${mealTypeContext} ${recentFoodsContext}`,
       },
       {
         role: 'user',
