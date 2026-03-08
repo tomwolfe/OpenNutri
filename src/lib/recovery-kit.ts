@@ -16,15 +16,12 @@
 import * as bip39 from 'bip39';
 import {
   generateVaultKey,
-  getVaultKey,
   deriveKey,
   encrypt,
   decrypt,
   generateSalt,
 } from './encryption';
 import { splitMnemonic, combineShards } from './sss';
-
-const MNEMONIC_COUNT = 24; // 24 words for 256-bit security
 
 /**
  * Generate a sharded recovery kit using Shamir's Secret Sharing

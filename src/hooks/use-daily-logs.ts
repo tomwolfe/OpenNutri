@@ -95,8 +95,7 @@ function calculateDailyTotals(logs: FoodLog[]): DailyTotals {
  */
 export function useDailyLogs(
   selectedDate: Date,
-  userId: string | undefined,
-  vaultKey: CryptoKey | null
+  userId: string | undefined
 ): UseDailyLogsReturn {
   // Calculate date boundaries
   const dateStr = selectedDate.toISOString().split('T')[0];

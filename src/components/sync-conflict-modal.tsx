@@ -67,7 +67,6 @@ export function SyncConflictModal({
   const getConflictSummary = (conflict: SyncConflict) => {
     if (conflict.type === 'log') {
       const localName = conflict.localData?.foodName || 'Unknown food';
-      const serverName = conflict.serverData?.foodName || 'Unknown food';
       return {
         title: `Food Log: "${localName}"`,
         description: `Modified on ${formatTimestamp(conflict.localData?.updatedAt)} (you) vs ${formatTimestamp(conflict.serverData?.updatedAt)} (another device)`,

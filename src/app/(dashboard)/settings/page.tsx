@@ -18,9 +18,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Loader2, Save, User, Activity, Ruler, Scale, Calendar, Key, Shield, Download } from 'lucide-react';
+import { Loader2, Save, User, Activity, Ruler, Scale, Calendar, Key, Shield } from 'lucide-react';
 import { ACTIVITY_LEVELS, GENDERS } from '@/lib/tdee';
 import { RecoveryKitDialog } from '@/components/recovery-kit-dialog';
+import { SyncStatusCard } from '@/components/sync-status-card';
 
 interface UserProfile {
   id: string;
@@ -178,6 +179,11 @@ export default function SettingsPage() {
       )}
 
       <div className="grid gap-6 md:grid-cols-2">
+        {/* Sync Status - Full width on medium+ */}
+        <div className="md:col-span-2">
+          <SyncStatusCard />
+        </div>
+
         {/* Profile Form */}
         <Card>
           <CardHeader>
@@ -503,7 +509,7 @@ export default function SettingsPage() {
                         setHasRecoveryKey(false);
                         setMessage({ type: 'success', text: 'Recovery key revoked successfully' });
                       }
-                    } catch (error) {
+                    } catch (_error) {
                       setMessage({ type: 'error', text: 'Failed to revoke recovery key' });
                     }
                   }

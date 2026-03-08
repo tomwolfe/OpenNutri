@@ -353,6 +353,7 @@ export async function decryptBinary(
 export interface EncryptedFoodLog {
   foodName?: string;
   calories?: number;
+  totalCalories?: number;
   protein?: number;
   carbs?: number;
   fat?: number;

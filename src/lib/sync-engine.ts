@@ -5,7 +5,7 @@
  * Powered by Yjs CRDTs for robust multi-device synchronization.
  */
 
-import { db, type LocalFoodLog, type DecryptedFoodLog, type LocalUserTarget } from '@/lib/db-local';
+import { db, type LocalFoodLog, type LocalUserTarget } from '@/lib/db-local';
 import { decryptBatchInWorker } from '@/lib/worker-client';
 import { mergeCrdt, encodeYDoc, createYDoc, applyYUpdate } from '@/lib/crdt';
 import * as Y from 'yjs';
@@ -18,8 +18,8 @@ export interface SyncConflict {
   id: string;
   localVersion: number;
   serverVersion: number;
-  localData?: any;
-  serverData?: any;
+  localData?: unknown;
+  serverData?: unknown;
 }
 
 /**
@@ -28,7 +28,7 @@ export interface SyncConflict {
 function resolveLogConflict(
   localLog: LocalFoodLog | undefined,
   serverLog: LocalFoodLog
-): { mergedUpdate: string; mergedData: any } {
+): { mergedUpdate: string; mergedData: Record<string, unknown> } {
   // 1. Initial CRDT merge (handles property-level merge)
   const { mergedUpdate, mergedData } = mergeCrdt(
     localLog?.yjsData || null,
@@ -37,17 +37,18 @@ function resolveLogConflict(
     serverLog
   );
 
-  if (!localLog) return { mergedUpdate, mergedData };
+  if (!localLog) return { mergedUpdate, mergedData: mergedData as Record<string, unknown> };
 
   // 2. Domain-aware overrides
   const doc = new Y.Doc();
   applyYUpdate(doc, mergedUpdate);
   const map = doc.getMap('data');
   let needsOverride = false;
+  const currentData = mergedData as Record<string, unknown>;
 
   // Rule: Prefer verified data
   if (localLog.isVerified && !serverLog.isVerified) {
-    if (!mergedData.isVerified) {
+    if (!currentData.isVerified) {
       map.set('isVerified', true);
       map.set('totalCalories', localLog.totalCalories);
       map.set('mealType', localLog.mealType);
@@ -58,7 +59,7 @@ function resolveLogConflict(
       needsOverride = true;
     }
   } else if (!localLog.isVerified && serverLog.isVerified) {
-    if (!mergedData.isVerified) {
+    if (!currentData.isVerified) {
       map.set('isVerified', true);
       map.set('totalCalories', serverLog.totalCalories);
       map.set('mealType', serverLog.mealType);
@@ -73,7 +74,7 @@ function resolveLogConflict(
     const diff = (localLog.aiConfidenceScore || 0) - (serverLog.aiConfidenceScore || 0);
     if (Math.abs(diff) > 0.05) {
       const preferred = diff > 0 ? localLog : serverLog;
-      if (mergedData.aiConfidenceScore !== preferred.aiConfidenceScore) {
+      if (currentData.aiConfidenceScore !== preferred.aiConfidenceScore) {
         map.set('aiConfidenceScore', preferred.aiConfidenceScore);
         map.set('totalCalories', preferred.totalCalories);
         map.set('encryptedData', preferred.encryptedData);
@@ -86,11 +87,11 @@ function resolveLogConflict(
   if (needsOverride) {
     return {
       mergedUpdate: encodeYDoc(doc),
-      mergedData: map.toJSON()
+      mergedData: map.toJSON() as Record<string, unknown>
     };
   }
 
-  return { mergedUpdate, mergedData };
+  return { mergedUpdate, mergedData: currentData };
 }
 
 /**
@@ -128,7 +129,7 @@ function setLastSyncTimestamp(timestamp: number): void {
  */
 function ensureYjsData<T extends { yjsData?: string | null }>(item: T): T {
   if (!item.yjsData) {
-    const doc = createYDoc(item as Record<string, any>);
+    const doc = createYDoc(item as Record<string, unknown>);
     return { ...item, yjsData: encodeYDoc(doc) };
   }
   return item;
@@ -160,7 +161,6 @@ export async function syncDelta(
     unsyncedTargets = unsyncedTargets.map(ensureYjsData);
 
     let pushed = 0;
-    const conflicts: SyncConflict[] = [];
 
     if (unsyncedLogs.length > 0 || unsyncedTargets.length > 0) {
       console.log(`SyncEngine: Pushing ${unsyncedLogs.length} logs and ${unsyncedTargets.length} targets...`);
@@ -187,31 +187,44 @@ export async function syncDelta(
 
       if (response.ok) {
         const result = await response.json();
+        const serverConflicts = result.conflicts || [];
         
-        // Mark pushed items as synced
+        // Mark pushed items as synced, unless they conflicted
         if (unsyncedLogs.length > 0) {
           for (const log of unsyncedLogs) {
+            const hasConflict = serverConflicts.some((c: { type: string; id: string }) => c.type === 'log' && c.id === log.id);
+            if (hasConflict) {
+              console.warn(`SyncEngine: Conflict detected for log ${log.id}, skipping sync mark`);
+              continue;
+            }
+
             await db.foodLogs.update(log.id, {
               synced: true,
               yjsData: log.yjsData,
               version: (log.version || 0) + 1,
               deviceId,
             });
+            pushed++;
           }
         }
 
         if (unsyncedTargets.length > 0) {
           for (const target of unsyncedTargets) {
+            const hasConflict = serverConflicts.some((c: { type: string; id: string }) => c.type === 'target' && c.id === `${userId}-${target.date}`);
+            if (hasConflict) {
+              console.warn(`SyncEngine: Conflict detected for target ${target.date}, skipping sync mark`);
+              continue;
+            }
+
             await db.userTargets.update([target.userId, target.date], {
               synced: true,
               yjsData: target.yjsData,
               version: (target.version || 0) + 1,
               deviceId,
             });
+            pushed++;
           }
         }
-
-        pushed = unsyncedLogs.length + unsyncedTargets.length;
       }
     }
 
@@ -239,16 +252,22 @@ export async function syncDelta(
         
         // Use Domain-Aware Merge
         const { mergedUpdate, mergedData } = resolveLogConflict(localLog, sLog);
+        const currentData = mergedData as Record<string, unknown>;
+
+        // If local had changes that were merged, we need to push the merged result back
+        const hasLocalChanges = localLog && !localLog.synced;
+        const isActuallyDifferent = mergedUpdate !== sLog.yjsData;
+        const needsRePush = hasLocalChanges || isActuallyDifferent;
 
         const newLocalLog: LocalFoodLog = {
           ...sLog,
-          ...mergedData,
+          ...currentData,
           yjsData: mergedUpdate,
-          timestamp: new Date(mergedData.timestamp || sLog.timestamp),
+          timestamp: new Date((currentData.timestamp as string | number | Date) || sLog.timestamp),
           updatedAt: Date.now(),
-          synced: true,
+          synced: !needsRePush,
           version: Math.max(localLog?.version || 0, sLog.version || 0) + 1,
-        };
+        } as LocalFoodLog;
 
         await db.foodLogs.put(newLocalLog);
 
@@ -273,15 +292,20 @@ export async function syncDelta(
           localTarget || sTarget,
           sTarget
         );
+        const currentData = mergedData as Record<string, unknown>;
+
+        const hasLocalChanges = localTarget && !localTarget.synced;
+        const isActuallyDifferent = mergedUpdate !== sTarget.yjsData;
+        const needsRePush = hasLocalChanges || isActuallyDifferent;
 
         await db.userTargets.put({
           ...sTarget,
-          ...mergedData,
+          ...currentData,
           yjsData: mergedUpdate,
-          synced: true,
+          synced: !needsRePush,
           updatedAt: Date.now(),
           version: Math.max(localTarget?.version || 0, sTarget.version || 0) + 1,
-        });
+        } as LocalUserTarget);
         pulled++;
       }
 

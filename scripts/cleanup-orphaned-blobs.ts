@@ -19,7 +19,7 @@ import { neon } from '@neondatabase/serverless';
 import { list, del } from '@vercel/blob';
 import * as dotenv from 'dotenv';
 import { resolve } from 'path';
-import { readFileSync } from 'fs';
+import { readFileSync as _readFileSync } from 'fs';
 
 dotenv.config({ path: resolve(process.cwd(), '.env.local') });
 
@@ -37,13 +37,13 @@ const BATCH_SIZE = 100; // Process in batches to avoid rate limits
 async function getReferencedImageUrls(): Promise<Set<string>> {
   try {
     // Check if image_url column exists in food_logs
-    const columnCheck: any = await sql.query(`
+    const columnCheck = (await sql.query(`
       SELECT column_name
       FROM information_schema.columns
       WHERE table_name = 'food_logs' AND column_name = 'image_url';
-    `);
+    `)) as unknown as Record<string, unknown>[];
 
-    const columns = Array.isArray(columnCheck) ? columnCheck : columnCheck?.rows || [];
+    const columns = Array.isArray(columnCheck) ? columnCheck : (columnCheck as { rows?: Record<string, unknown>[] })?.rows || [];
 
     if (columns.length === 0) {
       // No image_url column in food_logs
@@ -52,15 +52,15 @@ async function getReferencedImageUrls(): Promise<Set<string>> {
       return new Set();
     }
 
-    const result: any = await sql.query(`
+    const result = (await sql.query(`
       SELECT DISTINCT image_url
       FROM food_logs
       WHERE image_url IS NOT NULL;
-    `);
+    `)) as unknown as Record<string, unknown>[];
 
-    const rows = Array.isArray(result) ? result : result?.rows || [];
+    const rows = Array.isArray(result) ? result : (result as { rows?: Record<string, unknown>[] })?.rows || [];
     console.log(`   ✓ Found ${rows.length} referenced image(s) in database`);
-    return new Set(rows.map((r: any) => r.image_url));
+    return new Set(rows.map((r: Record<string, unknown>) => String(r.image_url)));
   } catch (error) {
     console.error('Error checking referenced images:', error);
     return new Set();

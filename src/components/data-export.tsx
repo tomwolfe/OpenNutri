@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dialog';
 import { Download, FileJson, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { db } from '@/lib/db-local';
+import { DraftItem } from '@/types/food';
 
 export function DataExport() {
   const [exporting, setExporting] = useState(false);
@@ -37,7 +38,6 @@ export function DataExport() {
 
       let content = '';
       let mimeType = '';
-      let ext = '';
 
       if (format === 'json') {
         content = JSON.stringify({
@@ -46,14 +46,13 @@ export function DataExport() {
           targets,
         }, null, 2);
         mimeType = 'application/json';
-        ext = 'json';
       } else {
         const headers = ['Timestamp', 'Meal', 'Food', 'Calories', 'Protein', 'Carbs', 'Fat'];
         const rows = [headers.join(',')];
 
         logs.forEach((log) => {
           if (log.items) {
-            log.items.forEach((item: any) => {
+            (log.items as DraftItem[]).forEach((item: DraftItem) => {
               rows.push([
                 log.timestamp.toISOString(),
                 log.mealType || '',
@@ -68,7 +67,6 @@ export function DataExport() {
         });
         content = rows.join('\n');
         mimeType = 'text/csv';
-        ext = 'csv';
       }
 
       // Trigger local download

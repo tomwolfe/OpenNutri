@@ -87,6 +87,20 @@ export function useOfflineQueue(): UseOfflineQueueReturn {
   );
 
   /**
+   * Refresh the pending count
+   */
+  const refreshCount = useCallback(async () => {
+    if (!isAvailable) return;
+
+    try {
+      const count = await getPendingCount();
+      setPendingCount(count);
+    } catch (error) {
+      console.error('Failed to refresh pending count:', error);
+    }
+  }, [isAvailable]);
+
+  /**
    * Sync all pending images to the server
    */
   const syncQueue = useCallback(async (): Promise<{ success: number; failed: number }> => {
@@ -151,7 +165,7 @@ export function useOfflineQueue(): UseOfflineQueueReturn {
           // 3. Capture and parse the AI response
           const textData = await aiResponse.text();
           const { items } = JSON.parse(textData);
-          const totalCalories = items.reduce((sum: number, item: any) => sum + item.calories, 0);
+          const totalCalories = items.reduce((sum: number, item: { calories: number }) => sum + item.calories, 0);
 
           // 4. Encrypt the resulting food log
           let encryptedData = null;
@@ -210,21 +224,7 @@ export function useOfflineQueue(): UseOfflineQueueReturn {
       // Refresh count after sync
       refreshCount();
     }
-  }, [isAvailable, vaultKey, encryptLog, encryptBinary]);
-
-  /**
-   * Refresh the pending count
-   */
-  const refreshCount = useCallback(async () => {
-    if (!isAvailable) return;
-
-    try {
-      const count = await getPendingCount();
-      setPendingCount(count);
-    } catch (error) {
-      console.error('Failed to refresh pending count:', error);
-    }
-  }, [isAvailable]);
+  }, [isAvailable, vaultKey, encryptLog, encryptBinary, refreshCount]);
 
   // Auto-sync when coming online
   useEffect(() => {

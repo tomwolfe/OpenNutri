@@ -8,15 +8,18 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Loader2, Lock, ShieldCheck, AlertCircle } from 'lucide-react';
-import { generateSharingKeyPair, exportPublicKey, unwrapVaultKey } from '@/lib/sharing-protocol';
-import { decryptFoodLog } from '@/lib/encryption';
+import { generateSharingKeyPair, unwrapVaultKey } from '@/lib/sharing-protocol';
 import { CoachingDashboard } from '@/components/coaching-dashboard';
 
 export default function SharedVaultPage() {
   const { id } = useParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [shareData, setShareData] = useState<any>(null);
+  const [shareData, setShareData] = useState<{
+    ownerEmail: string;
+    ownerId: string;
+    encryptedVaultKey: string;
+  } | null>(null);
   const [vaultKey, setVaultKey] = useState<CryptoKey | null>(null);
   const [privateKey, setPrivateKey] = useState<CryptoKey | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
@@ -25,8 +28,7 @@ export default function SharedVaultPage() {
   useEffect(() => {
     async function initKeys() {
       try {
-        const { publicKey, privateKey } = await generateSharingKeyPair();
-        const base64PublicKey = await exportPublicKey(publicKey);
+        const { privateKey } = await generateSharingKeyPair();
         
         // Store private key in memory only
         setPrivateKey(privateKey);
@@ -39,8 +41,8 @@ export default function SharedVaultPage() {
         
         const response = await fetch(`/api/share/${id}`);
         if (!response.ok) {
-          const err = await response.json();
-          throw new Error(err.error || 'Failed to load share');
+          const errData = await response.json();
+          throw new Error(errData.error || 'Failed to load share');
         }
         
         const data = await response.json();
@@ -65,7 +67,7 @@ export default function SharedVaultPage() {
       // Decrypt the owner's vault key with our private key
       const key = await unwrapVaultKey(shareData.encryptedVaultKey, privateKey);
       setVaultKey(key);
-    } catch (err) {
+    } catch (_err) {
       setError('Decryption failed. The sharing session may be invalid.');
     } finally {
       setLoading(false);

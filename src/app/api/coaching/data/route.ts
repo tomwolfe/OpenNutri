@@ -9,8 +9,8 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
-import { userTargets, foodLogs, users } from '@/db/schema';
-import { eq, and, gte, lte, desc } from 'drizzle-orm';
+import { userTargets, users } from '@/db/schema';
+import { eq, and, gte, lte } from 'drizzle-orm';
 
 export async function GET() {
   try {

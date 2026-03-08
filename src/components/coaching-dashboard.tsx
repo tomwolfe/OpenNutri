@@ -87,7 +87,7 @@ interface CoachingDashboardProps {
   isSharedView?: boolean;
 }
 
-export function CoachingDashboard({ userId, sharedVaultKey, isSharedView }: CoachingDashboardProps) {
+export function CoachingDashboard({ userId, sharedVaultKey, isSharedView: _isSharedView }: CoachingDashboardProps) {
   const { data: session } = useSession();
   const effectiveUserId = userId || session?.user?.id;
   

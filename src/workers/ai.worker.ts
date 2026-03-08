@@ -11,7 +11,7 @@ import { pipeline, env } from '@xenova/transformers';
 env.allowLocalModels = false;
 env.useBrowserCache = true;
 
-let classifier: any = null;
+let classifier: unknown = null;
 
 /**
  * Local Macro Database for Common Foods
@@ -60,11 +60,11 @@ self.onmessage = async (event) => {
 
   if (type === 'classify') {
     try {
-      const model = await getClassifier();
+      const model = await getClassifier() as (image: unknown) => Promise<Array<{ label: string; score: number }>>;
       const rawResults = await model(image);
       
       // Enrich results with macro estimates
-      const results = rawResults.map((res: any) => ({
+      const results = rawResults.map((res: { label: string; score: number }) => ({
         ...res,
         macros: getMacrosForLabel(res.label)
       }));
@@ -76,4 +76,3 @@ self.onmessage = async (event) => {
     }
   }
 };
-

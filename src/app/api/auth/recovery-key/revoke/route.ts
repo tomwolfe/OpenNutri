@@ -16,7 +16,7 @@ import { db } from '@/lib/db';
 import { userKeys } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 
-export async function POST(request: NextRequest) {
+export async function POST(_request: NextRequest) {
   try {
     // Verify authentication
     const session = await auth();

@@ -1,8 +1,11 @@
 /**
- * Recovery Kit Dialog Component
+ * Recovery Kit Dialog Component (Updated for Social Recovery)
  *
- * Allows users to generate and view their BIP-39 recovery mnemonics.
- * Includes security warnings and copy/download functionality.
+ * Allows users to generate sharded recovery shards using Shamir's Secret Sharing.
+ * Implements a 2-of-3 recovery scheme:
+ * 1. Local Device Shard (Automatic)
+ * 2. Cloud Server Shard (Automatic)
+ * 3. Manual User Shard (Action Required)
  */
 
 'use client';
@@ -15,7 +18,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Shield, Download, Copy, Check, Eye, EyeOff, AlertTriangle } from 'lucide-react';
-import { formatMnemonicsForDisplay, getNumberedMnemonics } from '@/lib/recovery-kit';
 
 interface RecoveryKitDialogProps {
   open: boolean;
@@ -28,11 +30,13 @@ interface PasswordStepProps {
   isLoading: boolean;
 }
 
-interface MnemonicsDisplayProps {
-  mnemonics: string;
+interface ShardDisplayProps {
+  shards: {
+    local: string;
+    cloud: string;
+    manual: string;
+  };
   onConfirm: () => void;
-  onCopy: () => void;
-  onDownload: () => void;
 }
 
 interface SuccessProps {
@@ -51,7 +55,7 @@ function PasswordStep({ onSubmit, isLoading }: PasswordStepProps) {
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="space-y-2">
-        <Label htmlFor="password">Enter your password to generate recovery key</Label>
+        <Label htmlFor="password">Enter your password to secure your recovery key</Label>
         <div className="relative">
           <Input
             id="password"
@@ -75,73 +79,82 @@ function PasswordStep({ onSubmit, isLoading }: PasswordStepProps) {
       <Alert>
         <Shield className="h-4 w-4" />
         <AlertDescription>
-          Your password is used to encrypt the recovery key. It is never sent to the server.
+          Your password is used to encrypt your vault key before sharding.
         </AlertDescription>
       </Alert>
 
       <Button type="submit" className="w-full" disabled={isLoading}>
-        {isLoading ? 'Generating...' : 'Generate Recovery Key'}
+        {isLoading ? 'Generating Shards...' : 'Enable Social Recovery'}
       </Button>
     </form>
   );
 }
 
-function MnemonicsDisplay({ mnemonics, onConfirm, onCopy, onDownload }: MnemonicsDisplayProps) {
+function ShardDisplay({ shards, onConfirm }: ShardDisplayProps) {
   const [copied, setCopied] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
-  const [showMnemonics, setShowMnemonics] = useState(false);
+  const [showShard, setShowShard] = useState(false);
 
-  const numberedMnemonics = getNumberedMnemonics(mnemonics);
-  const formattedMnemonics = formatMnemonicsForDisplay(mnemonics, 6);
+  const manualShard = shards.manual;
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(mnemonics);
+    navigator.clipboard.writeText(manualShard);
     setCopied(true);
-    onCopy();
     setTimeout(() => setCopied(false), 2000);
   };
 
   const handleDownload = () => {
-    const content = `OpenNutri Recovery Key\n========================\n\nGenerated: ${new Date().toISOString()}\n\nIMPORTANT: Store this in a secure location. Anyone with these words can access your data.\n\n${formattedMnemonics}\n\nDO NOT share these words with anyone.`;
+    const content = `OpenNutri Social Recovery Shard\n==============================\n\nGenerated: ${new Date().toISOString()}\n\nThis is 1 of 3 shards. You need 2 shards to recover your vault.\n\nSHARD 1 (Local): Stored on this device.\nSHARD 2 (Cloud): Stored encrypted on OpenNutri servers.\nSHARD 3 (Manual): THIS SHARD. Store it securely!\n\nManual Shard Data:\n${manualShard}\n\nAnyone with this shard AND access to your device OR the cloud can recover your data.`;
     
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `opennutri-recovery-${new Date().toISOString().split('T')[0]}.txt`;
+    a.download = `opennutri-shard-${new Date().toISOString().split('T')[0]}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    
-    onDownload();
   };
 
   return (
     <div className="space-y-4">
-      <Alert className="bg-amber-50 border-amber-200">
-        <AlertTriangle className="h-4 w-4 text-amber-600" />
-        <AlertDescription className="text-amber-800">
-          <strong>Critical Security Warning:</strong> These 24 words are the ONLY way to recover your data if you forget your password.
-          Store them securely offline (write them down or save in a password manager).
+      <Alert className="bg-blue-50 border-blue-200">
+        <Shield className="h-4 w-4 text-blue-600" />
+        <AlertDescription className="text-blue-800">
+          <strong>Social Recovery Active:</strong> We&apos;ve split your recovery key into 3 shards. 
+          You only need to save <strong>ONE</strong> shard manually. The others are managed for you.
         </AlertDescription>
       </Alert>
 
+      <div className="grid grid-cols-3 gap-2 py-2">
+        <div className="flex flex-col items-center p-2 rounded-lg bg-green-50 border border-green-100 text-center">
+          <Check className="h-5 w-5 text-green-600 mb-1" />
+          <span className="text-[10px] font-bold text-green-800">1. DEVICE</span>
+          <span className="text-[8px] text-green-600 italic">Saved Automatically</span>
+        </div>
+        <div className="flex flex-col items-center p-2 rounded-lg bg-green-50 border border-green-100 text-center">
+          <Check className="h-5 w-5 text-green-600 mb-1" />
+          <span className="text-[10px] font-bold text-green-800">2. CLOUD</span>
+          <span className="text-[8px] text-green-600 italic">Saved Automatically</span>
+        </div>
+        <div className="flex flex-col items-center p-2 rounded-lg bg-amber-50 border border-amber-200 text-center animate-pulse">
+          <AlertTriangle className="h-5 w-5 text-amber-600 mb-1" />
+          <span className="text-[10px] font-bold text-amber-800">3. MANUAL</span>
+          <span className="text-[8px] text-amber-600 italic">ACTION REQUIRED</span>
+        </div>
+      </div>
+
       <div className="relative">
-        <div className="bg-muted p-4 rounded-lg font-mono text-sm leading-relaxed">
-          {showMnemonics ? (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-              {numberedMnemonics.map(({ index, word }) => (
-                <div key={index} className="flex items-center gap-2">
-                  <span className="text-muted-foreground text-xs w-6">{index}.</span>
-                  <span className="font-semibold">{word}</span>
-                </div>
-              ))}
+        <div className="bg-muted p-4 rounded-lg font-mono text-[10px] break-all leading-tight min-h-[80px] flex items-center justify-center">
+          {showShard ? (
+            <div className="p-2 border bg-white rounded w-full">
+              {manualShard}
             </div>
           ) : (
-            <div className="h-32 flex items-center justify-center text-muted-foreground">
-              <EyeOff className="h-8 w-8 mr-2" />
-              <span>Click "Show" to reveal recovery words</span>
+            <div className="flex flex-col items-center text-muted-foreground">
+              <EyeOff className="h-6 w-6 mb-2" />
+              <span>Click to reveal your shard</span>
             </div>
           )}
         </div>
@@ -150,17 +163,17 @@ function MnemonicsDisplay({ mnemonics, onConfirm, onCopy, onDownload }: Mnemonic
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setShowMnemonics(!showMnemonics)}
+            onClick={() => setShowShard(!showShard)}
           >
-            {showMnemonics ? <EyeOff className="h-4 w-2" /> : <Eye className="h-4 w-2" />}
+            {showShard ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
           </Button>
           <Button
             variant="outline"
             size="sm"
             onClick={handleCopy}
-            disabled={!showMnemonics}
+            disabled={!showShard}
           >
-            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
           </Button>
         </div>
       </div>
@@ -184,9 +197,9 @@ function MnemonicsDisplay({ mnemonics, onConfirm, onCopy, onDownload }: Mnemonic
         />
         <label
           htmlFor="confirm-backup"
-          className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+          className="text-xs font-medium leading-tight text-muted-foreground"
         >
-          I have securely backed up these 24 words. I understand they will NOT be shown again.
+          I have saved Shard 3 manually. I understand that I need 2 out of 3 shards to recover my account if I lose my password.
         </label>
       </div>
 
@@ -195,7 +208,7 @@ function MnemonicsDisplay({ mnemonics, onConfirm, onCopy, onDownload }: Mnemonic
         onClick={onConfirm}
         disabled={!confirmed}
       >
-        I&apos;ve Saved My Recovery Key
+        Finish Setup
       </Button>
     </div>
   );
@@ -207,10 +220,9 @@ function SuccessStep({ onComplete }: SuccessProps) {
       <div className="mx-auto w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
         <Check className="h-6 w-6 text-green-600" />
       </div>
-      <h3 className="text-lg font-semibold">Recovery Key Generated!</h3>
-      <p className="text-muted-foreground">
-        Your recovery key has been securely generated and stored.
-        Remember to keep your mnemonics in a safe place.
+      <h3 className="text-lg font-semibold">Social Recovery Ready!</h3>
+      <p className="text-sm text-muted-foreground px-4">
+        Your recovery key is now split. If you forget your password, simply use this device + your manual shard to get back in.
       </p>
       <Button onClick={onComplete} className="w-full">
         Done
@@ -220,9 +232,9 @@ function SuccessStep({ onComplete }: SuccessProps) {
 }
 
 export function RecoveryKitDialog({ open, onOpenChange, onGenerateComplete }: RecoveryKitDialogProps) {
-  const [step, setStep] = useState<'password' | 'mnemonics' | 'success'>('password');
+  const [step, setStep] = useState<'password' | 'shards' | 'success'>('password');
   const [isLoading, setIsLoading] = useState(false);
-  const [mnemonics, setMnemonics] = useState('');
+  const [shards, setShards] = useState<{ local: string; cloud: string; manual: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const handleGenerate = useCallback(async (password: string) => {
@@ -242,8 +254,11 @@ export function RecoveryKitDialog({ open, onOpenChange, onGenerateComplete }: Re
         throw new Error(data.error || 'Failed to generate recovery key');
       }
 
-      setMnemonics(data.mnemonics);
-      setStep('mnemonics');
+      // Store local shard automatically in localStorage for this browser/device
+      localStorage.setItem('opennutri_local_shard', data.shards.local);
+
+      setShards(data.shards);
+      setStep('shards');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate recovery key');
     } finally {
@@ -257,7 +272,7 @@ export function RecoveryKitDialog({ open, onOpenChange, onGenerateComplete }: Re
 
   const handleComplete = useCallback(() => {
     setStep('password');
-    setMnemonics('');
+    setShards(null);
     setError(null);
     onOpenChange(false);
     onGenerateComplete?.();
@@ -265,9 +280,8 @@ export function RecoveryKitDialog({ open, onOpenChange, onGenerateComplete }: Re
 
   const handleOpenChange = useCallback((newOpen: boolean) => {
     if (!newOpen) {
-      // Reset state when closing
       setStep('password');
-      setMnemonics('');
+      setShards(null);
       setError(null);
     }
     onOpenChange(newOpen);
@@ -279,10 +293,10 @@ export function RecoveryKitDialog({ open, onOpenChange, onGenerateComplete }: Re
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Shield className="h-5 w-5" />
-            Recovery Kit
+            Social Recovery Setup
           </DialogTitle>
           <DialogDescription>
-            Generate a backup recovery key to restore access if you forget your password.
+            Securely split your recovery key so you never lose access.
           </DialogDescription>
         </DialogHeader>
 
@@ -297,12 +311,10 @@ export function RecoveryKitDialog({ open, onOpenChange, onGenerateComplete }: Re
           <PasswordStep onSubmit={handleGenerate} isLoading={isLoading} />
         )}
 
-        {step === 'mnemonics' && mnemonics && (
-          <MnemonicsDisplay
-            mnemonics={mnemonics}
+        {step === 'shards' && shards && (
+          <ShardDisplay
+            shards={shards}
             onConfirm={handleConfirm}
-            onCopy={() => {}}
-            onDownload={() => {}}
           />
         )}
 
@@ -311,7 +323,7 @@ export function RecoveryKitDialog({ open, onOpenChange, onGenerateComplete }: Re
         )}
 
         <DialogFooter className="sm:justify-start">
-          {step === 'mnemonics' && (
+          {step === 'shards' && (
             <Button
               variant="ghost"
               onClick={() => setStep('password')}

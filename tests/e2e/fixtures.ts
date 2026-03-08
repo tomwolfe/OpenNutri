@@ -2,7 +2,7 @@
  * Global Test Fixtures for OpenNutri E2E Tests
  */
 
-import { test as base, expect } from '@playwright/test';
+import { test as base, expect, type Page } from '@playwright/test';
 
 // Test user credentials
 export const TEST_USER = {
@@ -12,9 +12,9 @@ export const TEST_USER = {
 
 // Extend Playwright test with custom fixtures
 export const test = base.extend<{
-  authenticatedPage: any;
+  authenticatedPage: Page;
 }>({
-  authenticatedPage: async ({ page }: { page: any }, use: any) => {
+  authenticatedPage: async ({ page }, use) => {
     // Navigate to signup
     await page.goto('/signup');
     await page.fill('input[type="email"]', TEST_USER.email);

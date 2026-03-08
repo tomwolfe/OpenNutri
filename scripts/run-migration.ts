@@ -33,18 +33,20 @@ async function runMigration() {
       console.log('Executing:', statement.split('\n')[0].trim().substring(0, 60));
       await sql.query(statement, []);
       console.log('✓ Success\n');
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const err = error as { code?: string; message: string };
       // Ignore "already exists" errors for idempotent migrations
-      if (error.code === '42P07' || error.message.includes('already exists')) {
+      if (err.code === '42P07' || err.message.includes('already exists')) {
         console.log('⚠ Skipped (already exists)\n');
-      } else if (error.code === '42701' || error.message.includes('duplicate')) {
+      } else if (err.code === '42701' || err.message.includes('duplicate')) {
         console.log('⚠ Skipped (duplicate constraint)\n');
-      } else if (error.code === '42704' || error.message.includes('does not exist')) {
+      } else if (err.code === '42704' || err.message.includes('does not exist')) {
         console.log('⚠ Skipped (constraint/index does not exist)\n');
-      } else if (error.code === '42P16' || error.message.includes('multiple primary keys')) {
+      } else if (err.code === '42P16' || err.message.includes('multiple primary keys')) {
         console.log('⚠ Skipped (primary key already exists)\n');
       } else {
-        console.error('✗ Error:', error.message);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error('✗ Error:', errorMessage);
         throw error;
       }
     }

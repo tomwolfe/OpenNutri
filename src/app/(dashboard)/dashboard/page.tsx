@@ -44,7 +44,6 @@ export default function DashboardPage() {
   // State for selected date
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [isUnlocked, setIsUnlocked] = useState(false);
-  const [unlockError, setUnlockError] = useState<string | null>(null);
 
   // useDailyLogs Hook (reactive Dexie queries)
   const {
@@ -52,7 +51,6 @@ export default function DashboardPage() {
     dailyTotals,
     isLoading: loading,
     triggerSync,
-    removeLog,
   } = useDailyLogs(selectedDate, session?.user?.id, vaultKey);
 
   const [snapDialogOpen, setSnapDialogOpen] = useState(false);
@@ -115,7 +113,7 @@ export default function DashboardPage() {
 
   // Show unlock screen if authenticated but vault is locked
   if (status === 'authenticated' && isReady && !isUnlocked) {
-    return <UnlockVault onUnlocked={() => setIsUnlocked(true)} onError={setUnlockError} />;
+    return <UnlockVault onUnlocked={() => setIsUnlocked(true)} />;
   }
 
   if (showOnboarding) {

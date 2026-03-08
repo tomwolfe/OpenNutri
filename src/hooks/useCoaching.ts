@@ -16,6 +16,7 @@ import {
 } from '@/lib/coaching';
 import { db } from '@/lib/db-local';
 import { generateInsightsInWorker } from '@/lib/worker-client';
+import { decryptFoodLog } from '@/lib/encryption';
 
 export interface TrendSummary {
   dataQuality: {
@@ -77,8 +78,8 @@ export function useCoaching(options: UseCoachingOptions = {}) {
       const raw = await response.json();
       
       const weightData = raw.weightRecords
-        .filter((r: any) => r.weight !== null)
-        .map((r: any) => ({
+        .filter((r: { weight: number | string | null }) => r.weight !== null)
+        .map((r: { date: string | number | Date; weight: number | string }) => ({
           timestamp: new Date(r.date).getTime(),
           weight: Number(r.weight),
         }));
@@ -107,7 +108,7 @@ export function useCoaching(options: UseCoachingOptions = {}) {
 
           existing.calories += decrypted.totalCalories || 0;
           if (decrypted.items) {
-            decrypted.items.forEach((item: any) => {
+            (decrypted.items as Array<{ protein?: number; carbs?: number; fat?: number }>).forEach((item) => {
               existing.protein += item.protein || 0;
               existing.carbs += item.carbs || 0;
               existing.fat += item.fat || 0;
@@ -144,7 +145,7 @@ export function useCoaching(options: UseCoachingOptions = {}) {
           existing.calories += log.totalCalories || 0;
           
           if (log.items) {
-            log.items.forEach((item: any) => {
+            (log.items as Array<{ protein?: number; carbs?: number; fat?: number }>).forEach((item) => {
               existing.protein += item.protein || 0;
               existing.carbs += item.carbs || 0;
               existing.fat += item.fat || 0;

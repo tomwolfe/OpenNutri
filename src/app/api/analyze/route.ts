@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
       try {
         const ciphertext = typeof imageSource === 'string' 
           ? Buffer.from(imageSource.split(',')[1] || imageSource, 'base64')
-          : Buffer.from(imageSource);
+          : Buffer.from(imageSource instanceof ArrayBuffer ? new Uint8Array(imageSource) : imageSource);
         
         const keyBuffer = Buffer.from(sessionKeyBase64, 'base64');
         const ivBuffer = Buffer.from(ivBase64, 'base64');

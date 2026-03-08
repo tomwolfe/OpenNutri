@@ -36,7 +36,7 @@ async function setupPgvector() {
         SELECT * FROM pg_available_extension_versions WHERE name = 'vector'
       `);
       console.log('✓ HNSW index support verified');
-    } catch (error) {
+    } catch (_error) {
       console.warn('⚠ HNSW index may not be available, using fallback');
     }
 

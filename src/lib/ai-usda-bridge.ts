@@ -257,7 +257,7 @@ export async function enhanceWithUSDAData(
           protein: alt.foodNutrients.find(n => n.nutrientName === 'Protein')?.value || 0,
           carbs: alt.foodNutrients.find(n => n.nutrientName === 'Carbohydrate, by difference')?.value || 0,
           fat: alt.foodNutrients.find(n => n.nutrientName === 'Total lipid (fat)')?.value || 0,
-          similarity: (alt as any).similarity || 0,
+          similarity: alt.similarity || 0,
         }));
 
         const baseMacros = extractMacros(usdaMatch);
@@ -271,7 +271,7 @@ export async function enhanceWithUSDAData(
         );
 
         // Use USDA data if confidence is low or USDA match is strong
-        const useUSDA = item.confidence < 0.8 || (usdaMatch as any).similarity > 0.8;
+        const useUSDA = item.confidence < 0.8 || (usdaMatch.similarity || 0) > 0.8;
 
         return {
           foodName: usdaMatch.description,
@@ -283,7 +283,7 @@ export async function enhanceWithUSDAData(
           usdaMatch: {
             fdcId: usdaMatch.fdcId,
             description: usdaMatch.description,
-            similarity: (usdaMatch as any).similarity,
+            similarity: usdaMatch.similarity,
           },
           alternatives: alternatives.length > 0 ? alternatives : undefined,
         };

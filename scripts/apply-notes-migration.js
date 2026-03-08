@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 /**
  * Apply the notes column migration
  * Run with: node scripts/apply-migration.js

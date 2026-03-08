@@ -36,7 +36,7 @@ export async function matchFoodToUSDAWithAlternatives(
         fdcId: m.fdcId,
         description: m.description,
         dataType: m.dataType || 'Cached',
-        similarity: (m as any).similarity, // Still need this because of sql similarity type but let's fix the interface above
+        similarity: m.similarity,
         foodNutrients: [
           { nutrientName: 'Energy', value: m.calories || 0, unitName: 'kcal' },
           { nutrientName: 'Protein', value: m.protein || 0, unitName: 'g' },
@@ -57,7 +57,7 @@ export async function matchFoodToUSDAWithAlternatives(
       fdcId: m.fdcId,
       description: m.description,
       dataType: m.dataType || 'Foundation',
-      similarity: (m as any).similarity,
+      similarity: m.similarity,
       foodNutrients: [
         { nutrientName: 'Energy', value: m.calories || 0, unitName: 'kcal' },
         { nutrientName: 'Protein', value: m.protein || 0, unitName: 'g' },
@@ -95,6 +95,7 @@ async function searchCacheBySimilarity(
   protein: number | null;
   carbs: number | null;
   fat: number | null;
+  similarity: number;
 }>> {
   try {
     const similarity = sql<number>`1 - (${cosineDistance(usdaCache.embedding, queryVector)})`;

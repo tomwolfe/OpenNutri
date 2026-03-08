@@ -18,7 +18,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { foodLogs, logItems, userTargets } from '@/db/schema';
-import { eq, and, gt, sql } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 
 interface SyncRequest {
   logs?: Array<{

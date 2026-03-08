@@ -6,7 +6,7 @@
  */
 
 import { test, expect } from './fixtures';
-import { BrowserContext } from '@playwright/test';
+import { type BrowserContext as _BrowserContext } from '@playwright/test';
 
 test.describe('Offline Sync Logic', () => {
   test('should save food log offline and sync when online', async ({ page, context }) => {

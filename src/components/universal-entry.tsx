@@ -20,7 +20,7 @@ import { MacroEditor } from '@/components/dashboard/macro-editor';
 import { experimental_useObject as useObject } from '@ai-sdk/react';
 import { FoodAnalysisSchema, DraftItem } from '@/types/food';
 import { db } from '@/lib/db-local';
-import { compressImage, formatBytes, blobToBase64DataUri, blobToImageData } from '@/lib/image-utils';
+import { compressImage, formatBytes, blobToImageData } from '@/lib/image-utils';
 import { classifyFoodLocally, needsCloudAnalysis } from '@/lib/local-ai';
 import { cn } from '@/lib/utils';
 
@@ -71,13 +71,25 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
 
   const startListening = () => {
     if (typeof window === 'undefined') return;
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const GlobalWindow = window as unknown as {
+      SpeechRecognition?: unknown;
+      webkitSpeechRecognition?: unknown;
+    };
+    const SpeechRecognition = (GlobalWindow.SpeechRecognition || GlobalWindow.webkitSpeechRecognition) as {
+      new (): {
+        lang: string;
+        onresult: (event: { results: { [key: number]: { [key: number]: { transcript: string } } } }) => void;
+        onerror: (event: unknown) => void;
+        onend: () => void;
+        start: () => void;
+      };
+    };
     if (!SpeechRecognition) return;
     setIsListening(true);
     setTranscript('');
     const recognition = new SpeechRecognition();
     recognition.lang = 'en-US';
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event: { results: { [key: number]: { [key: number]: { transcript: string } } } }) => {
       const text = event.results[0][0].transcript;
       setTranscript(text);
       setSearchQuery(text);
@@ -91,13 +103,23 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
   };
 
   // AI Streaming for Vision
-  const { submit, object, isLoading: isStreaming } = useObject({
+  const { submit, isLoading: isStreaming } = useObject({
     api: '/api/analyze',
     schema: FoodAnalysisSchema,
     onFinish: async (event) => {
       if (event.object?.items) {
         // 1. Immediately show AI draft items to the user (with enhancing flag)
-        const aiItems: DraftItem[] = event.object.items.map((item: any) => ({
+        const aiItems: DraftItem[] = event.object.items.map((item: { 
+          name?: string; 
+          calories?: number; 
+          protein_g?: number; 
+          carbs_g?: number; 
+          fat_g?: number; 
+          numeric_quantity?: number; 
+          unit?: string; 
+          notes?: string; 
+          usdaMatch?: unknown 
+        }) => ({
           foodName: item?.name ?? '',
           calories: item?.calories ?? 0,
           protein: item?.protein_g ?? 0,
@@ -126,7 +148,7 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
             const enrichedData = await res.json();
             
             // 3. Update the UI with official USDA data and remove loading spinners
-            setItems(enrichedData.items.map((item: any) => ({
+            setItems(enrichedData.items.map((item: DraftItem) => ({
               foodName: item.foodName,
               calories: item.calories,
               protein: item.protein,
@@ -134,7 +156,7 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
               fat: item.fat,
               source: item.source || 'USDA',
               servingGrams: 100,
-              numericQuantity: item.numeric_quantity || 1,
+              numericQuantity: item.numericQuantity || 1,
               unit: item.unit || 'serving',
               isEnhancing: false,
               notes: item.notes,
@@ -181,7 +203,7 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
           const data = await res.json();
           
           if (!data.error) {
-            const usdaResults: SearchResult[] = data.foods.slice(0, 5).map((f: any) => ({ ...f, isFavorite: false }));
+            const usdaResults: SearchResult[] = data.foods.slice(0, 5).map((f: SearchResult) => ({ ...f, isFavorite: false }));
             const merged = [...favoriteResults];
             usdaResults.forEach((u) => {
               if (!merged.some(m => m.description.toLowerCase() === u.description.toLowerCase())) {
@@ -469,7 +491,7 @@ const response = await fetch('/api/log/food', {
                     <Mic className="w-3 h-3" /> Analyze with AI
                   </div>
                   <div className="text-[10px] text-blue-500 truncate max-w-[250px]">
-                    "{searchQuery}"
+                    &quot;{searchQuery}&quot;
                   </div>
                 </div>
                 <div className="text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">

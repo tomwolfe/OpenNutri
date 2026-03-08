@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 /**
  * Manual migration script for ai_usage table
  * Run with: node scripts/migrate-ai-usage.js

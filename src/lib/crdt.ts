@@ -10,7 +10,7 @@ import * as Y from 'yjs';
 /**
  * Creates a Yjs Doc from an object
  */
-export function createYDoc(data: Record<string, any>): Y.Doc {
+export function createYDoc(data: Record<string, unknown>): Y.Doc {
   const doc = new Y.Doc();
   const map = doc.getMap('data');
   
@@ -54,7 +54,7 @@ export function mergeYUpdates(update1: string | null, update2: string | null): s
 /**
  * Extracts data from a Yjs update
  */
-export function getYData<T = any>(base64Update: string): T {
+export function getYData<T = unknown>(base64Update: string): T {
   const doc = new Y.Doc();
   applyYUpdate(doc, base64Update);
   return doc.getMap('data').toJSON() as T;
@@ -66,9 +66,9 @@ export function getYData<T = any>(base64Update: string): T {
 export function mergeCrdt(
   localUpdate: string | null,
   serverUpdate: string | null,
-  localFallback: Record<string, any>,
-  serverFallback: Record<string, any>
-): { mergedUpdate: string; mergedData: any } {
+  localFallback: Record<string, unknown>,
+  serverFallback: Record<string, unknown>
+): { mergedUpdate: string; mergedData: unknown } {
   const doc = new Y.Doc();
   
   // 1. Start with server state (as baseline)

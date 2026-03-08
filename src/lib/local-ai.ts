@@ -5,8 +5,13 @@
  * Reduces main-thread load and avoids native module build errors.
  */
 
+export interface ImageClassificationResult {
+  label: string;
+  score: number;
+}
+
 let worker: Worker | null = null;
-let classificationPromise: ((results: any) => void) | null = null;
+let classificationPromise: ((results: ImageClassificationResult[]) => void) | null = null;
 
 /**
  * Initialize the AI Web Worker
@@ -22,7 +27,7 @@ export function getAiWorker(): Worker | null {
     
     worker.onmessage = (event) => {
       if (event.data.type === 'results' && classificationPromise) {
-        classificationPromise(event.data.results);
+        classificationPromise(event.data.results as ImageClassificationResult[]);
         classificationPromise = null;
       }
     };
@@ -39,7 +44,7 @@ export function getAiWorker(): Worker | null {
  * @param image - Image URL or ImageData
  * @returns Promise with results
  */
-export async function classifyFoodLocally(image: any): Promise<any[] | null> {
+export async function classifyFoodLocally(image: string | ImageData): Promise<ImageClassificationResult[] | null> {
   const aiWorker = getAiWorker();
   if (!aiWorker) return null;
 
@@ -52,7 +57,7 @@ export async function classifyFoodLocally(image: any): Promise<any[] | null> {
 /**
  * Determine if an image needs cloud AI analysis
  */
-export function needsCloudAnalysis(localResults: any[] | null): boolean {
+export function needsCloudAnalysis(localResults: ImageClassificationResult[] | null): boolean {
   if (!localResults || localResults.length === 0) return true;
   
   const topResult = localResults[0];

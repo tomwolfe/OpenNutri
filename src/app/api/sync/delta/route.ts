@@ -44,8 +44,8 @@ export async function GET(request: NextRequest) {
     const includeTypes = includeParam.split(',').map(s => s.trim());
 
     const results: {
-      logs?: typeof foodLogs.$inferSelect[];
-      targets?: typeof userTargets.$inferSelect[];
+      logs?: unknown[];
+      targets?: (typeof userTargets.$inferSelect)[];
       serverTime: number;
     } = {
       serverTime: Date.now(),
@@ -81,7 +81,7 @@ export async function GET(request: NextRequest) {
         },
       });
 
-      results.logs = logsWithItems as any;
+      results.logs = logsWithItems;
     }
 
     // Fetch user targets modified since timestamp
@@ -106,7 +106,7 @@ export async function GET(request: NextRequest) {
         },
       });
 
-      results.targets = targets as any;
+      results.targets = targets;
     }
 
     return NextResponse.json(results);

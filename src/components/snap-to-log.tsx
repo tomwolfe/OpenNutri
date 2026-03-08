@@ -18,7 +18,7 @@ import { CameraOverlay } from './dashboard/camera-overlay';
 import { MacroEditor } from './dashboard/macro-editor';
 import { VoiceCapture } from './dashboard/voice-capture';
 import { FoodAnalysisSchema, DraftItem } from '@/types/food';
-import { compressImage, formatBytes, blobToBase64DataUri } from '@/lib/image-utils';
+import { compressImage, formatBytes } from '@/lib/image-utils';
 import { cn } from '@/lib/utils';
 
 interface SnapToLogProps {
@@ -106,7 +106,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
             const enrichedData = await res.json();
             
             // 3. Update the UI with official USDA data and remove loading spinners
-            setDraftItems(enrichedData.items.map((item: any) => ({
+            setDraftItems(enrichedData.items.map((item: DraftItem) => ({
               foodName: item.foodName,
               calories: item.calories,
               protein: item.protein,
@@ -114,7 +114,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
               fat: item.fat,
               source: item.source || 'USDA',
               servingGrams: 100,
-              numericQuantity: item.numeric_quantity || 1,
+              numericQuantity: item.numericQuantity || 1,
               unit: item.unit || 'serving',
               isEnhancing: false,
               notes: item.notes,
@@ -158,7 +158,20 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
 
   const startListening = useCallback(() => {
     if (typeof window === 'undefined') return;
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const GlobalWindow = window as unknown as {
+      SpeechRecognition?: unknown;
+      webkitSpeechRecognition?: unknown;
+    };
+    const SpeechRecognition = (GlobalWindow.SpeechRecognition || GlobalWindow.webkitSpeechRecognition) as {
+      new (): {
+        lang: string;
+        onresult: (event: { results: { [key: number]: { [key: number]: { transcript: string } } } }) => void;
+        onerror: (event: unknown) => void;
+        onend: () => void;
+        start: () => void;
+      };
+    };
+    
     if (!SpeechRecognition) {
       setUploadError('Speech recognition not supported in this browser.');
       return;
@@ -167,7 +180,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
     setTranscript('');
     const recognition = new SpeechRecognition();
     recognition.lang = 'en-US';
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event: { results: Array<{ [key: number]: { transcript: string } }> }) => {
       const text = event.results[0][0].transcript;
       setTranscript(text);
       handleVoiceSubmit(text);
@@ -387,7 +400,15 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
   }, [previewUrl, imageUrl]);
 
   const displayItems = object?.items
-    ? (object.items as any[]).map((item) => ({
+    ? (object.items as Array<{
+        name: string;
+        calories: number;
+        protein_g: number;
+        carbs_g: number;
+        fat_g: number;
+        numeric_quantity?: number;
+        unit?: string;
+      }>).map((item) => ({
         foodName: item?.name ?? '',
         calories: item?.calories ?? 0,
         protein: item?.protein_g ?? 0,

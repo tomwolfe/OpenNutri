@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: 'At least 2 valid shards are required' }, { status: 400 });
         }
         recoveryMnemonic = combineShards(validShards);
-      } catch (err) {
+      } catch (_err) {
         return NextResponse.json({ error: 'Failed to reconstruct recovery key from shards' }, { status: 400 });
       }
     }

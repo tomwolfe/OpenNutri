@@ -23,7 +23,6 @@
 import { db } from '@/lib/db';
 import { userKeys } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { getVaultKey } from '@/lib/encryption';
 
 /**
  * Cached vault keys per user (ephemeral, memory-only)

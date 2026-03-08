@@ -61,9 +61,10 @@ export function BarcodeScanner({ onProductFound, onClose }: BarcodeScannerProps)
       startCamera();
     }
     
+    const currentVideoRef = videoRef.current;
     return () => {
-      if (videoRef.current && videoRef.current.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
+      if (currentVideoRef && currentVideoRef.srcObject) {
+        const stream = currentVideoRef.srcObject as MediaStream;
         stream.getTracks().forEach(track => track.stop());
       }
       if (zxingReaderRef.current) {
@@ -125,7 +126,7 @@ export function BarcodeScanner({ onProductFound, onClose }: BarcodeScannerProps)
             handleBarcodeFound(code);
           }
         }
-      } catch (err) {
+      } catch (_err) {
         // ZXing throws when no barcode is found in the current frame
       }
 
@@ -235,6 +236,7 @@ export function BarcodeScanner({ onProductFound, onClose }: BarcodeScannerProps)
             <div className="flex gap-4 mb-6">
               {foundProduct.image_url && (
                 <div className="relative h-24 w-24 rounded-md border overflow-hidden shrink-0">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={foundProduct.image_url} alt={foundProduct.product_name} className="object-cover w-full h-full" />
                 </div>
               )}

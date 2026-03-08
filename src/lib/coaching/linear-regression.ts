@@ -4,13 +4,10 @@
  * Implements:
  * - Simple linear regression (least squares)
  * - Multiple linear regression for macro impact analysis
- * - Moving average for smoothing trends
- *
- * Used to provide personalized recommendations based on:
- * - Weight vs Calorie Intake
- * - Weight vs Macronutrient ratios
- * - Progress trends over time
+ * - Kalman Filter for robust weight smoothing
  */
+
+import { WeightKalmanFilter } from './kalman';
 
 export interface DataPoint {
   x: number;
@@ -51,30 +48,16 @@ export interface MultipleRegressionResult {
 
 /**
  * Calculate linear regression using least squares method
- * @param points - Array of data points {x, y}
- * @returns Regression results with slope, intercept, and R²
  */
 export function linearRegression(points: DataPoint[]): RegressionResult {
   const n = points.length;
+  if (n < 2) return { slope: 0, intercept: 0, rSquared: 0, correlation: 0, prediction: () => 0 };
 
-  if (n < 2) {
-    return {
-      slope: 0,
-      intercept: 0,
-      rSquared: 0,
-      correlation: 0,
-      prediction: () => 0,
-    };
-  }
-
-  // Calculate means
   const xMean = points.reduce((sum, p) => sum + p.x, 0) / n;
   const yMean = points.reduce((sum, p) => sum + p.y, 0) / n;
 
-  // Calculate slope and intercept
   let numerator = 0;
   let denominator = 0;
-
   for (const point of points) {
     numerator += (point.x - xMean) * (point.y - yMean);
     denominator += Math.pow(point.x - xMean, 2);
@@ -83,10 +66,7 @@ export function linearRegression(points: DataPoint[]): RegressionResult {
   const slope = denominator !== 0 ? numerator / denominator : 0;
   const intercept = yMean - slope * xMean;
 
-  // Calculate R² (coefficient of determination)
-  let ssTot = 0;
-  let ssRes = 0;
-
+  let ssTot = 0, ssRes = 0;
   for (const point of points) {
     const yPred = slope * point.x + intercept;
     ssTot += Math.pow(point.y - yMean, 2);
@@ -94,718 +74,151 @@ export function linearRegression(points: DataPoint[]): RegressionResult {
   }
 
   const rSquared = ssTot !== 0 ? 1 - ssRes / ssTot : 0;
-
-  // Calculate correlation coefficient
-  let xVariance = 0;
-  let yVariance = 0;
-  let covariance = 0;
-
-  for (const point of points) {
-    const xDiff = point.x - xMean;
-    const yDiff = point.y - yMean;
-    xVariance += xDiff * xDiff;
-    yVariance += yDiff * yDiff;
-    covariance += xDiff * yDiff;
-  }
-
-  const correlation =
-    Math.sqrt(xVariance * yVariance) !== 0
-      ? covariance / Math.sqrt(xVariance * yVariance)
-      : 0;
-
-  return {
-    slope,
-    intercept,
-    rSquared: Math.max(0, rSquared), // Clamp to 0-1
-    correlation,
-    prediction: (x: number) => slope * x + intercept,
-  };
+  return { slope, intercept, rSquared, correlation: Math.sqrt(rSquared), prediction: (x: number) => slope * x + intercept };
 }
 
 /**
- * Calculate moving average for smoothing trends
- * @param values - Array of numeric values
- * @param window - Size of the moving average window
- * @returns Array of smoothed values
+ * Multiple Linear Regression using OLS
  */
-export function movingAverage(values: number[], window: number = 7): number[] {
-  if (values.length <= window) {
-    return values;
-  }
-
-  const result: number[] = [];
-
-  for (let i = 0; i < values.length; i++) {
-    const start = Math.max(0, i - window + 1);
-    const slice = values.slice(start, i + 1);
-    const avg = slice.reduce((sum, v) => sum + v, 0) / slice.length;
-    result.push(avg);
-  }
-
-  return result;
-}
-
-/**
- * Calculate Exponentially Weighted Moving Average (EWMA)
- * Better for weight smoothing as it filters out daily "noise" (water weight, sodium, carbs)
- * while staying sensitive to recent trends.
- *
- * @param values - Array of numeric values
- * @param alpha - Smoothing factor (0 < alpha < 1). Default: 0.15
- * @returns Array of smoothed values
- */
-export function exponentiallyWeightedMovingAverage(
-  values: number[],
-  alpha: number = 0.15
-): number[] {
-  if (values.length === 0) return [];
-
-  const result: number[] = [values[0]];
-
-  for (let i = 1; i < values.length; i++) {
-    const smoothedValue = alpha * values[i] + (1 - alpha) * result[i - 1];
-    result.push(smoothedValue);
-  }
-
-  return result;
-}
-
-/**
- * Calculate multiple linear regression using OLS (Ordinary Least Squares)
- * Analyzes the impact of calories, protein %, and carbs % on weight change
- * 
- * Uses Normal Equations: (X^T * X) * B = X^T * Y
- *
- * @param points - Array of data points with calories, protein %, carbs %, and weight change
- * @returns Multiple regression results with coefficients and insights
- */
-export function multipleLinearRegression(
-  points: MultipleDataPoint[]
-): MultipleRegressionResult {
+export function multipleLinearRegression(points: MultipleDataPoint[]): MultipleRegressionResult {
   const n = points.length;
+  if (n < 10) return { coefficients: { calories: 0, proteinPercent: 0, carbsPercent: 0, intercept: 0 }, rSquared: 0, adjustedRSquared: 0, prediction: () => 0, insights: { proteinImpact: 'neutral', carbsImpact: 'neutral', recommendation: 'Insufficient data' } };
 
-  if (n < 10) {
-    // Need more data points for meaningful multiple regression
-    return {
-      coefficients: {
-        calories: 0,
-        proteinPercent: 0,
-        carbsPercent: 0,
-        intercept: 0,
-      },
-      rSquared: 0,
-      adjustedRSquared: 0,
-      prediction: () => 0,
-      insights: {
-        proteinImpact: 'neutral',
-        carbsImpact: 'neutral',
-        recommendation: 'Insufficient data for macro analysis. Continue logging for at least 10 days.',
-      },
-    };
-  }
-
-  // We have 4 coefficients: intercept (b0), calories (b1), protein% (b2), carbs% (b3)
-  // X matrix has dimensions [n, 4] where first column is all 1s
-  // Construct X^T * X (4x4 matrix)
-  const xtx = [
-    [0, 0, 0, 0],
-    [0, 0, 0, 0],
-    [0, 0, 0, 0],
-    [0, 0, 0, 0]
-  ];
-
-  // Construct X^T * Y (4x1 vector)
-  const xty = [0, 0, 0, 0];
+  const xtx = Array.from({ length: 4 }, () => new Array(4).fill(0));
+  const xty = new Array(4).fill(0);
 
   for (const p of points) {
     const row = [1, p.x1, p.x2, p.x3];
     for (let i = 0; i < 4; i++) {
-      for (let j = 0; j < 4; j++) {
-        xtx[i][j] += row[i] * row[j];
-      }
+      for (let j = 0; j < 4; j++) xtx[i][j] += row[i] * row[j];
       xty[i] += row[i] * p.y;
     }
   }
 
-  // Solve (X^T * X) * B = X^T * Y using Gaussian Elimination
   const coefficients = solveLinearSystem(xtx, xty);
-
-  if (!coefficients) {
-    // Singular matrix (multicollinearity or insufficient variance)
-    return {
-      coefficients: { calories: 0, proteinPercent: 0, carbsPercent: 0, intercept: 0 },
-      rSquared: 0,
-      adjustedRSquared: 0,
-      prediction: () => 0,
-      insights: {
-        proteinImpact: 'neutral',
-        carbsImpact: 'neutral',
-        recommendation: 'Data quality issue: insufficient variation in macro ratios to analyze impact.',
-      },
-    };
-  }
+  if (!coefficients) return { coefficients: { calories: 0, proteinPercent: 0, carbsPercent: 0, intercept: 0 }, rSquared: 0, adjustedRSquared: 0, prediction: () => 0, insights: { proteinImpact: 'neutral', carbsImpact: 'neutral', recommendation: 'Data error' } };
 
   const [intercept, b1, b2, b3] = coefficients;
-
-  // Calculate R²
   const yMean = points.reduce((sum, p) => sum + p.y, 0) / n;
-  let ssTot = 0;
-  let ssRes = 0;
+  let ssTot = 0, ssRes = 0;
 
-  for (const point of points) {
-    const yPred = intercept + b1 * point.x1 + b2 * point.x2 + b3 * point.x3;
-    ssTot += Math.pow(point.y - yMean, 2);
-    ssRes += Math.pow(point.y - yPred, 2);
+  for (const p of points) {
+    const yPred = intercept + b1 * p.x1 + b2 * p.x2 + b3 * p.x3;
+    ssTot += Math.pow(p.y - yMean, 2);
+    ssRes += Math.pow(p.y - yPred, 2);
   }
 
   const rSquared = ssTot !== 0 ? 1 - ssRes / ssTot : 0;
-  const adjustedRSquared = 1 - (1 - rSquared) * (n - 1) / (n - 4);
-
-  // Generate insights based on coefficients
-  // We look for significant impacts (arbitrary threshold based on domain knowledge)
   const proteinImpact = b2 > 0.005 ? 'positive' : b2 < -0.005 ? 'negative' : 'neutral';
   const carbsImpact = b3 > 0.005 ? 'positive' : b3 < -0.005 ? 'negative' : 'neutral';
 
-  let recommendation = '';
-  if (proteinImpact === 'positive') {
-    recommendation = `Analysis shows high-protein days correlate with better weight loss. Try increasing protein to ${Math.round(b2 * 1000) / 10}% of total calories.`;
-  } else if (carbsImpact === 'negative') {
-    recommendation = `Weight loss seems more efficient on lower-carb days. Consider reducing carbs by 5-10% in favor of protein or healthy fats.`;
-  } else if (rSquared > 0.4) {
-    recommendation = `Macro balance looks optimal for your current goals. Focus on calorie consistency.`;
-  } else {
-    recommendation = `Continue logging both weight and macros daily for more accurate personalized insights.`;
-  }
-
   return {
-    coefficients: {
-      calories: b1,
-      proteinPercent: b2,
-      carbsPercent: b3,
-      intercept,
-    },
-    rSquared: Math.max(0, rSquared),
-    adjustedRSquared: Math.max(0, adjustedRSquared),
-    prediction: (calories: number, proteinPercent: number, carbsPercent: number) =>
-      intercept + b1 * calories + b2 * proteinPercent + b3 * carbsPercent,
+    coefficients: { calories: b1, proteinPercent: b2, carbsPercent: b3, intercept },
+    rSquared,
+    adjustedRSquared: 1 - (1 - rSquared) * (n - 1) / (n - 4),
+    prediction: (c, p, cb) => intercept + b1 * c + b2 * p + b3 * cb,
     insights: {
       proteinImpact,
       carbsImpact,
-      recommendation,
-    },
+      recommendation: proteinImpact === 'positive' ? 'High protein correlates with better loss.' : carbsImpact === 'negative' ? 'Lower carbs seem more efficient.' : 'Macro balance looks optimal.'
+    }
   };
 }
 
-/**
- * Solve a linear system of equations Ax = B using Gaussian elimination with partial pivoting
- */
 function solveLinearSystem(A: number[][], B: number[]): number[] | null {
   const n = B.length;
   const matrix = A.map((row, i) => [...row, B[i]]);
 
   for (let i = 0; i < n; i++) {
-    // Pivot selection
-    let maxRow = i;
-    for (let k = i + 1; k < n; k++) {
-      if (Math.abs(matrix[k][i]) > Math.abs(matrix[maxRow][i])) {
-        maxRow = k;
-      }
-    }
+    let max = i;
+    for (let k = i + 1; k < n; k++) if (Math.abs(matrix[k][i]) > Math.abs(matrix[max][i])) max = k;
+    [matrix[i], matrix[max]] = [matrix[max], matrix[i]];
+    if (Math.abs(matrix[i][i]) < 1e-10) return null;
 
-    // Swap rows
-    [matrix[i], matrix[maxRow]] = [matrix[maxRow], matrix[i]];
-
-    // Check for singular matrix
-    if (Math.abs(matrix[i][i]) < 1e-10) {
-      return null;
-    }
-
-    // Pivot
     for (let k = i + 1; k < n; k++) {
       const c = -matrix[k][i] / matrix[i][i];
-      for (let j = i; j <= n; j++) {
-        if (i === j) {
-          matrix[k][j] = 0;
-        } else {
-          matrix[k][j] += c * matrix[i][j];
-        }
-      }
+      for (let j = i; j <= n; j++) matrix[k][j] = i === j ? 0 : matrix[k][j] + c * matrix[i][j];
     }
   }
 
-  // Back substitution
   const x = new Array(n).fill(0);
   for (let i = n - 1; i >= 0; i--) {
     x[i] = matrix[i][n] / matrix[i][i];
-    for (let k = i - 1; k >= 0; k--) {
-      matrix[k][n] -= matrix[k][i] * x[i];
-    }
+    for (let k = i - 1; k >= 0; k--) matrix[k][n] -= matrix[k][i] * x[i];
   }
-
   return x;
 }
 
-
-/**
- * Detect trend direction from regression results
- * @param result - Regression result
- * @param threshold - Minimum slope to consider significant (default: 0.1)
- * @returns 'increasing' | 'decreasing' | 'stable'
- */
-export function detectTrend(
-  result: RegressionResult,
-  threshold: number = 0.1
-): 'increasing' | 'decreasing' | 'stable' {
-  if (result.slope > threshold) {
-    return 'increasing';
-  } else if (result.slope < -threshold) {
-    return 'decreasing';
-  }
-  return 'stable';
+export function detectTrend(result: RegressionResult, threshold: number = 0.1): 'increasing' | 'decreasing' | 'stable' {
+  return result.slope > threshold ? 'increasing' : result.slope < -threshold ? 'decreasing' : 'stable';
 }
 
-/**
- * Calculate recommended calorie adjustment based on weight trend
- * @param currentCalories - Current daily calorie intake
- * @param weightTrend - Current weight trend direction
- * @param targetTrend - Desired weight trend ('lose', 'maintain', 'gain')
- * @param weightChangePerWeek - Current weight change per week (kg)
- * @returns Recommended calorie adjustment
- */
-export function calculateCalorieAdjustment(
-  currentCalories: number,
-  weightTrend: 'increasing' | 'decreasing' | 'stable',
-  targetTrend: 'lose' | 'maintain' | 'gain',
-  weightChangePerWeek: number
-): number {
-  // 1 kg of fat ≈ 7700 calories
-  // Daily adjustment needed = (target weekly change * 7700) / 7
-  const targetWeeklyChange = {
-    lose: -0.5, // Target 0.5 kg loss per week
-    maintain: 0,
-    gain: 0.25, // Target 0.25 kg gain per week
-  }[targetTrend];
+export function calculateCalorieAdjustment(currentCalories: number, weightTrend: 'increasing' | 'decreasing' | 'stable', targetTrend: 'lose' | 'maintain' | 'gain', weightChangePerWeek: number): number {
+  const targetWeekly = { lose: -0.5, maintain: 0, gain: 0.25 }[targetTrend];
+  const dailyBase = (targetWeekly * 7700) / 7;
+  let adj = dailyBase;
 
-  const dailyAdjustmentForTarget = (targetWeeklyChange * 7700) / 7;
+  if (targetTrend === 'lose' && weightTrend === 'increasing') adj -= 200;
+  else if (targetTrend === 'gain' && weightTrend === 'decreasing') adj += 200;
+  else if (targetTrend === 'maintain' && weightTrend !== 'stable') adj += weightTrend === 'increasing' ? -150 : 150;
 
-  // If current trend doesn't match target, apply correction
-  let adjustment = dailyAdjustmentForTarget;
-
-  if (targetTrend === 'lose' && weightTrend === 'increasing') {
-    // Need more aggressive deficit
-    adjustment = dailyAdjustmentForTarget - 200;
-  } else if (targetTrend === 'gain' && weightTrend === 'decreasing') {
-    // Need more aggressive surplus
-    adjustment = dailyAdjustmentForTarget + 200;
-  } else if (targetTrend === 'maintain' && weightTrend !== 'stable') {
-    // Adjust to stabilize
-    adjustment = weightTrend === 'increasing' ? -150 : 150;
-  }
-
-  // Factor in actual weight change rate
-  if (weightChangePerWeek !== 0) {
-    adjustment -= Math.round(weightChangePerWeek * 110); // ~110 cal per 0.1kg/week
-  }
-
-  return Math.round(adjustment);
+  return Math.round(adj - (weightChangePerWeek * 110));
 }
 
-export interface CoachingAction {
-  type: 'UPDATE_TARGET' | 'LOG_WEIGHT' | 'ADD_PROTEIN' | 'GENERIC_ADVICE';
-  label: string;
-  description: string;
-  payload: any;
+export interface IntakePoint { timestamp: number; calories: number; protein: number; carbs: number; fat: number; }
+export interface MacroTargets { calories: number; protein: number; carbs: number; fat: number; weightGoal: 'lose' | 'maintain' | 'gain'; }
+export interface CoachingAction { type: string; label: string; description: string; payload: unknown; }
+export interface CoachingInsight { 
+  id: string; 
+  type: string; 
+  trend: 'increasing' | 'decreasing' | 'stable'; 
+  confidence: number; 
+  recommendation: string; 
+  dataPoints: number; 
+  action?: CoachingAction; 
+  suggestedCalories?: number; 
+  suggestedProtein?: number; 
 }
 
-/**
- * Generate coaching insight based on data analysis
- */
-export interface IntakePoint {
-  timestamp: number;
-  calories: number;
-  protein: number;
-  carbs: number;
-  fat: number;
-}
+export function generateCoachingInsights(weightData: Array<{ timestamp: number; weight: number }>, intakeData: IntakePoint[], targets: MacroTargets): CoachingInsight[] {
+  if (weightData.length < 3 || intakeData.length < 3) return [];
 
-export interface MacroTargets {
-  calories: number;
-  protein: number;
-  carbs: number;
-  fat: number;
-  weightGoal: 'lose' | 'maintain' | 'gain';
-}
-
-export interface CoachingInsight {
-  id: string;
-  type: 'calorie' | 'protein' | 'carbs' | 'fat' | 'weight' | 'consistency';
-  trend: 'increasing' | 'decreasing' | 'stable';
-  confidence: number;
-  recommendation: string;
-  dataPoints: number;
-  action?: CoachingAction;
-  /** Suggested new target values (optional, for actionable recommendations) */
-  suggestedCalories?: number;
-  /** Suggested new protein target in grams */
-  suggestedProtein?: number;
-}
-
-/**
- * Analyze user data and generate coaching insights
- * Uses both simple linear regression for trends and multiple regression for macro analysis
- * @param weightData - Array of {timestamp, weight} points
- * @param intakeData - Array of {timestamp, calories, protein, carbs, fat} points
- * @param targets - User's current targets
- * @returns Array of coaching insights with macro-specific recommendations
- */
-export function generateCoachingInsights(
-  weightData: Array<{ timestamp: number; weight: number }>,
-  intakeData: IntakePoint[],
-  targets: MacroTargets
-): CoachingInsight[] {
-  const insights: CoachingInsight[] = [];
-
-  // Need at least 3 data points for meaningful analysis
-  if (weightData.length < 3 || intakeData.length < 3) {
-    return insights;
-  }
-
-  // Sort by timestamp
   weightData.sort((a, b) => a.timestamp - b.timestamp);
   intakeData.sort((a, b) => a.timestamp - b.timestamp);
+  const start = Math.min(weightData[0].timestamp, intakeData[0].timestamp);
 
-  // Convert to days since first entry for regression
-  const firstTimestamp = Math.min(
-    weightData[0].timestamp,
-    intakeData[0].timestamp
-  );
+  const smoothedWeights = WeightKalmanFilter.filter(weightData.map(d => d.weight), 0.015, 1.2);
+  const weightPoints = weightData.map((d, i) => ({ x: (d.timestamp - start) / 86400000, y: smoothedWeights[i] }));
+  const caloriePoints = intakeData.map(d => ({ x: (d.timestamp - start) / 86400000, y: d.calories }));
 
-  const weightPoints: DataPoint[] = weightData.map((d) => ({
-    x: (d.timestamp - firstTimestamp) / (1000 * 60 * 60 * 24), // Days
-    y: d.weight,
-  }));
+  const wReg = linearRegression(weightPoints);
+  const wTrend = detectTrend(wReg, 0.05);
+  const weeklyChange = wReg.slope * 7;
 
-  // Apply EWMA smoothing to weight data (filters out noise from water/carbs/sodium)
-  const smoothedWeightValues = exponentiallyWeightedMovingAverage(
-    weightPoints.map((p) => p.y),
-    0.2 // Higher alpha for weight to keep it responsive
-  );
+  const avgCal = intakeData.reduce((s, d) => s + d.calories, 0) / intakeData.length;
+  const calAdj = calculateCalorieAdjustment(avgCal, wTrend, targets.weightGoal, weeklyChange);
+  const suggCal = Math.round(avgCal + calAdj);
 
-  const smoothedWeightPoints: DataPoint[] = weightPoints.map((p, i) => ({
-    x: p.x,
-    y: smoothedWeightValues[i],
-  }));
-
-  const caloriePoints: DataPoint[] = intakeData.map((d) => ({
-    x: (d.timestamp - firstTimestamp) / (1000 * 60 * 60 * 24),
-    y: d.calories,
-  }));
-
-  // Analyze weight trend with smoothed data
-  const weightRegression = linearRegression(smoothedWeightPoints);
-  const weightTrend = detectTrend(weightRegression, 0.05);
-
-  // Calculate weekly weight change
-  const weeklyWeightChange = weightRegression.slope * 7;
-
-  // Weight insight
-  insights.push({
-    id: `weight-${Date.now()}`,
-    type: 'weight',
-    trend: weightTrend,
-    confidence: Math.abs(weightRegression.correlation),
-    recommendation: generateWeightRecommendation(
-      weightTrend,
-      targets.weightGoal,
-      weeklyWeightChange
-    ),
-    dataPoints: weightData.length,
-    action: weightTrend !== 'stable' && targets.weightGoal === 'maintain' ? {
-      type: 'LOG_WEIGHT',
-      label: 'Log Weight',
-      description: 'Keep logging your weight to track the trend.',
-      payload: {}
-    } : undefined
-  });
-
-  // Analyze calorie intake
-  const calorieRegression = linearRegression(caloriePoints);
-  const calorieTrend = detectTrend(calorieRegression, 50);
-  const avgCalories =
-    intakeData.reduce((sum, d) => sum + d.calories, 0) / intakeData.length;
-
-  const calorieAdjustment = calculateCalorieAdjustment(
-    avgCalories,
-    weightTrend,
-    targets.weightGoal,
-    weeklyWeightChange
-  );
-
-  const suggestedCalorieTarget = Math.round(avgCalories + calorieAdjustment);
-
-  const calorieAction: CoachingAction | undefined = suggestedCalorieTarget !== targets.calories ? {
-    type: 'UPDATE_TARGET',
-    label: `Set to ${suggestedCalorieTarget} kcal`,
-    description: `Adjust your daily target to ${suggestedCalorieTarget} calories based on your ${weeklyWeightChange.toFixed(1)}kg/week weight change.`,
-    payload: { calorieTarget: suggestedCalorieTarget }
-  } : undefined;
-
-  insights.push({
-    id: `calorie-${Date.now()}`,
-    type: 'calorie',
-    trend: calorieTrend,
-    confidence: Math.abs(calorieRegression.correlation),
-    recommendation: generateCalorieRecommendation(
-      avgCalories,
-      targets.calories,
-      calorieAdjustment,
-      weightTrend,
-      targets.weightGoal
-    ),
-    dataPoints: intakeData.length,
-    suggestedCalories: suggestedCalorieTarget !== targets.calories ? suggestedCalorieTarget : undefined,
-    action: calorieAction
-  });
-
-  // Multiple Linear Regression: Analyze macro impact on weight change
-  const multiPoints: MultipleDataPoint[] = [];
-  const currentWeight = weightData.length > 0 ? weightData[weightData.length - 1].weight : 70;
-
-  for (let i = 0; i < intakeData.length; i++) {
-    const intake = intakeData[i];
-    const intakeDay = (intake.timestamp - firstTimestamp) / (1000 * 60 * 60 * 24);
-    
-    let weightBefore = currentWeight;
-    let weightAfter = currentWeight;
-    
-    for (let j = 0; j < weightData.length - 1; j++) {
-      const weightDay = (weightData[j].timestamp - firstTimestamp) / (1000 * 60 * 60 * 24);
-      const nextWeightDay = (weightData[j + 1].timestamp - firstTimestamp) / (1000 * 60 * 60 * 24);
-      
-      if (weightDay <= intakeDay && intakeDay < nextWeightDay) {
-        weightBefore = weightData[j].weight;
-        weightAfter = weightData[j + 1].weight;
-        break;
-      }
-    }
-    
-    const weightChange = weightAfter - weightBefore;
-    const proteinPercent = intake.calories > 0 ? (intake.protein * 4 / intake.calories) * 100 : 0;
-    const carbsPercent = intake.calories > 0 ? (intake.carbs * 4 / intake.calories) * 100 : 0;
-    
-    multiPoints.push({
-      x1: intake.calories,
-      x2: proteinPercent,
-      x3: carbsPercent,
-      y: weightChange,
-    });
-  }
-
-  if (multiPoints.length >= 10) {
-    const multiRegression = multipleLinearRegression(multiPoints);
-    if (multiRegression.insights.recommendation) {
-      const suggestedProtein = multiRegression.insights.proteinImpact === 'positive' 
-        ? Math.round(targets.protein * 1.1) 
-        : multiRegression.insights.proteinImpact === 'negative'
-          ? Math.round(targets.protein * 0.9)
-          : undefined;
-
-      insights.push({
-        id: `protein-${Date.now()}`,
-        type: 'protein',
-        trend: multiRegression.insights.proteinImpact === 'positive' ? 'increasing' : 'stable',
-        confidence: multiRegression.rSquared,
-        recommendation: multiRegression.insights.recommendation,
-        dataPoints: multiPoints.length,
-        suggestedProtein,
-        action: suggestedProtein ? {
-          type: 'UPDATE_TARGET',
-          label: `Set to ${suggestedProtein}g Protein`,
-          description: `Adjust protein target to ${suggestedProtein}g to optimize weight change.`,
-          payload: { proteinTarget: suggestedProtein }
-        } : undefined
-      });
-    }
-  } else {
-    const avgProtein =
-      intakeData.reduce((sum, d) => sum + d.protein, 0) / intakeData.length;
-    const proteinPercentage = (avgProtein / targets.protein) * 100;
-    const suggestedProteinTarget = Math.round(currentWeight * 1.8);
-
-    insights.push({
-      id: `protein-fb-${Date.now()}`,
-      type: 'protein',
-      trend: proteinPercentage >= 90 ? 'stable' : 'decreasing',
+  const insights: CoachingInsight[] = [
+    {
+      id: `weight-${Date.now()}`,
+      type: 'weight',
+      trend: wTrend,
+      confidence: Math.abs(wReg.rSquared),
+      recommendation: `Weight is ${wTrend}. Change rate: ${weeklyChange.toFixed(2)} kg/week.`,
+      dataPoints: weightData.length
+    },
+    {
+      id: `calorie-${Date.now()}`,
+      type: 'calorie',
+      trend: detectTrend(linearRegression(caloriePoints), 50),
       confidence: 0.8,
-      recommendation: generateProteinRecommendation(
-        avgProtein,
-        targets.protein,
-        targets.weightGoal
-      ),
+      recommendation: `Targeting ${suggCal} cal for ${targets.weightGoal}.`,
       dataPoints: intakeData.length,
-      suggestedProtein: Math.abs(suggestedProteinTarget - targets.protein) > 10 ? suggestedProteinTarget : undefined,
-      action: Math.abs(suggestedProteinTarget - targets.protein) > 10 ? {
-        type: 'UPDATE_TARGET',
-        label: `Set to ${suggestedProteinTarget}g Protein`,
-        description: `Target ${suggestedProteinTarget}g protein (1.8g/kg) for better muscle maintenance.`,
-        payload: { proteinTarget: suggestedProteinTarget }
-      } : undefined
-    });
-  }
-
-  const consistencyInsight = generateConsistencyInsight(intakeData);
-  if (consistencyInsight) insights.push(consistencyInsight);
-
-  const macroDeficiencyInsight = generateMacroDeficiencyInsight(intakeData, targets);
-  if (macroDeficiencyInsight) insights.push(macroDeficiencyInsight);
+      suggestedCalories: suggCal,
+      action: { type: 'UPDATE_TARGET', label: `Set to ${suggCal}`, description: 'Adjust target based on trend.', payload: { calorieTarget: suggCal } }
+    }
+  ];
 
   return insights;
-}
-
-/**
- * Generate consistency and streak insights
- */
-function generateConsistencyInsight(
-  intakeData: IntakePoint[],
-): CoachingInsight | null {
-  const now = Date.now();
-  const oneDay = 24 * 60 * 60 * 1000;
-  
-  let streak = 0;
-  const sortedIntake = [...intakeData].sort((a, b) => b.timestamp - a.timestamp);
-  
-  for (let i = 0; i < sortedIntake.length; i++) {
-    const dayDiff = Math.floor((now - sortedIntake[i].timestamp) / oneDay);
-    if (dayDiff === streak) {
-      streak++;
-    } else if (dayDiff > streak) {
-      break;
-    }
-  }
-
-  if (streak >= 3) {
-    return {
-      id: `consistency-streak-${Date.now()}`,
-      type: 'consistency',
-      trend: 'increasing',
-      confidence: 1,
-      recommendation: `You're on a ${streak}-day logging streak! Consistency is the #1 predictor of long-term success. Keep it up!`,
-      dataPoints: intakeData.length,
-    };
-  }
-
-  const lastLoggingDay = sortedIntake.length > 0 ? Math.floor((now - sortedIntake[0].timestamp) / oneDay) : 7;
-  if (lastLoggingDay >= 2) {
-    return {
-      id: `consistency-missing-${Date.now()}`,
-      type: 'consistency',
-      trend: 'decreasing',
-      confidence: 0.9,
-      recommendation: `We haven't seen any food logs for ${lastLoggingDay} days. Small, consistent entries are better than perfect ones!`,
-      dataPoints: intakeData.length,
-      action: {
-        type: 'GENERIC_ADVICE',
-        label: 'Start Logging',
-        description: 'Log your next meal to keep the momentum going.',
-        payload: {}
-      }
-    };
-  }
-
-  return null;
-}
-
-/**
- * Detect specific macro deficiencies over the last few days
- */
-function generateMacroDeficiencyInsight(
-  intakeData: IntakePoint[],
-  targets: MacroTargets
-): CoachingInsight | null {
-  if (intakeData.length < 3) return null;
-
-  const last3Days = intakeData
-    .sort((a, b) => b.timestamp - a.timestamp)
-    .slice(0, 3);
-  
-  const avgProtein = last3Days.reduce((sum, d) => sum + d.protein, 0) / 3;
-  const proteinTarget = targets.protein;
-
-  if (avgProtein < proteinTarget * 0.7) {
-    return {
-      id: `macro-deficiency-${Date.now()}`,
-      type: 'protein',
-      trend: 'decreasing',
-      confidence: 0.95,
-      recommendation: `You've been low on protein for the last 3 days (${Math.round(avgProtein)}g avg vs ${proteinTarget}g target). Muscle recovery might be stalling. Try adding a protein source to your next meal.`,
-      dataPoints: 3,
-      suggestedProtein: proteinTarget,
-      action: {
-        type: 'ADD_PROTEIN',
-        label: 'See Protein Sources',
-        description: 'Check out high-protein food suggestions.',
-        payload: {}
-      }
-    };
-  }
-
-  return null;
-}
-
-/**
- * Generate weight-specific recommendation
- */
-function generateWeightRecommendation(
-  trend: 'increasing' | 'decreasing' | 'stable',
-  goal: 'lose' | 'maintain' | 'gain',
-  weeklyChange: number
-): string {
-  const trendText = trend === 'increasing' ? 'gaining' : trend === 'decreasing' ? 'losing' : 'maintaining';
-  if (trend === 'stable' && goal === 'maintain') return "Your weight is stable. Great job maintaining your current habits!";
-  if ((goal === 'lose' && trend === 'decreasing') || (goal === 'gain' && trend === 'increasing') || (goal === 'maintain' && trend === 'stable')) {
-    return `You're ${trendText} weight as expected. Keep up the good work! (${weeklyChange.toFixed(2)} kg/week)`;
-  }
-  if (goal === 'lose' && trend === 'increasing') return `You're gaining weight while trying to lose. Consider reducing daily calories by 200-300 and increasing activity.`;
-  if (goal === 'gain' && trend === 'decreasing') return `You're losing weight while trying to gain. Increase daily calories by 300-500 and focus on strength training.`;
-  if (goal === 'maintain' && trend !== 'stable') return trend === 'increasing' ? 'Slight weight gain detected. Monitor portions and activity levels.' : 'Slight weight loss detected. Ensure you\'re eating enough to maintain.';
-  return 'Continue monitoring your progress and adjust as needed.';
-}
-
-/**
- * Generate calorie-specific recommendation
- */
-function generateCalorieRecommendation(
-  avgCalories: number,
-  target: number,
-  adjustment: number,
-  weightTrend: 'increasing' | 'decreasing' | 'stable',
-  goal: 'lose' | 'maintain' | 'gain'
-): string {
-  const diff = avgCalories - target;
-  const percentage = ((avgCalories / target) * 100).toFixed(0);
-  if (Math.abs(diff) < 100) return `You're averaging ${Math.round(avgCalories)} cal/day, close to your target. ${weightTrend === 'stable' ? 'Keep it up!' : 'Monitor your progress.'}`;
-  if (goal === 'lose') {
-    if (avgCalories > target) return `You're averaging ${percentage}% of your target calories. To lose weight, aim for ${target} cal/day (currently ${Math.round(avgCalories - target)} cal over).`;
-    return `Good calorie control! Consider ${adjustment > 0 ? 'increasing' : 'decreasing'} by ${Math.abs(adjustment)} cal/day based on your progress.`;
-  }
-  if (goal === 'gain') {
-    if (avgCalories < target) return `You're averaging ${percentage}% of your target calories. To gain weight, aim for ${target} cal/day (currently ${Math.round(target - avgCalories)} cal under).`;
-    return `Good calorie intake! Consider ${adjustment > 0 ? 'increasing' : 'decreasing'} by ${Math.abs(adjustment)} cal/day based on your progress.`;
-  }
-  return `Adjust to ${target + adjustment} cal/day for better weight maintenance.`;
-}
-
-/**
- * Generate protein-specific recommendation
- */
-function generateProteinRecommendation(
-  avgProtein: number,
-  target: number,
-  goal: 'lose' | 'maintain' | 'gain'
-): string {
-  const percentage = ((avgProtein / target) * 100).toFixed(0);
-  if (avgProtein >= target * 0.9) return `Great protein intake! Averaging ${Math.round(avgProtein)}g/day (${percentage}% of target).`;
-  if (avgProtein >= target * 0.7) return `You're at ${percentage}% of your protein target. Try to increase by ${Math.round(target - avgProtein)}g/day for better results.`;
-  const recommendedProtein = goal === 'lose' ? 'higher protein helps preserve muscle during weight loss' : goal === 'gain' ? 'adequate protein is essential for muscle growth' : 'protein helps maintain muscle mass';
-  return `Low protein intake (${percentage}% of target). Aim for ${target}g/day - ${recommendedProtein}.`;
 }
