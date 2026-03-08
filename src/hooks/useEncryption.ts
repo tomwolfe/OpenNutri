@@ -27,6 +27,7 @@ interface UseEncryptionReturn {
   isReady: boolean;
   isSupported: boolean;
   error: string | null;
+  vaultKey: CryptoKey | null;
   encryptLog: (log: unknown) => Promise<{ encryptedData: string; iv: string }>;
   decryptLog: (encryptedData: string, iv: string) => Promise<EncryptedFoodLog>;
   initializeKey: (email: string, password: string) => Promise<VaultKeyData>;
@@ -148,6 +149,7 @@ export function useEncryption(): UseEncryptionReturn {
     isReady: !!key || !isSupported,
     isSupported,
     error,
+    vaultKey: key,
     encryptLog,
     decryptLog,
     initializeKey,

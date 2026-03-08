@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { db, type DecryptedFoodLog, type LocalFoodLog } from '@/lib/db-local';
+import { decryptBatchInWorker } from '@/lib/worker-client';
 
 export interface LogItem {
   foodName: string;
@@ -7,7 +9,7 @@ export interface LogItem {
   protein: number;
   carbs: number;
   fat: number;
-  source: 'AI' | 'USDA' | 'MANUAL' | 'AI_ESTIMATE';
+  source: 'AI' | 'USDA' | 'MANUAL' | 'AI_ESTIMATE' | 'OPEN_FACTS';
   notes?: string;
   isEnhancing?: boolean;
 }
@@ -52,7 +54,7 @@ interface NutritionStore {
   setManualEntryOpen: (isOpen: boolean) => void;
   setSelectedMealType: (mealType: string) => void;
   
-  fetchLogs: (date: Date, isEncryptionReady: boolean, decryptLog: (data: string, iv: string) => Promise<unknown>) => Promise<void>;
+  fetchLogs: (date: Date, userId: string | undefined, vaultKey: CryptoKey | null) => Promise<void>;
   addLogOptimistic: (mealType: string, items: LogItem[], totalCalories: number) => string; // returns tempId
   removeLog: (logId: string) => Promise<void>;
   updateTotals: () => void;
@@ -76,71 +78,117 @@ export const useNutritionStore = create<NutritionStore>((set, get) => ({
   setManualEntryOpen: (isOpen) => set({ isManualEntryOpen: isOpen }),
   setSelectedMealType: (mealType) => set({ selectedMealType: mealType }),
 
-  fetchLogs: async (date, isEncryptionReady, decryptLog) => {
+  fetchLogs: async (date, userId, vaultKey) => {
+    if (!userId) return;
+    
     set({ isLoading: true, error: null });
     try {
       const dateStr = date.toISOString().split('T')[0];
+      const startOfDay = new Date(dateStr);
+      const endOfDay = new Date(dateStr);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      // 1. Try to fetch from Local IndexedDB first (Dexie)
+      const cachedDecrypted = await db.decryptedLogs
+        .where('timestamp')
+        .between(startOfDay, endOfDay)
+        .filter(log => log.userId === userId)
+        .toArray();
+
+      if (cachedDecrypted.length > 0) {
+        // Map to FoodLog interface
+        const logs: FoodLog[] = cachedDecrypted.map(log => ({
+          id: log.id,
+          mealType: log.mealType || 'unknown',
+          totalCalories: log.totalCalories || 0,
+          aiConfidenceScore: 0,
+          isVerified: true,
+          timestamp: log.timestamp.toISOString(),
+          items: log.items as LogItem[],
+          notes: log.notes,
+        }));
+
+        set({ logs, isLoading: false });
+        get().updateTotals();
+      }
+
+      // 2. Fetch from server
       const response = await fetch(`/api/log/daily?date=${dateStr}`);
-      if (!response.ok) throw new Error('Failed to fetch logs');
+      if (!response.ok) throw new Error('Failed to fetch logs from server');
       
       const data = await response.json();
-      const rawLogs = data.logs || [];
-      let processedLogs: FoodLog[] = [];
-
-      // Decrypt logs if encryption is ready
-      if (rawLogs.length > 0) {
-        processedLogs = await Promise.all(
-          rawLogs.map(async (log: any) => {
-            let items: LogItem[] = log.logItems || [];
-            
-            if (isEncryptionReady && log.encryptedData && log.encryptionIv) {
-              try {
-                const decrypted: any = await decryptLog(log.encryptedData, log.encryptionIv);
-                
-                // Handle new complex encrypted object: { mealType, items, notes, imageUrl }
-                if (decrypted && typeof decrypted === 'object' && !Array.isArray(decrypted)) {
-                  if (decrypted.items) {
-                    items = decrypted.items;
-                    return {
-                      ...log,
-                      items,
-                      mealType: decrypted.mealType || log.mealType,
-                      notes: decrypted.notes || log.notes,
-                      imageUrl: decrypted.imageUrl || log.imageUrl,
-                    };
-                  }
-                }
-                
-                // Fallback for older format (just items array)
-                items = Array.isArray(decrypted) ? decrypted : [decrypted];
-              } catch (err) {
-                console.error('Store: Failed to decrypt log:', log.id, err);
-              }
-            }
-            
-            return {
-              ...log,
-              items,
-            };
-          })
-        );
+      const rawLogs = (data.logs || []) as (LocalFoodLog & { logItems?: LogItem[] })[];
+      
+      // 3. Process and Decrypt server logs
+      const logsToDecrypt = rawLogs.filter(log => 
+        log.encryptedData && log.encryptionIv && vaultKey
+      );
+      
+      let decryptedResults: DecryptedFoodLog[] = [];
+      if (logsToDecrypt.length > 0 && vaultKey) {
+        decryptedResults = await decryptBatchInWorker(logsToDecrypt, vaultKey);
       }
+
+      // 4. Merge results
+      const processedLogs: FoodLog[] = rawLogs.map(log => {
+        const decrypted = decryptedResults.find(d => d.id === log.id);
+        if (decrypted) {
+          return {
+            id: log.id,
+            mealType: decrypted.mealType || log.mealType || 'unknown',
+            totalCalories: decrypted.totalCalories || 0,
+            aiConfidenceScore: log.aiConfidenceScore || 0,
+            isVerified: log.isVerified,
+            timestamp: new Date(log.timestamp).toISOString(),
+            items: decrypted.items as LogItem[],
+            notes: decrypted.notes || log.notes,
+            imageUrl: decrypted.imageUrl || log.imageUrl,
+          };
+        }
+        return {
+          id: log.id,
+          mealType: log.mealType || 'unknown',
+          totalCalories: log.totalCalories || 0,
+          aiConfidenceScore: log.aiConfidenceScore || 0,
+          isVerified: log.isVerified,
+          timestamp: new Date(log.timestamp).toISOString(),
+          items: log.logItems || [],
+          notes: log.notes,
+          imageUrl: log.imageUrl,
+        };
+      });
+
+      // 5. Update Local Cache
+      await db.transaction('rw', db.foodLogs, db.decryptedLogs, async () => {
+        // Store raw encrypted logs
+        const localLogs: LocalFoodLog[] = rawLogs.map(log => ({
+          ...log,
+          timestamp: new Date(log.timestamp),
+          synced: true,
+        }));
+        await db.foodLogs.bulkPut(localLogs);
+
+        // Store decrypted logs for instant access next time
+        if (decryptedResults.length > 0) {
+          await db.decryptedLogs.bulkPut(decryptedResults);
+        }
+      });
 
       set({ 
         logs: processedLogs, 
         isLoading: false 
       });
       
-      // Calculate totals locally based on decrypted items
       get().updateTotals();
     } catch (error: unknown) {
+      console.error('fetchLogs error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       set({ error: errorMessage, isLoading: false });
     }
   },
 
   addLogOptimistic: (mealType, items, totalCalories) => {
-    const tempId = `temp-${Math.random().toString(36).substr(2, 9)}`;
+    const tempId = `temp-${Math.random().toString(36).substring(2, 11)}`;
     const newLog: FoodLog = {
       id: tempId,
       mealType,
@@ -160,7 +208,6 @@ export const useNutritionStore = create<NutritionStore>((set, get) => ({
   },
 
   removeLog: async (logId) => {
-    // Optimistic removal
     const previousLogs = get().logs;
     set((state) => ({
       logs: state.logs.filter(log => log.id !== logId),
@@ -170,8 +217,10 @@ export const useNutritionStore = create<NutritionStore>((set, get) => ({
     try {
       const response = await fetch(`/api/log/food?id=${logId}`, { method: 'DELETE' });
       if (!response.ok) throw new Error('Delete failed');
+      
+      await db.foodLogs.delete(logId);
+      await db.decryptedLogs.delete(logId);
     } catch (error) {
-      // Rollback
       set({ logs: previousLogs });
       get().updateTotals();
       console.error('Failed to delete log:', error);

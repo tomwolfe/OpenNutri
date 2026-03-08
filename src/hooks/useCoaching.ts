@@ -2,6 +2,7 @@
  * useCoaching Hook
  *
  * Fetches and manages coaching insights with client-side analysis for privacy.
+ * Updated to use local-first data from Dexie and support actionable insights.
  */
 
 'use client';
@@ -11,8 +12,10 @@ import {
   generateCoachingInsights, 
   type CoachingInsight, 
   type IntakePoint,
-  type MacroTargets 
+  type MacroTargets,
+  type CoachingAction
 } from '@/lib/coaching';
+import { db } from '@/lib/db-local';
 
 export interface TrendSummary {
   dataQuality: {
@@ -38,10 +41,8 @@ export interface UseCoachingOptions {
   refreshInterval?: number;
   /** Enable auto-refresh (default: true) */
   autoRefresh?: boolean;
-  /** Encryption helper (to decrypt historical logs) */
-  decryptLog?: (data: string, iv: string) => Promise<any>;
-  /** Whether encryption is ready */
-  isEncryptionReady?: boolean;
+  /** User ID for local data filtering */
+  userId?: string;
 }
 
 /**
@@ -51,28 +52,26 @@ export function useCoaching(options: UseCoachingOptions = {}) {
   const { 
     refreshInterval = 60000, 
     autoRefresh = true,
-    decryptLog,
-    isEncryptionReady
+    userId
   } = options;
 
   const [data, setData] = useState<CoachingData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isApplyingAction, setIsApplyingAction] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchInsights = useCallback(async () => {
+    if (!userId) return;
+    
     try {
       setLoading(true);
       setError(null);
 
-      // Fetch raw data for local analysis
+      // 1. Fetch targets and weight records from server (minimal data)
       const response = await fetch('/api/coaching/data');
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to fetch coaching data');
-      }
-
+      if (!response.ok) throw new Error('Failed to fetch coaching data');
       const raw = await response.json();
+      
       const weightData = raw.weightRecords
         .filter((r: any) => r.weight !== null)
         .map((r: any) => ({
@@ -80,30 +79,22 @@ export function useCoaching(options: UseCoachingOptions = {}) {
           weight: Number(r.weight),
         }));
 
-      // Process and decrypt intake data
+      // 2. Get intake data from Local Dexie (already decrypted)
+      // We fetch all decrypted logs for the last 90 days
+      const ninetyDaysAgo = new Date();
+      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+      
+      const localDecryptedLogs = await db.decryptedLogs
+        .where('timestamp')
+        .above(ninetyDaysAgo)
+        .filter(log => log.userId === userId)
+        .toArray();
+
       const intakeByDay = new Map<string, IntakePoint>();
 
-      for (const log of raw.intakeLogs) {
-        const dateKey = new Date(log.timestamp).toISOString().split('T')[0];
+      for (const log of localDecryptedLogs) {
+        const dateKey = log.timestamp.toISOString().split('T')[0];
         const timestamp = new Date(dateKey).getTime();
-
-        let logCalories = Number(log.totalCalories) || 0;
-        let logProtein = 0, logCarbs = 0, logFat = 0;
-
-        // Decrypt for full macro data if possible
-        if (isEncryptionReady && decryptLog && log.encryptedData && log.encryptionIv) {
-          try {
-            const decrypted: any = await decryptLog(log.encryptedData, log.encryptionIv);
-            const items = Array.isArray(decrypted) ? decrypted : (decrypted.items || [decrypted]);
-
-            logCalories = items.reduce((sum: number, i: any) => sum + (i.calories || 0), 0);
-            logProtein = items.reduce((sum: number, i: any) => sum + (i.protein || 0), 0);
-            logCarbs = items.reduce((sum: number, i: any) => sum + (i.carbs || 0), 0);
-            logFat = items.reduce((sum: number, i: any) => sum + (i.fat || 0), 0);
-          } catch (err) {
-            console.warn('Coaching: Failed to decrypt log', log.id);
-          }
-        }
 
         const existing = intakeByDay.get(dateKey) || {
           timestamp,
@@ -113,17 +104,23 @@ export function useCoaching(options: UseCoachingOptions = {}) {
           fat: 0,
         };
 
-        existing.calories += logCalories;
-        existing.protein += logProtein;
-        existing.carbs += logCarbs;
-        existing.fat += logFat;
+        existing.calories += log.totalCalories || 0;
+        
+        if (log.items) {
+          log.items.forEach((item: any) => {
+            existing.protein += item.protein || 0;
+            existing.carbs += item.carbs || 0;
+            existing.fat += item.fat || 0;
+          });
+        }
+        
         intakeByDay.set(dateKey, existing);
       }
 
       const intakeDataPoints = Array.from(intakeByDay.values());
       const targets: MacroTargets = raw.targets;
 
-      // Run local coaching analysis
+      // 3. Run coaching analysis
       const insights = generateCoachingInsights(
         weightData,
         intakeDataPoints,
@@ -154,7 +151,45 @@ export function useCoaching(options: UseCoachingOptions = {}) {
     } finally {
       setLoading(false);
     }
-  }, [decryptLog, isEncryptionReady]);
+  }, [userId]);
+
+  /**
+   * Apply a coaching action (e.g., Update Target)
+   */
+  const applyAction = useCallback(async (action: CoachingAction) => {
+    if (!userId) return;
+    setIsApplyingAction(true);
+    
+    try {
+      switch (action.type) {
+        case 'UPDATE_TARGET':
+          // Call API to update user targets
+          const response = await fetch('/api/targets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(action.payload),
+          });
+          
+          if (!response.ok) throw new Error('Failed to update target');
+          
+          // Refresh coaching data
+          await fetchInsights();
+          break;
+          
+        case 'LOG_WEIGHT':
+          // Redirect or open weight logger
+          console.log('Action: LOG_WEIGHT requested');
+          break;
+          
+        default:
+          console.log('Action not implemented:', action.type);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to apply action');
+    } finally {
+      setIsApplyingAction(false);
+    }
+  }, [userId, fetchInsights]);
 
   useEffect(() => {
     fetchInsights();
@@ -173,6 +208,8 @@ export function useCoaching(options: UseCoachingOptions = {}) {
     data,
     loading,
     error,
+    isApplyingAction,
     refresh,
+    applyAction,
   };
 }

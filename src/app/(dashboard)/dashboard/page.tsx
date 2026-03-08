@@ -3,8 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { ManualFoodEntryForm } from '@/components/forms/manual-food-entry';
-import { SnapToLog } from '@/components/snap-to-log';
+import { UniversalEntry } from '@/components/universal-entry';
 import { AiUsageTracker } from '@/components/ai-usage-tracker';
 import { CoachingDashboard } from '@/components/coaching-dashboard';
 import { DataExport } from '@/components/data-export';
@@ -23,13 +22,6 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -38,13 +30,13 @@ import {
 } from '@/components/ui/dialog';
 import Image from 'next/image';
 import { Calendar } from '@/components/ui/calendar';
-import { Loader2, LogOut, Plus, Utensils, Camera, Settings } from 'lucide-react';
+import { Loader2, LogOut, Plus, Utensils, Settings } from 'lucide-react';
 
 const MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'];
 
 export default function DashboardPage() {
   const { data: session, status } = useSession();
-  const { decryptLog, isReady } = useEncryption();
+  const { vaultKey } = useEncryption();
   const router = useRouter();
 
   // Zustand Store
@@ -55,48 +47,43 @@ export default function DashboardPage() {
     dailyTotals,
     isLoading: loading,
     fetchLogs,
-    selectedMealType,
-    setSelectedMealType,
   } = useNutritionStore();
 
-  const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [snapDialogOpen, setSnapDialogOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [checkingOnboarding, setCheckingOnboarding] = useState(true);
 
   // Fetch logs when date or encryption status changes
   useEffect(() => {
-    if (status === 'authenticated') {
-      fetchLogs(selectedDate, isReady, decryptLog);
+    if (status === 'authenticated' && session?.user?.id) {
+      fetchLogs(selectedDate, session.user.id, vaultKey);
     }
-  }, [selectedDate, isReady, decryptLog, fetchLogs, status]);
+  }, [selectedDate, vaultKey, fetchLogs, status, session?.user?.id]);
 
   // Check if user needs onboarding
   useEffect(() => {
     if (status === 'authenticated') {
+      const checkOnboardingNeeded = async () => {
+        try {
+          const response = await fetch('/api/profile');
+          if (response.ok) {
+            const data = await response.json();
+            const needsOnboarding =
+              !data.profile?.birthDate ||
+              !data.profile?.gender ||
+              !data.profile?.heightCm ||
+              !data.profile?.activityLevel;
+            setShowOnboarding(needsOnboarding);
+          }
+        } catch (error) {
+          console.error('Failed to check onboarding:', error);
+        } finally {
+          setCheckingOnboarding(false);
+        }
+      };
       checkOnboardingNeeded();
     }
   }, [status]);
-
-  const checkOnboardingNeeded = async () => {
-    try {
-      const response = await fetch('/api/profile');
-      if (response.ok) {
-        const data = await response.json();
-        // Show onboarding if profile is incomplete (missing key fields)
-        const needsOnboarding =
-          !data.profile?.birthDate ||
-          !data.profile?.gender ||
-          !data.profile?.heightCm ||
-          !data.profile?.activityLevel;
-        setShowOnboarding(needsOnboarding);
-      }
-    } catch (error) {
-      console.error('Failed to check onboarding:', error);
-    } finally {
-      setCheckingOnboarding(false);
-    }
-  };
 
   if (status === 'loading' || checkingOnboarding) {
     return (
@@ -111,7 +98,6 @@ export default function DashboardPage() {
     return null;
   }
 
-  // Show onboarding wizard if needed
   if (showOnboarding) {
     return <OnboardingWizard onComplete={() => setShowOnboarding(false)} />;
   }
@@ -125,13 +111,6 @@ export default function DashboardPage() {
       hour: '2-digit',
       minute: '2-digit',
     });
-  };
-
-  const handleSnapComplete = () => {
-    // Refresh logs to show new entry
-    fetchLogs(selectedDate, isReady, decryptLog);
-    // Close dialog after short delay
-    setTimeout(() => setSnapDialogOpen(false), 2000);
   };
 
   return (
@@ -184,7 +163,6 @@ export default function DashboardPage() {
                 <CardTitle className="text-base">
                   Daily Summary - {selectedDate.toLocaleDateString()}
                 </CardTitle>
-                {/* Quick Weight Input - only show for today */}
                 {selectedDate.toDateString() === new Date().toDateString() && (
                   <QuickWeightInput />
                 )}
@@ -227,81 +205,43 @@ export default function DashboardPage() {
           </Card>
 
           {/* Quick Actions */}
-          <Card>
+          <Card className="lg:col-span-1">
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Quick Actions</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2">
-              {/* Weight Tracker */}
+            <CardContent className="space-y-4">
               <WeightTracker />
 
-              {/* AI Usage Tracker */}
               <div className="pb-2 border-b">
                 <AiUsageTracker />
               </div>
 
-              {/* Data Export */}
-              <div className="flex justify-end pb-2 border-b">
-                <DataExport />
-              </div>
-
-              {/* Snap to Log */}
+              {/* Universal Entry */}
               <Dialog open={snapDialogOpen} onOpenChange={setSnapDialogOpen}>
-                <DialogTrigger render={
-                  <Button className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700">
-                    <Camera className="mr-2 h-4 w-4" />
-                    Snap to Log
+                <DialogTrigger asChild>
+                  <Button className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-md">
+                    <Plus className="mr-2 h-4 w-4" />
+                    Log Food
                   </Button>
-                } />
-                <DialogContent className="max-w-md">
+                </DialogTrigger>
+                <DialogContent className="max-w-2xl overflow-y-auto max-h-[90vh]">
                   <DialogHeader>
-                    <DialogTitle>Snap to Log</DialogTitle>
+                    <DialogTitle>Log Food</DialogTitle>
+                    <CardDescription>
+                      Snap a photo, scan a barcode, or search for food.
+                    </CardDescription>
                   </DialogHeader>
-                  <SnapToLog
-                    onComplete={handleSnapComplete}
-                    onError={(error) => console.error('Snap error:', error)}
+                  <UniversalEntry
+                    onComplete={() => {
+                      setTimeout(() => setSnapDialogOpen(false), 2000);
+                    }}
                   />
                 </DialogContent>
               </Dialog>
-
-              {/* Manual Entry */}
-              <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-                <DialogTrigger render={
-                  <Button className="w-full" variant="outline">
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add Food Manually
-                  </Button>
-                } />
-                <DialogContent className="max-w-2xl">
-                  <DialogHeader>
-                    <DialogTitle>Add Food to {selectedMealType}</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4">
-                    <Select
-                      value={selectedMealType}
-                      onValueChange={(value) => value && setSelectedMealType(value)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select meal type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {MEAL_TYPES.map((type) => (
-                          <SelectItem key={type} value={type}>
-                            {type.charAt(0).toUpperCase() + type.slice(1)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <ManualFoodEntryForm
-                      mealType={selectedMealType}
-                      onEntryComplete={() => {
-                        setAddDialogOpen(false);
-                        fetchLogs(selectedDate, isReady, decryptLog);
-                      }}
-                    />
-                  </div>
-                </DialogContent>
-              </Dialog>
+              
+              <div className="flex justify-end pt-2">
+                <DataExport />
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -317,7 +257,7 @@ export default function DashboardPage() {
                     {mealType}
                   </CardTitle>
                   <CardDescription>
-                    {mealLogs.length} entries •{' '}
+                    {mealLogs.length} entries &bull;{' '}
                     {mealLogs.reduce((sum, log) => sum + (log.totalCalories || 0), 0)} cal
                   </CardDescription>
                 </CardHeader>

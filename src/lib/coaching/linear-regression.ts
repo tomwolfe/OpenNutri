@@ -330,6 +330,13 @@ export function calculateCalorieAdjustment(
   return Math.round(adjustment);
 }
 
+export interface CoachingAction {
+  type: 'UPDATE_TARGET' | 'LOG_WEIGHT' | 'ADD_PROTEIN' | 'GENERIC_ADVICE';
+  label: string;
+  description: string;
+  payload: any;
+}
+
 /**
  * Generate coaching insight based on data analysis
  */
@@ -350,11 +357,13 @@ export interface MacroTargets {
 }
 
 export interface CoachingInsight {
-  type: 'calorie' | 'protein' | 'carbs' | 'fat' | 'weight';
+  id: string;
+  type: 'calorie' | 'protein' | 'carbs' | 'fat' | 'weight' | 'consistency';
   trend: 'increasing' | 'decreasing' | 'stable';
   confidence: number;
   recommendation: string;
   dataPoints: number;
+  action?: CoachingAction;
   /** Suggested new target values (optional, for actionable recommendations) */
   suggestedCalories?: number;
   /** Suggested new protein target in grams */
@@ -410,6 +419,7 @@ export function generateCoachingInsights(
 
   // Weight insight
   insights.push({
+    id: `weight-${Date.now()}`,
     type: 'weight',
     trend: weightTrend,
     confidence: Math.abs(weightRegression.correlation),
@@ -419,6 +429,12 @@ export function generateCoachingInsights(
       weeklyWeightChange
     ),
     dataPoints: weightData.length,
+    action: weightTrend !== 'stable' && targets.weightGoal === 'maintain' ? {
+      type: 'LOG_WEIGHT',
+      label: 'Log Weight',
+      description: 'Keep logging your weight to track the trend.',
+      payload: {}
+    } : undefined
   });
 
   // Analyze calorie intake
@@ -436,7 +452,15 @@ export function generateCoachingInsights(
 
   const suggestedCalorieTarget = Math.round(avgCalories + calorieAdjustment);
 
+  const calorieAction: CoachingAction | undefined = suggestedCalorieTarget !== targets.calories ? {
+    type: 'UPDATE_TARGET',
+    label: `Set to ${suggestedCalorieTarget} kcal`,
+    description: `Adjust your daily target to ${suggestedCalorieTarget} calories based on your ${weeklyWeightChange.toFixed(1)}kg/week weight change.`,
+    payload: { calorieTarget: suggestedCalorieTarget }
+  } : undefined;
+
   insights.push({
+    id: `calorie-${Date.now()}`,
     type: 'calorie',
     trend: calorieTrend,
     confidence: Math.abs(calorieRegression.correlation),
@@ -449,20 +473,17 @@ export function generateCoachingInsights(
     ),
     dataPoints: intakeData.length,
     suggestedCalories: suggestedCalorieTarget !== targets.calories ? suggestedCalorieTarget : undefined,
+    action: calorieAction
   });
 
   // Multiple Linear Regression: Analyze macro impact on weight change
-  // Prepare data points for multiple regression
   const multiPoints: MultipleDataPoint[] = [];
   const currentWeight = weightData.length > 0 ? weightData[weightData.length - 1].weight : 70;
 
   for (let i = 0; i < intakeData.length; i++) {
     const intake = intakeData[i];
-    
-    // Find corresponding weight change (use next weight measurement or interpolate)
     const intakeDay = (intake.timestamp - firstTimestamp) / (1000 * 60 * 60 * 24);
     
-    // Find weight at intake day and next day to calculate change
     let weightBefore = currentWeight;
     let weightAfter = currentWeight;
     
@@ -478,8 +499,6 @@ export function generateCoachingInsights(
     }
     
     const weightChange = weightAfter - weightBefore;
-    
-    // Calculate macro percentages of total calories
     const proteinPercent = intake.calories > 0 ? (intake.protein * 4 / intake.calories) * 100 : 0;
     const carbsPercent = intake.calories > 0 ? (intake.carbs * 4 / intake.calories) * 100 : 0;
     
@@ -491,34 +510,39 @@ export function generateCoachingInsights(
     });
   }
 
-  // Run multiple regression if we have enough data
   if (multiPoints.length >= 10) {
     const multiRegression = multipleLinearRegression(multiPoints);
-    
-    // Add macro-specific insight from multiple regression
     if (multiRegression.insights.recommendation) {
+      const suggestedProtein = multiRegression.insights.proteinImpact === 'positive' 
+        ? Math.round(targets.protein * 1.1) 
+        : multiRegression.insights.proteinImpact === 'negative'
+          ? Math.round(targets.protein * 0.9)
+          : undefined;
+
       insights.push({
+        id: `protein-${Date.now()}`,
         type: 'protein',
-        trend: multiRegression.insights.proteinImpact === 'positive' ? 'stable' : 'decreasing',
+        trend: multiRegression.insights.proteinImpact === 'positive' ? 'increasing' : 'stable',
         confidence: multiRegression.rSquared,
         recommendation: multiRegression.insights.recommendation,
         dataPoints: multiPoints.length,
-        suggestedProtein: multiRegression.insights.proteinImpact === 'positive' 
-          ? Math.round(targets.protein * 1.1) // Suggest 10% increase
-          : multiRegression.insights.proteinImpact === 'negative'
-            ? Math.round(targets.protein * 0.9) // Suggest 10% decrease
-            : undefined,
+        suggestedProtein,
+        action: suggestedProtein ? {
+          type: 'UPDATE_TARGET',
+          label: `Set to ${suggestedProtein}g Protein`,
+          description: `Adjust protein target to ${suggestedProtein}g to optimize weight change.`,
+          payload: { proteinTarget: suggestedProtein }
+        } : undefined
       });
     }
   } else {
-    // Fallback to simple protein analysis
     const avgProtein =
       intakeData.reduce((sum, d) => sum + d.protein, 0) / intakeData.length;
     const proteinPercentage = (avgProtein / targets.protein) * 100;
-
     const suggestedProteinTarget = Math.round(currentWeight * 1.8);
 
     insights.push({
+      id: `protein-fb-${Date.now()}`,
       type: 'protein',
       trend: proteinPercentage >= 90 ? 'stable' : 'decreasing',
       confidence: 0.8,
@@ -529,20 +553,20 @@ export function generateCoachingInsights(
       ),
       dataPoints: intakeData.length,
       suggestedProtein: Math.abs(suggestedProteinTarget - targets.protein) > 10 ? suggestedProteinTarget : undefined,
+      action: Math.abs(suggestedProteinTarget - targets.protein) > 10 ? {
+        type: 'UPDATE_TARGET',
+        label: `Set to ${suggestedProteinTarget}g Protein`,
+        description: `Target ${suggestedProteinTarget}g protein (1.8g/kg) for better muscle maintenance.`,
+        payload: { proteinTarget: suggestedProteinTarget }
+      } : undefined
     });
   }
 
-  // Proactive Insight: Consistency & Streaks
   const consistencyInsight = generateConsistencyInsight(intakeData);
-  if (consistencyInsight) {
-    insights.push(consistencyInsight);
-  }
+  if (consistencyInsight) insights.push(consistencyInsight);
 
-  // Proactive Insight: Specific Macro Deficiencies (e.g., Protein)
   const macroDeficiencyInsight = generateMacroDeficiencyInsight(intakeData, targets);
-  if (macroDeficiencyInsight) {
-    insights.push(macroDeficiencyInsight);
-  }
+  if (macroDeficiencyInsight) insights.push(macroDeficiencyInsight);
 
   return insights;
 }
@@ -556,7 +580,6 @@ function generateConsistencyInsight(
   const now = Date.now();
   const oneDay = 24 * 60 * 60 * 1000;
   
-  // Calculate logging streak
   let streak = 0;
   const sortedIntake = [...intakeData].sort((a, b) => b.timestamp - a.timestamp);
   
@@ -571,23 +594,30 @@ function generateConsistencyInsight(
 
   if (streak >= 3) {
     return {
-      type: 'weight', // Use weight as a proxy for general progress
-      trend: 'stable',
+      id: `consistency-streak-${Date.now()}`,
+      type: 'consistency',
+      trend: 'increasing',
       confidence: 1,
       recommendation: `You're on a ${streak}-day logging streak! Consistency is the #1 predictor of long-term success. Keep it up!`,
       dataPoints: intakeData.length,
     };
   }
 
-  // Check for missing data
   const lastLoggingDay = sortedIntake.length > 0 ? Math.floor((now - sortedIntake[0].timestamp) / oneDay) : 7;
   if (lastLoggingDay >= 2) {
     return {
-      type: 'calorie',
+      id: `consistency-missing-${Date.now()}`,
+      type: 'consistency',
       trend: 'decreasing',
       confidence: 0.9,
       recommendation: `We haven't seen any food logs for ${lastLoggingDay} days. Small, consistent entries are better than perfect ones!`,
       dataPoints: intakeData.length,
+      action: {
+        type: 'GENERIC_ADVICE',
+        label: 'Start Logging',
+        description: 'Log your next meal to keep the momentum going.',
+        payload: {}
+      }
     };
   }
 
@@ -612,12 +642,19 @@ function generateMacroDeficiencyInsight(
 
   if (avgProtein < proteinTarget * 0.7) {
     return {
+      id: `macro-deficiency-${Date.now()}`,
       type: 'protein',
       trend: 'decreasing',
       confidence: 0.95,
       recommendation: `You've been low on protein for the last 3 days (${Math.round(avgProtein)}g avg vs ${proteinTarget}g target). Muscle recovery might be stalling. Try adding a protein source to your next meal.`,
       dataPoints: 3,
       suggestedProtein: proteinTarget,
+      action: {
+        type: 'ADD_PROTEIN',
+        label: 'See Protein Sources',
+        description: 'Check out high-protein food suggestions.',
+        payload: {}
+      }
     };
   }
 
@@ -632,39 +669,14 @@ function generateWeightRecommendation(
   goal: 'lose' | 'maintain' | 'gain',
   weeklyChange: number
 ): string {
-  const trendText =
-    trend === 'increasing'
-      ? 'gaining'
-      : trend === 'decreasing'
-        ? 'losing'
-        : 'maintaining';
-
-  if (trend === 'stable' && goal === 'maintain') {
-    return "Your weight is stable. Great job maintaining your current habits!";
-  }
-
-  if (
-    (goal === 'lose' && trend === 'decreasing') ||
-    (goal === 'gain' && trend === 'increasing') ||
-    (goal === 'maintain' && trend === 'stable')
-  ) {
+  const trendText = trend === 'increasing' ? 'gaining' : trend === 'decreasing' ? 'losing' : 'maintaining';
+  if (trend === 'stable' && goal === 'maintain') return "Your weight is stable. Great job maintaining your current habits!";
+  if ((goal === 'lose' && trend === 'decreasing') || (goal === 'gain' && trend === 'increasing') || (goal === 'maintain' && trend === 'stable')) {
     return `You're ${trendText} weight as expected. Keep up the good work! (${weeklyChange.toFixed(2)} kg/week)`;
   }
-
-  if (goal === 'lose' && trend === 'increasing') {
-    return `You're gaining weight while trying to lose. Consider reducing daily calories by 200-300 and increasing activity.`;
-  }
-
-  if (goal === 'gain' && trend === 'decreasing') {
-    return `You're losing weight while trying to gain. Increase daily calories by 300-500 and focus on strength training.`;
-  }
-
-  if (goal === 'maintain' && trend !== 'stable') {
-    return trend === 'increasing'
-      ? 'Slight weight gain detected. Monitor portions and activity levels.'
-      : 'Slight weight loss detected. Ensure you\'re eating enough to maintain.';
-  }
-
+  if (goal === 'lose' && trend === 'increasing') return `You're gaining weight while trying to lose. Consider reducing daily calories by 200-300 and increasing activity.`;
+  if (goal === 'gain' && trend === 'decreasing') return `You're losing weight while trying to gain. Increase daily calories by 300-500 and focus on strength training.`;
+  if (goal === 'maintain' && trend !== 'stable') return trend === 'increasing' ? 'Slight weight gain detected. Monitor portions and activity levels.' : 'Slight weight loss detected. Ensure you\'re eating enough to maintain.';
   return 'Continue monitoring your progress and adjust as needed.';
 }
 
@@ -680,25 +692,15 @@ function generateCalorieRecommendation(
 ): string {
   const diff = avgCalories - target;
   const percentage = ((avgCalories / target) * 100).toFixed(0);
-
-  if (Math.abs(diff) < 100) {
-    return `You're averaging ${Math.round(avgCalories)} cal/day, close to your target. ${weightTrend === 'stable' ? 'Keep it up!' : 'Monitor your progress.'}`;
-  }
-
+  if (Math.abs(diff) < 100) return `You're averaging ${Math.round(avgCalories)} cal/day, close to your target. ${weightTrend === 'stable' ? 'Keep it up!' : 'Monitor your progress.'}`;
   if (goal === 'lose') {
-    if (avgCalories > target) {
-      return `You're averaging ${percentage}% of your target calories. To lose weight, aim for ${target} cal/day (currently ${Math.round(avgCalories - target)} cal over).`;
-    }
-    return `Good calorie control! Consider ${adjustment > 0 ? 'increasing' : 'deasing'} by ${Math.abs(adjustment)} cal/day based on your progress.`;
+    if (avgCalories > target) return `You're averaging ${percentage}% of your target calories. To lose weight, aim for ${target} cal/day (currently ${Math.round(avgCalories - target)} cal over).`;
+    return `Good calorie control! Consider ${adjustment > 0 ? 'increasing' : 'decreasing'} by ${Math.abs(adjustment)} cal/day based on your progress.`;
   }
-
   if (goal === 'gain') {
-    if (avgCalories < target) {
-      return `You're averaging ${percentage}% of your target calories. To gain weight, aim for ${target} cal/day (currently ${Math.round(target - avgCalories)} cal under).`;
-    }
+    if (avgCalories < target) return `You're averaging ${percentage}% of your target calories. To gain weight, aim for ${target} cal/day (currently ${Math.round(target - avgCalories)} cal under).`;
     return `Good calorie intake! Consider ${adjustment > 0 ? 'increasing' : 'decreasing'} by ${Math.abs(adjustment)} cal/day based on your progress.`;
   }
-
   return `Adjust to ${target + adjustment} cal/day for better weight maintenance.`;
 }
 
@@ -711,21 +713,8 @@ function generateProteinRecommendation(
   goal: 'lose' | 'maintain' | 'gain'
 ): string {
   const percentage = ((avgProtein / target) * 100).toFixed(0);
-
-  if (avgProtein >= target * 0.9) {
-    return `Great protein intake! Averaging ${Math.round(avgProtein)}g/day (${percentage}% of target).`;
-  }
-
-  if (avgProtein >= target * 0.7) {
-    return `You're at ${percentage}% of your protein target. Try to increase by ${Math.round(target - avgProtein)}g/day for better results.`;
-  }
-
-  const recommendedProtein =
-    goal === 'lose'
-      ? 'higher protein helps preserve muscle during weight loss'
-      : goal === 'gain'
-        ? 'adequate protein is essential for muscle growth'
-        : 'protein helps maintain muscle mass';
-
+  if (avgProtein >= target * 0.9) return `Great protein intake! Averaging ${Math.round(avgProtein)}g/day (${percentage}% of target).`;
+  if (avgProtein >= target * 0.7) return `You're at ${percentage}% of your protein target. Try to increase by ${Math.round(target - avgProtein)}g/day for better results.`;
+  const recommendedProtein = goal === 'lose' ? 'higher protein helps preserve muscle during weight loss' : goal === 'gain' ? 'adequate protein is essential for muscle growth' : 'protein helps maintain muscle mass';
   return `Low protein intake (${percentage}% of target). Aim for ${target}g/day - ${recommendedProtein}.`;
 }

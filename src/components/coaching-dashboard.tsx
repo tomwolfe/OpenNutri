@@ -1,25 +1,17 @@
 'use client';
 
 import { useCoaching } from '@/hooks/useCoaching';
-import { useEncryption } from '@/hooks/useEncryption';
+import { useSession } from 'next-auth/react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
 import {
-  TrendingUp,
-  TrendingDown,
-  Minus,
-  AlertCircle,
-  CheckCircle,
-  Target,
-  Scale,
-  Utensils,
-  Dumbbell,
-  Check
+  TrendingUp, TrendingDown, Minus, AlertCircle, CheckCircle, Target, Scale, Utensils, Dumbbell, Zap, Loader2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
+import type { CoachingAction } from '@/lib/coaching/linear-regression';
 
 interface CoachingCardProps {
   title: React.ReactNode;
@@ -29,13 +21,7 @@ interface CoachingCardProps {
   children?: React.ReactNode;
 }
 
-function CoachingCard({
-  title,
-  description,
-  trend,
-  confidence = 0,
-  children
-}: CoachingCardProps) {
+function CoachingCard({ title, description, trend, confidence = 0, children }: CoachingCardProps) {
   const TrendIcon = {
     increasing: TrendingUp,
     decreasing: TrendingDown,
@@ -55,92 +41,57 @@ function CoachingCard({
       : 'bg-gray-100 text-gray-700';
 
   return (
-    <Card>
+    <Card className="hover:shadow-md transition-shadow">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base">{title}</CardTitle>
           {trend && (
             <div className={cn('flex items-center gap-1', trendColor)}>
-              <TrendIcon />
+              <TrendIcon className="w-4 h-4" />
               <span className="text-xs font-medium capitalize">{trend}</span>
             </div>
           )}
         </div>
         {confidence > 0 && (
-          <CardDescription>
-            <Badge variant="secondary" className={cn('text-xs', confidenceColor)}>
+          <div className="mt-1">
+            <Badge variant="secondary" className={cn('text-[10px] h-4', confidenceColor)}>
               Confidence: {Math.round(confidence * 100)}%
             </Badge>
-          </CardDescription>
+          </div>
         )}
       </CardHeader>
       <CardContent>
-        <p className="text-sm text-muted-foreground mb-3">{description}</p>
+        <p className="text-sm text-muted-foreground mb-4 leading-relaxed">{description}</p>
         {children}
       </CardContent>
     </Card>
   );
 }
 
-interface InsightIconProps {
-  type: 'calorie' | 'protein' | 'carbs' | 'fat' | 'weight';
-}
-
-function InsightIcon({ type }: InsightIconProps) {
-  const icons = {
+function InsightIcon({ type }: { type: string }) {
+  const icons: Record<string, React.ElementType> = {
     calorie: Utensils,
     protein: Dumbbell,
     carbs: Target,
     fat: Scale,
     weight: Scale,
+    consistency: Zap,
   };
-
-  const Icon = icons[type];
-
+  const Icon = icons[type] || Target;
   return <Icon className="h-5 w-5" />;
 }
 
 export function CoachingDashboard() {
-  const { decryptLog, isReady } = useEncryption();
-  const { data, loading, error, refresh } = useCoaching({
-    decryptLog,
-    isEncryptionReady: isReady
+  const { data: session } = useSession();
+  const { data, loading, error, refresh, applyAction, isApplyingAction } = useCoaching({
+    userId: session?.user?.id
   });
-  const [applyingTarget, setApplyingTarget] = useState<string | null>(null);
+  const [lastActionId, setLastActionId] = useState<string | null>(null);
 
-  const applyTarget = async (
-    type: 'calories' | 'protein',
-    value: number
-  ) => {
-    try {
-      setApplyingTarget(`${type}-${value}`);
-
-      const body: Record<string, number> = {};
-      if (type === 'calories') {
-        body.calorieTarget = value;
-      } else if (type === 'protein') {
-        body.proteinTarget = value;
-      }
-
-      const response = await fetch('/api/targets/apply-recommendation', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to apply recommendation');
-      }
-
-      refresh();
-    } catch (err) {
-      console.error('Failed to apply recommendation:', err);
-    } finally {
-      setApplyingTarget(null);
-    }
+  const handleApplyAction = async (insightId: string, action: CoachingAction) => {
+    setLastActionId(insightId);
+    await applyAction(action);
+    setLastActionId(null);
   };
 
   if (loading) {
@@ -150,11 +101,10 @@ export function CoachingDashboard() {
           <CardTitle>Coaching Insights</CardTitle>
           <CardDescription>Analyzing your progress...</CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="flex h-32 items-center justify-center">
-            <div className="text-sm text-muted-foreground">
-              Loading insights...
-            </div>
+        <CardContent className="h-40 flex items-center justify-center">
+          <div className="animate-pulse flex flex-col items-center gap-2">
+            <div className="h-4 w-48 bg-gray-200 rounded"></div>
+            <div className="h-3 w-32 bg-gray-100 rounded"></div>
           </div>
         </CardContent>
       </Card>
@@ -163,17 +113,11 @@ export function CoachingDashboard() {
 
   if (error) {
     return (
-      <Card>
+      <Card className="border-red-100 bg-red-50">
         <CardHeader>
-          <CardTitle>Coaching Insights</CardTitle>
-          <CardDescription>Unable to load insights</CardDescription>
+          <CardTitle className="text-red-800">Coaching Error</CardTitle>
+          <CardDescription className="text-red-600">{error}</CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-2 text-destructive">
-            <AlertCircle className="h-5 w-5" />
-            <span className="text-sm">{error}</span>
-          </div>
-        </CardContent>
       </Card>
     );
   }
@@ -185,83 +129,36 @@ export function CoachingDashboard() {
           <CardTitle>Coaching Insights</CardTitle>
           <CardDescription>Personalized recommendations</CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="flex flex-col items-center justify-center py-8 text-center">
-            <AlertCircle className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-medium mb-2">Not enough data yet</h3>
-            <p className="text-sm text-muted-foreground max-w-md">
-              We need at least 3 days of weight and food logging to provide 
-              personalized coaching insights. Keep tracking your meals and weight!
-            </p>
-          </div>
+        <CardContent className="py-12 flex flex-col items-center text-center">
+          <AlertCircle className="h-12 w-12 text-muted-foreground mb-4 opacity-20" />
+          <h3 className="text-lg font-medium mb-2">Not enough data yet</h3>
+          <p className="text-sm text-muted-foreground max-w-sm">
+            We need at least 3 days of logging to provide 
+            personalized coaching insights. Keep tracking your meals and weight!
+          </p>
         </CardContent>
       </Card>
     );
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between px-1">
         <div>
-          <h2 className="text-lg font-semibold">Coaching Insights</h2>
-          <p className="text-sm text-muted-foreground">
-            AI-powered recommendations based on your progress
-          </p>
+          <h2 className="text-xl font-bold flex items-center gap-2">
+            AI Coaching <Badge variant="outline" className="text-blue-600 border-blue-200">BETA</Badge>
+          </h2>
+          <p className="text-sm text-muted-foreground">Smart adjustments for your goals</p>
         </div>
-        <button
-          onClick={refresh}
-          className="text-sm text-primary hover:underline"
-        >
-          Refresh
-        </button>
+        <Button variant="ghost" size="sm" onClick={refresh} className="text-xs text-blue-600">
+          Refresh Analysis
+        </Button>
       </div>
 
-      {/* Data Quality Indicator */}
-      {data.trendSummary && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <CheckCircle className="h-4 w-4 text-green-500" />
-              Data Quality
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-3 gap-4">
-              <div className="text-center">
-                <div className="text-2xl font-bold">
-                  {data.trendSummary.dataQuality.weightEntries}
-                </div>
-                <div className="text-xs text-muted-foreground">Weight Entries</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold">
-                  {data.trendSummary.dataQuality.loggingDays}
-                </div>
-                <div className="text-xs text-muted-foreground">Logging Days</div>
-              </div>
-              <div className="text-center">
-                <Badge
-                  variant={
-                    data.trendSummary.dataQuality.hasEnoughData
-                      ? 'default'
-                      : 'secondary'
-                  }
-                >
-                  {data.trendSummary.dataQuality.hasEnoughData
-                    ? 'Ready'
-                    : 'Need More'}
-                </Badge>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Insights Grid */}
       <div className="grid gap-4 md:grid-cols-2">
-        {data.insights.map((insight, index) => (
+        {data.insights.map((insight) => (
           <CoachingCard
-            key={index}
+            key={insight.id}
             title={
               <div className="flex items-center gap-2">
                 <InsightIcon type={insight.type} />
@@ -272,119 +169,64 @@ export function CoachingDashboard() {
             trend={insight.trend}
             confidence={insight.confidence}
           >
-            {insight.type === 'calorie' && data.targets && (
-              <div className="mt-2 space-y-3">
-                <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span>Avg: {Math.round(data.trendSummary.currentStatus.avgCalories)} cal</span>
-                    <span>Target: {data.targets.calories} cal</span>
-                  </div>
-                  <Progress
-                    value={(data.trendSummary.currentStatus.avgCalories / data.targets.calories) * 100}
-                    className="h-2"
-                  />
+            {/* Visual Progress for Macros */}
+            {(insight.type === 'calorie' || insight.type === 'protein') && data.targets && (
+              <div className="mb-4">
+                <div className="flex justify-between text-[10px] mb-1">
+                  <span>Current Avg: {Math.round(insight.type === 'calorie' ? data.trendSummary.currentStatus.avgCalories : data.trendSummary.currentStatus.avgProtein)}</span>
+                  <span>Target: {insight.type === 'calorie' ? data.targets.calories : data.targets.protein}</span>
                 </div>
-                
-                {/* Apply Recommendation Button */}
-                {insight.suggestedCalories && insight.suggestedCalories !== data.targets.calories && (
-                  <div className="flex items-center justify-between gap-2 mt-3">
-                    <span className="text-xs text-muted-foreground">
-                      Suggested: {insight.suggestedCalories} cal/day
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => applyTarget('calories', insight.suggestedCalories!)}
-                      disabled={applyingTarget !== null}
-                      className="h-7 text-xs"
-                    >
-                      {applyingTarget === 'calories-' + insight.suggestedCalories ? (
-                        <>
-                          <span className="animate-spin mr-1">⏳</span>
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <Check className="w-3 h-3 mr-1" />
-                          Apply
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                )}
+                <Progress
+                  value={((insight.type === 'calorie' ? data.trendSummary.currentStatus.avgCalories : data.trendSummary.currentStatus.avgProtein) / (insight.type === 'calorie' ? data.targets.calories : data.targets.protein)) * 100}
+                  className="h-1.5"
+                />
               </div>
             )}
 
-            {insight.type === 'protein' && data.targets && (
-              <div className="mt-2 space-y-3">
-                <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span>Avg: {Math.round(data.trendSummary.currentStatus.avgProtein)}g</span>
-                    <span>Target: {data.targets.protein}g</span>
-                  </div>
-                  <Progress
-                    value={(data.trendSummary.currentStatus.avgProtein / data.targets.protein) * 100}
-                    className="h-2"
-                  />
-                </div>
-                
-                {/* Apply Recommendation Button */}
-                {insight.suggestedProtein && insight.suggestedProtein !== data.targets.protein && (
-                  <div className="flex items-center justify-between gap-2 mt-3">
-                    <span className="text-xs text-muted-foreground">
-                      Suggested: {insight.suggestedProtein}g/day
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => applyTarget('protein', insight.suggestedProtein!)}
-                      disabled={applyingTarget !== null}
-                      className="h-7 text-xs"
-                    >
-                      {applyingTarget === 'protein-' + insight.suggestedProtein ? (
-                        <>
-                          <span className="animate-spin mr-1">⏳</span>
-                          Applying...
-                        </>
-                      ) : (
-                        <>
-                          <Check className="w-3 h-3 mr-1" />
-                          Apply
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                )}
+            {/* Actionable Button */}
+            {insight.action && (
+              <div className="pt-2 border-t mt-2">
+                <Button
+                  size="sm"
+                  variant={insight.type === 'calorie' || insight.type === 'protein' ? 'default' : 'outline'}
+                  className="w-full h-9 gap-2 shadow-sm"
+                  disabled={isApplyingAction}
+                  onClick={() => handleApplyAction(insight.id, insight.action)}
+                >
+                  {isApplyingAction && lastActionId === insight.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <CheckCircle className="w-4 h-4" />
+                  )}
+                  {insight.action.label}
+                </Button>
+                <p className="text-[10px] text-muted-foreground mt-2 text-center italic">
+                  {insight.action.description}
+                </p>
               </div>
             )}
           </CoachingCard>
         ))}
       </div>
 
-      {/* Current Status Summary */}
-      {data.trendSummary.currentStatus.currentWeight && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Current Status</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <div className="text-sm text-muted-foreground">Current Weight</div>
-                <div className="text-2xl font-bold">
-                  {data.trendSummary.currentStatus.currentWeight.toFixed(1)} kg
-                </div>
-              </div>
-              <div>
-                <div className="text-sm text-muted-foreground">Avg Daily Intake</div>
-                <div className="text-2xl font-bold">
-                  {Math.round(data.trendSummary.currentStatus.avgCalories)} cal
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Summary Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard label="Logging Days" value={data.trendSummary.dataQuality.loggingDays} unit="days" />
+        <StatCard label="Avg Calories" value={Math.round(data.trendSummary.currentStatus.avgCalories)} unit="cal" />
+        <StatCard label="Current Weight" value={data.trendSummary.currentStatus.currentWeight?.toFixed(1) || '—'} unit="kg" />
+        <StatCard label="Streak" value={data.insights.find(i => i.id.includes('streak'))?.dataPoints || 0} unit="days" highlight />
+      </div>
     </div>
+  );
+}
+
+function StatCard({ label, value, unit, highlight }: { label: string, value: string | number, unit: string, highlight?: boolean }) {
+  return (
+    <Card className={cn("p-3 flex flex-col items-center justify-center text-center", highlight && "bg-blue-50 border-blue-100")}>
+      <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">{label}</div>
+      <div className="text-xl font-bold flex items-baseline gap-0.5">
+        {value} <span className="text-[10px] font-normal text-muted-foreground">{unit}</span>
+      </div>
+    </Card>
   );
 }
