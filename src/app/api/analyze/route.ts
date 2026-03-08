@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { getUserDailyAiScanCount } from '@/lib/ai-limits';
-import { analyzeFoodImageStream, analyzeFoodTextStream } from '@/lib/glm-vision-stream';
+import { analyzeFoodImageStream, analyzeFoodTextStream } from '@/lib/ai-vision-stream';
 import { db } from '@/lib/db';
 import { aiUsage } from '@/db/schema';
 import { enhanceWithUSDAData } from '@/lib/ai-usda-bridge';

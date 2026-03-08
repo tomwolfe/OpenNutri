@@ -35,8 +35,8 @@ src/
 │   ├── db.ts                # NeonDB connection
 │   ├── usda.ts              # USDA API client
 │   ├── ai-limits.ts         # AI rate limiting
-│   ├── ai-usda-bridge.ts    # USDA data enhancement
-│   └── glm-vision-stream.ts # Vision AI streaming (Zhipu GLM)
+│   ├── ai-usda-bridge.ts    # USDA data enrichment
+│   └── ai-vision-stream.ts  # Vision & Text AI Gateway (Multi-provider)
 ├── stores/                  # Zustand stores
 └── types/                   # TypeScript types
 ```
@@ -50,7 +50,7 @@ src/
 - **Auth:** NextAuth v5 (Credentials provider)
 - **UI:** Tailwind CSS + Shadcn/UI
 - **State:** Zustand
-- **AI Streaming:** Vercel AI SDK (`@ai-sdk/openai`)
+- **AI Streaming:** Vercel AI SDK (`@ai-sdk/openai`, `@ai-sdk/google`, `@ai-sdk/anthropic`)
 - **Hosting:** Vercel (Hobby tier)
 
 ## Getting Started
@@ -79,7 +79,11 @@ src/
    - `NEXTAUTH_URL`: Your app URL (http://localhost:3000 for dev)
    - `USDA_API_KEY`: USDA FoodData Central API key (optional)
    - `BLOB_READ_WRITE_TOKEN`: Vercel Blob token
-   - `GLM_API_KEY`: Zhipu GLM Vision API key
+   - `AI_PROVIDER`: Choose your AI provider (`zhipu`, `openai`, `google`, `anthropic`). Default: `zhipu`
+   - `GLM_API_KEY`: Zhipu GLM Vision API key (required if using `zhipu`)
+   - `OPENAI_API_KEY`: OpenAI API key (required if using `openai`)
+   - `GOOGLE_GENERATION_AI_API_KEY`: Google Gemini API key (required if using `google`)
+   - `ANTHROPIC_API_KEY`: Anthropic Claude API key (required if using `anthropic`)
    - `AI_SCAN_LIMIT_FREE`: Daily AI scan limit (default: 5)
 
 3. **Enable pgvector in NeonDB:**
@@ -121,7 +125,7 @@ npm run db:studio     # Open Drizzle Studio
 
 ## Phase 2 Features (Complete ✅)
 
-- ✅ Vision AI integration (Zhipu GLM-4.6V-Flash)
+- ✅ **AI Gateway** (Zhipu, OpenAI, Google, Anthropic support)
 - ✅ **Real-time streaming architecture** (no polling)
 - ✅ Image upload with Vercel Blob
 - ✅ AI scan rate limiting (5/day for free users)
@@ -133,6 +137,7 @@ npm run db:studio     # Open Drizzle Studio
 
 - ✅ **Semantic food matching** (pgvector)
 - ✅ **E2E encryption** (Web Crypto API / AES-GCM)
+- ✅ **Smart Coaching** (Weight smoothing with EWMA)
 - ⬜ Barcode scanning for packaged foods
 - ⬜ Apple Health / Google Fit integration
 
@@ -166,46 +171,19 @@ Upload → Stream AI Response → Real-time Display → User Review → Save
 
 **Why streaming?** Vercel Hobby functions timeout at 10s for non-streaming responses, but AI vision takes 30-60s. By using Vercel AI SDK's streaming capabilities, we keep the connection alive with continuous data flow, allowing the function to run for up to 120 seconds.
 
-**Flow:**
-1. User uploads food image via `/api/analyze`
-2. Image uploaded to Vercel Blob
-3. Server initiates streaming connection to client
-4. GLM Vision API processes image (30-60s)
-5. Response streams back token-by-token
-6. Client parses and displays results in real-time
-7. User reviews and confirms the AI analysis
-8. Verified data saved to food_logs table
+### AI Gateway (New)
 
-**Benefits:**
-- ✅ No database polling (saves NeonDB compute)
-- ✅ No cron jobs needed
-- ✅ No stuck/failed job cleanup
-- ✅ Better UX with real-time feedback
-- ✅ Simpler architecture (no job queue)
+OpenNutri uses a provider-agnostic AI Gateway (`src/lib/ai-vision-stream.ts`) that supports multiple Vision AI models. This ensures resilience if a specific provider is down or if you want to switch to a more cost-effective model.
 
-### Previous Architecture (Removed)
+Supported Providers:
+- **Zhipu GLM-4V-Flash:** Optimized for speed and cost.
+- **OpenAI GPT-4o-mini:** Industry standard for vision tasks.
+- **Google Gemini 1.5 Flash:** Excellent multimodal performance.
+- **Anthropic Claude 3.5 Sonnet:** High accuracy for complex meal identification.
 
-The original implementation used an async job polling pattern:
-- ❌ `ai_jobs` table for job queue
-- ❌ Vercel Cron every minute
-- ❌ Client polling every 2 seconds
-- ❌ Complex job state management (pending/processing/completed/failed)
-- ❌ Timeout and retry logic
+### Smart Coaching with Weight Smoothing (New)
 
-This was replaced with streaming for simplicity and reliability.
-
-### Serverless Considerations
-
-- **Vercel Timeout:** Streaming allows up to 120s execution (vs 10s normal)
-- **Database:** Only final results stored, no job queue needed
-- **Connection Pooling:** Neon serverless driver handles pooling automatically
-- **Rate Limiting:** AI scans tracked via food_logs table (aiConfidenceScore > 0)
-
-### Database Schema
-
-**food_logs** table tracks all meals:
-- `aiConfidenceScore > 0` → AI-assisted entry (counts toward daily limit)
-- `aiConfidenceScore = 0` or `null` → Manual entry (unlimited)
+Weight tracking is naturally "noisy" due to water weight, sodium, and carbohydrate fluctuations. OpenNutri uses **Exponentially Weighted Moving Average (EWMA)** to filter this noise, providing a much more accurate trend for coaching recommendations than simple daily tracking.
 
 ### Privacy
 
@@ -215,22 +193,6 @@ This was replaced with streaming for simplicity and reliability.
 - ✅ Semantic matching runs server-side (no client data leakage)
 - 🔒 Encryption keys never leave the client
 - 🔒 Server stores only encrypted food logs (zero-knowledge architecture)
-
-### Migration from Levenshtein Matching
-
-If you're upgrading from the string-based matching:
-
-1. **Run the pgvector setup:**
-   ```bash
-   npx tsx scripts/setup-pgvector.ts
-   npm run db:push
-   ```
-
-2. **Existing data is preserved:** The new system is additive - it builds a cache of embeddings as foods are matched.
-
-3. **Optional: Pre-populate cache** - If you have frequently logged foods, you can pre-generate embeddings by running a custom script.
-
-The system automatically falls back to Levenshtein matching if pgvector is unavailable, ensuring backward compatibility.
 
 ## License
 

@@ -146,6 +146,31 @@ export function movingAverage(values: number[], window: number = 7): number[] {
 }
 
 /**
+ * Calculate Exponentially Weighted Moving Average (EWMA)
+ * Better for weight smoothing as it filters out daily "noise" (water weight, sodium, carbs)
+ * while staying sensitive to recent trends.
+ *
+ * @param values - Array of numeric values
+ * @param alpha - Smoothing factor (0 < alpha < 1). Default: 0.15
+ * @returns Array of smoothed values
+ */
+export function exponentiallyWeightedMovingAverage(
+  values: number[],
+  alpha: number = 0.15
+): number[] {
+  if (values.length === 0) return [];
+
+  const result: number[] = [values[0]];
+
+  for (let i = 1; i < values.length; i++) {
+    const smoothedValue = alpha * values[i] + (1 - alpha) * result[i - 1];
+    result.push(smoothedValue);
+  }
+
+  return result;
+}
+
+/**
  * Calculate multiple linear regression using OLS (Ordinary Least Squares)
  * Analyzes the impact of calories, protein %, and carbs % on weight change
  *
@@ -405,13 +430,24 @@ export function generateCoachingInsights(
     y: d.weight,
   }));
 
+  // Apply EWMA smoothing to weight data (filters out noise from water/carbs/sodium)
+  const smoothedWeightValues = exponentiallyWeightedMovingAverage(
+    weightPoints.map((p) => p.y),
+    0.2 // Higher alpha for weight to keep it responsive
+  );
+
+  const smoothedWeightPoints: DataPoint[] = weightPoints.map((p, i) => ({
+    x: p.x,
+    y: smoothedWeightValues[i],
+  }));
+
   const caloriePoints: DataPoint[] = intakeData.map((d) => ({
     x: (d.timestamp - firstTimestamp) / (1000 * 60 * 60 * 24),
     y: d.calories,
   }));
 
-  // Analyze weight trend
-  const weightRegression = linearRegression(weightPoints);
+  // Analyze weight trend with smoothed data
+  const weightRegression = linearRegression(smoothedWeightPoints);
   const weightTrend = detectTrend(weightRegression, 0.05);
 
   // Calculate weekly weight change

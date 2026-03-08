@@ -1,26 +1,91 @@
 /**
- * GLM-4.6V-Flash Vision AI Integration (Streaming)
- *
- * Uses Vercel AI SDK for streaming responses.
- * This avoids Vercel's timeout limits by keeping the connection active.
+ * AI Vision & Text Analysis Service (Streaming)
+ * 
+ * Support for multiple AI providers (Zhipu, OpenAI, Google, Anthropic) via Vercel AI SDK.
+ * This avoids Vercel's 10s timeout limits by using streaming responses.
  */
 
 import { createOpenAI } from '@ai-sdk/openai';
+import { createGoogleGenerationAI } from '@ai-sdk/google';
+import { createAnthropic } from '@ai-sdk/anthropic';
 import { streamObject } from 'ai';
 import { z } from 'zod';
 
+// Detect AI Provider from environment
+const providerName = (process.env.AI_PROVIDER || 'zhipu').toLowerCase();
+
 /**
- * Create OpenAI-compatible provider for Zhipu GLM
+ * Configure AI Provider based on environment
  */
-const glm = createOpenAI({
-  baseURL: 'https://open.bigmodel.cn/api/paas/v4',
-  apiKey: process.env.GLM_API_KEY,
-});
+const getAiProvider = () => {
+  // Zhipu GLM (OpenAI Compatible)
+  if (providerName === 'zhipu') {
+    return createOpenAI({
+      baseURL: 'https://open.bigmodel.cn/api/paas/v4',
+      apiKey: process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY,
+    });
+  }
+
+  // Google Gemini
+  if (providerName === 'google') {
+    return createGoogleGenerationAI({
+      apiKey: process.env.GOOGLE_GENERATION_AI_API_KEY,
+    });
+  }
+
+  // Anthropic Claude
+  if (providerName === 'anthropic') {
+    return createAnthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+    });
+  }
+
+  // Standard OpenAI (default)
+  return createOpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
+};
+
+const provider = getAiProvider();
+
+/**
+ * Configure AI Model based on provider and capability
+ */
+const getModels = () => {
+  if (providerName === 'zhipu') {
+    return {
+      vision: 'glm-4v-flash',
+      text: 'glm-4-flash',
+    };
+  }
+
+  if (providerName === 'google') {
+    return {
+      vision: 'gemini-1.5-flash',
+      text: 'gemini-1.5-flash',
+    };
+  }
+
+  if (providerName === 'anthropic') {
+    return {
+      vision: 'claude-3-5-sonnet-20240620',
+      text: 'claude-3-5-sonnet-20240620',
+    };
+  }
+  
+  // Default to GPT-4o-mini (fast and efficient)
+  return {
+    vision: 'gpt-4o-mini',
+    text: 'gpt-4o-mini',
+  };
+};
+
+const models = getModels();
 
 /**
  * Zod schema for structured AI response
  */
-const FoodAnalysisSchema = z.object({
+export const FoodAnalysisSchema = z.object({
   items: z.array(
     z.object({
       name: z.string().describe('Food item name'),
@@ -38,10 +103,12 @@ const FoodAnalysisSchema = z.object({
   ),
 });
 
+export type FoodAnalysis = z.infer<typeof FoodAnalysisSchema>;
+
 /**
  * Analyze food image with streaming
  *
- * @param imageUrl - Public URL of the food image
+ * @param imageUrl - Public URL or data URL of the food image
  * @param mealTypeHint - Optional meal type hint
  * @param recentFoods - Optional array of recently eaten foods with frequency data
  * @returns AsyncIterableStream of the analysis
@@ -51,42 +118,32 @@ export function analyzeFoodImageStream(
   mealTypeHint?: string | null,
   recentFoods?: Array<{ name: string; freq: number }>
 ) {
-  const apiKey = process.env.GLM_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('GLM_API_KEY not configured');
-  }
-
   // Build meal type context
   const mealTypeContext =
     mealTypeHint && mealTypeHint !== 'unclassified'
-      ? `The user is currently eating ${mealTypeHint}. Focus on foods typical for this meal (e.g., eggs, toast, cereal for breakfast; sandwich, salad for lunch; pasta, rice, meat for dinner).`
+      ? `The user is currently eating ${mealTypeHint}. Focus on foods typical for this meal.`
       : '';
 
-  // Build recent foods context with frequency weighting
+  // Build recent foods context
   const recentFoodsContext =
     recentFoods && recentFoods.length > 0
-      ? `The user frequently eats these foods (with frequency in parentheses): ${recentFoods
-          .map((f) => `${f.name} (${f.freq}x)`)
-          .join(
-            ', '
-          )}. When the image is ambiguous, bias your identification toward these familiar foods. For example, if you see a grain-based food and the user frequently eats "Sourdough", prefer that identification over generic "White Bread".`
+      ? `The user frequently eats: ${recentFoods.map((f) => f.name).join(', ')}.`
       : '';
 
   return streamObject({
-    model: glm('glm-4v-flash'),
+    model: provider(models.vision),
     schema: FoodAnalysisSchema,
     messages: [
       {
         role: 'system',
-        content: `You are a nutritionist AI. Analyze the food image. Return ONLY valid JSON matching the schema. No markdown. No explanations. If unsure, estimate conservatively. Set confidence < 0.5 if unclear. ${mealTypeContext} ${recentFoodsContext}`,
+        content: `You are a nutritionist AI. Analyze the food image. Return ONLY valid JSON matching the schema. If unsure, estimate conservatively. Set confidence < 0.5 if unclear. ${mealTypeContext} ${recentFoodsContext}`,
       },
       {
         role: 'user',
         content: [
           {
             type: 'text',
-            text: `Analyze this food image and provide nutritional information for each visible food item. ${mealTypeContext ? 'Consider the meal type context when identifying foods.' : ''} ${recentFoodsContext ? 'Use the user\'s eating habits to make more personalized identifications.' : ''}`,
+            text: `Analyze this food image. ${mealTypeContext} ${recentFoodsContext}`,
           },
           {
             type: 'image',
@@ -102,7 +159,7 @@ export function analyzeFoodImageStream(
 /**
  * Analyze food description text with streaming
  *
- * @param text - Food description (e.g., "I had a 10oz steak and some mashed potatoes")
+ * @param text - Food description
  * @param mealTypeHint - Optional meal type hint
  * @param recentFoods - Optional array of recently eaten foods with frequency data
  * @returns AsyncIterableStream of the analysis
@@ -112,28 +169,20 @@ export function analyzeFoodTextStream(
   mealTypeHint?: string | null,
   recentFoods?: Array<{ name: string; freq: number }>
 ) {
-  const apiKey = process.env.GLM_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('GLM_API_KEY not configured');
-  }
-
   // Build meal type context
   const mealTypeContext =
     mealTypeHint && mealTypeHint !== 'unclassified'
       ? `The user is currently eating ${mealTypeHint}.`
       : '';
 
-  // Build recent foods context with frequency weighting
+  // Build recent foods context
   const recentFoodsContext =
     recentFoods && recentFoods.length > 0
-      ? `The user frequently eats these foods: ${recentFoods
-          .map((f) => f.name)
-          .join(', ')}.`
+      ? `The user frequently eats: ${recentFoods.map((f) => f.name).join(', ')}.`
       : '';
 
   return streamObject({
-    model: glm('glm-4-flash'),
+    model: provider(models.text),
     schema: FoodAnalysisSchema,
     messages: [
       {
@@ -170,7 +219,6 @@ export function convertToLogItems(
     protein_g: number;
     carbs_g: number;
     fat_g: number;
-    confidence: number;
   }>
 ): Array<{
   foodName: string;
