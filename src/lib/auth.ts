@@ -3,10 +3,6 @@
  *
  * Uses Credentials provider for email/password authentication
  * with database-backed sessions (NeonDB)
- *
- * NOTE: This is a simplified demo implementation.
- * For production, use bcrypt for password hashing and
- * implement proper signup flow.
  */
 
 import NextAuth from 'next-auth';
@@ -14,6 +10,7 @@ import Credentials from 'next-auth/providers/credentials';
 import { db } from '@/lib/db';
 import { users } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import bcrypt from 'bcryptjs';
 import type { NextAuthConfig } from 'next-auth';
 
 export const authConfig: NextAuthConfig = {
@@ -30,6 +27,7 @@ export const authConfig: NextAuthConfig = {
         }
 
         const email = credentials.email as string;
+        const password = credentials.password as string;
 
         // Find user in database
         const [user] = await db
@@ -39,30 +37,22 @@ export const authConfig: NextAuthConfig = {
           .limit(1);
 
         if (!user) {
-          // No user found - for demo, create one automatically
-          // In production, require explicit signup with password hashing
-          const userId = `user_${crypto.randomUUID().replace(/-/g, '')}`;
-
-          const [newUser] = await db
-            .insert(users)
-            .values({
-              id: userId,
-              email,
-            })
-            .returning();
-
-          if (newUser) {
-            return {
-              id: newUser.id,
-              email: newUser.email,
-              name: newUser.email?.split('@')[0],
-            };
-          }
+          // No user found - require explicit signup
           return null;
         }
 
-        // For demo: accept any password if user exists
-        // In production: verify against stored hash using bcrypt
+        // Verify password against stored hash
+        if (!user.passwordHash) {
+          // User exists but has no password hash (legacy auto-created user)
+          // Reject login - they need to sign up properly
+          return null;
+        }
+
+        const isValid = await bcrypt.compare(password, user.passwordHash);
+        if (!isValid) {
+          return null;
+        }
+
         return {
           id: user.id,
           email: user.email,

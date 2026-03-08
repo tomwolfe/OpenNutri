@@ -12,6 +12,7 @@ import { uploadFoodImage } from '@/lib/blob';
 import { db } from '@/lib/db';
 import { aiJobs } from '@/db/schema';
 import { getUserDailyAiScanCount } from '@/lib/ai-limits';
+import { createImageHash } from '@/lib/glm-vision';
 
 export const runtime = 'edge'; // Use Edge runtime for faster response
 export const maxDuration = 10; // 10 seconds max (Vercel Hobby limit)
@@ -80,12 +81,16 @@ export async function POST(request: NextRequest) {
     // Upload to Vercel Blob
     const imageUrl = await uploadFoodImage(buffer, userId);
 
+    // Create image hash for caching
+    const imageHash = await createImageHash(imageUrl);
+
     // Create pending AI job
     const [job] = await db
       .insert(aiJobs)
       .values({
         userId,
         imageUrl,
+        imageHash,
         status: 'pending',
       })
       .returning();

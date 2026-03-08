@@ -12,22 +12,18 @@ import { eq, and, gte, sql } from 'drizzle-orm';
 /**
  * Get the number of AI scans a user has performed today
  * @param userId - User ID to check
- * @returns Number of scans completed today
+ * @returns Number of scans created today (regardless of status)
  */
 export async function getUserDailyAiScanCount(userId: string): Promise<number> {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
+  // Count ALL jobs created today, not just completed ones
+  // This prevents bypass by creating jobs that never complete
   const result = await db
     .select({ count: sql<number>`count(*)` })
     .from(aiJobs)
-    .where(
-      and(
-        eq(aiJobs.userId, userId),
-        eq(aiJobs.status, 'completed'),
-        gte(aiJobs.createdAt, today)
-      )
-    );
+    .where(and(eq(aiJobs.userId, userId), gte(aiJobs.createdAt, today)));
 
   return Number(result[0]?.count ?? 0);
 }

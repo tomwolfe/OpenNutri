@@ -15,14 +15,18 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 
+type AuthMode = 'signin' | 'signup';
+
 export default function LoginPage() {
   const router = useRouter();
+  const [mode, setMode] = useState<AuthMode>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
@@ -47,16 +51,66 @@ export default function LoginPage() {
     }
   };
 
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+
+    if (password !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters long');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const response = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.error || 'Failed to create account');
+        return;
+      }
+
+      // Auto sign in after successful signup
+      const result = await signIn('credentials', {
+        email,
+        password,
+        redirect: false,
+      });
+
+      if (result?.error) {
+        setError('Account created but sign in failed. Please try logging in.');
+      } else {
+        router.push('/dashboard');
+        router.refresh();
+      }
+    } catch {
+      setError('An error occurred. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
           <CardTitle className="text-2xl font-bold">OpenNutri</CardTitle>
           <CardDescription>
-            Sign in to track your nutrition
+            {mode === 'signin' ? 'Sign in to track your nutrition' : 'Create your account'}
           </CardDescription>
         </CardHeader>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={mode === 'signin' ? handleSignIn : handleSignUp}>
           <CardContent className="space-y-4">
             {error && (
               <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive">
@@ -85,13 +139,36 @@ export default function LoginPage() {
                 required
               />
             </div>
+            {mode === 'signup' && (
+              <div className="space-y-2">
+                <Label htmlFor="confirmPassword">Confirm Password</Label>
+                <Input
+                  id="confirmPassword"
+                  type="password"
+                  placeholder="••••••••"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                />
+              </div>
+            )}
           </CardContent>
           <CardFooter className="flex flex-col space-y-2">
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? 'Signing in...' : 'Sign In'}
+              {loading ? (mode === 'signin' ? 'Signing in...' : 'Creating account...') : (mode === 'signin' ? 'Sign In' : 'Sign Up')}
             </Button>
             <p className="text-center text-sm text-muted-foreground">
-              No account? One will be created automatically on first sign-in.
+              {mode === 'signin' ? "Don't have an account?" : "Already have an account?"}{' '}
+              <button
+                type="button"
+                className="text-primary underline-offset-4 hover:underline"
+                onClick={() => {
+                  setMode(mode === 'signin' ? 'signup' : 'signin');
+                  setError('');
+                }}
+              >
+                {mode === 'signin' ? 'Sign Up' : 'Sign In'}
+              </button>
             </p>
           </CardFooter>
         </form>

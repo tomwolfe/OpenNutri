@@ -60,6 +60,7 @@ export const verificationTokens = pgTable('verification_tokens', {
 export const users = pgTable('users', {
   id: text('id').primaryKey(),
   email: text('email').unique(),
+  passwordHash: text('password_hash'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   subscriptionTier: text('subscription_tier').default('free'),
 });
@@ -88,7 +89,11 @@ export const aiJobs = pgTable('ai_jobs', {
   id: uuid('id').defaultRandom().primaryKey(),
   userId: text('user_id').references(() => users.id),
   imageUrl: text('image_url'),
+  imageHash: text('image_hash'), // For caching
+  cachedAnalysis: text('cached_analysis'), // JSON string of cached result
   status: text('status').default('pending'), // pending, processing, completed, failed
+  retryCount: integer('retry_count').default(0),
+  errorMessage: text('error_message'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   completedAt: timestamp('completed_at', { withTimezone: true }),
 });

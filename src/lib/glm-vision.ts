@@ -5,10 +5,22 @@
  * Implements semantic caching to reduce API calls.
  */
 
-import { createHash } from 'crypto';
 import { db } from '@/lib/db';
-import { logItems } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { logItems, aiJobs } from '@/db/schema';
+import { eq, and, sql } from 'drizzle-orm';
+
+/**
+ * Create SHA256 hash using Web Crypto API
+ * @param text - Text to hash
+ * @returns Hex string of hash
+ */
+async function hashString(text: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 /**
  * GLM API Configuration
@@ -36,14 +48,23 @@ interface VisionAnalysisResult {
  * @param description - Food description to hash
  * @returns SHA256 hash string
  */
-export function createFoodHash(description: string): string {
+export async function createFoodHash(description: string): Promise<string> {
   // Normalize: lowercase, remove extra spaces, strip common modifiers
   const normalized = description
     .toLowerCase()
     .replace(/\s+/g, ' ')
     .trim();
 
-  return createHash('sha256').update(normalized).digest('hex');
+  return await hashString(normalized);
+}
+
+/**
+ * Create hash of image URL for cache lookup
+ * @param imageUrl - Image URL to hash
+ * @returns SHA256 hash string
+ */
+export async function createImageHash(imageUrl: string): Promise<string> {
+  return await hashString(imageUrl);
 }
 
 /**
@@ -74,6 +95,71 @@ export async function getCachedFoodItem(
   }
 
   return null;
+}
+
+/**
+ * Check if image analysis exists in AI jobs cache
+ * @param imageHash - Hash of image URL
+ * @returns Cached analysis result or null
+ */
+export async function getCachedImageAnalysis(
+  imageHash: string
+): Promise<VisionAnalysisResult | null> {
+  // Find completed jobs with this image hash and cached analysis
+  const [cachedJob] = await db
+    .select()
+    .from(aiJobs)
+    .where(
+      and(
+        eq(aiJobs.imageHash, imageHash),
+        eq(aiJobs.status, 'completed'),
+        eq(aiJobs.cachedAnalysis, sql`IS NOT NULL`)
+      )
+    )
+    .orderBy(aiJobs.completedAt)
+    .limit(1);
+
+  if (cachedJob?.cachedAnalysis) {
+    try {
+      return JSON.parse(cachedJob.cachedAnalysis) as VisionAnalysisResult;
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Save analysis result to cache
+ * @param imageHash - Hash of image URL
+ * @param result - Analysis result to cache
+ * @returns True if saved successfully
+ */
+export async function saveAnalysisToCache(
+  imageHash: string,
+  result: VisionAnalysisResult
+): Promise<boolean> {
+  try {
+    // Update any pending/processing job with this image hash
+    await db
+      .update(aiJobs)
+      .set({
+        imageHash,
+        cachedAnalysis: JSON.stringify(result),
+      })
+      .where(
+        and(
+          eq(aiJobs.imageHash, imageHash),
+          eq(aiJobs.cachedAnalysis, sql`IS NULL`)
+        )
+      );
+
+    return true;
+  } catch (error) {
+    console.error('Failed to save analysis cache:', error);
+    return false;
+  }
 }
 
 /**

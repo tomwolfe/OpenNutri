@@ -8,6 +8,8 @@ import { SnapToLog } from '@/components/snap-to-log';
 import { AiUsageTracker } from '@/components/ai-usage-tracker';
 import { CoachingDashboard } from '@/components/coaching-dashboard';
 import { DataExport } from '@/components/data-export';
+import { WeightTracker } from '@/components/weight-tracker';
+import { WeightChart } from '@/components/weight-chart';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -219,6 +221,9 @@ export default function DashboardPage() {
               <CardTitle className="text-base">Quick Actions</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
+              {/* Weight Tracker */}
+              <WeightTracker />
+
               {/* AI Usage Tracker */}
               <div className="pb-2 border-b">
                 <AiUsageTracker />
@@ -352,6 +357,11 @@ export default function DashboardPage() {
               </Card>
             );
           })}
+        </div>
+
+        {/* Weight Chart Section */}
+        <div className="mt-8">
+          <WeightChart days={30} />
         </div>
 
         {/* Coaching Insights Section */}
