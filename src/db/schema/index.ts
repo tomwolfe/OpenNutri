@@ -64,6 +64,7 @@ export const userTargets = pgTable('user_targets', {
   carbTarget: integer('carb_target'),
   fatTarget: integer('fat_target'),
   weightRecord: doublePrecision('weight_record'),
+  yjsData: text('yjs_data'), // CRDT data for conflict-free sync
   version: integer('version').default(1).notNull(),
   deviceId: text('device_id'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
@@ -88,6 +89,7 @@ export const foodLogs = pgTable('food_logs', {
   isVerified: boolean('is_verified').default(false),
   imageUrl: text('image_url'), // Vercel Blob URL for meal photo
   notes: text('notes'), // AI-generated explanations or user notes
+  yjsData: text('yjs_data'), // CRDT data for conflict-free sync
   // E2E encryption fields (Phase 3)
   encryptedData: text('encrypted_data').notNull(), // Encrypted log items (AES-GCM)
   encryptionIv: text('encryption_iv').notNull(), // IV for decryption
@@ -215,6 +217,49 @@ export const userKeysRelations = relations(userKeys, ({ one }) => ({
     references: [users.id],
   }),
 }));
+
+// ============================================
+// Shared Vaults (Access Control)
+// ============================================
+/**
+ * Represents a secure sharing session.
+ * Stores the user's master key re-encrypted with the recipient's public key.
+ */
+export const sharedVaults = pgTable('shared_vaults', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  ownerId: text('owner_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .notNull(),
+  recipientEmail: text('recipient_email').notNull(),
+  encryptedVaultKey: text('encrypted_vault_key').notNull(), // Master key encrypted with recipient's public key
+  publicKey: text('public_key').notNull(), // Recipient's public key used for this session
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+});
+
+export const sharedVaultsRelations = relations(sharedVaults, ({ one }) => ({
+  owner: one(users, {
+    fields: [sharedVaults.ownerId],
+    references: [users.id],
+  }),
+}));
+
+// ============================================
+// Shared Logs (Specific Item Sharing)
+// ============================================
+/**
+ * Allows sharing specific log entries without sharing the full vault.
+ */
+export const sharedLogs = pgTable('shared_logs', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  logId: uuid('log_id')
+    .references(() => foodLogs.id, { onDelete: 'cascade' })
+    .notNull(),
+  sharedVaultId: uuid('shared_vault_id')
+    .references(() => sharedVaults.id, { onDelete: 'cascade' }),
+  recipientEmail: text('recipient_email').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+});
 
 // ============================================
 // Type Exports (for TypeScript)

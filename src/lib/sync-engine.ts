@@ -2,11 +2,12 @@
  * Sync Engine for OpenNutri
  *
  * Handles bidirectional synchronization between Dexie (local) and Neon (cloud).
- * Uses a delta-sync strategy with timestamps and Last-Write-Wins conflict resolution.
+ * Powered by Yjs CRDTs for robust multi-device synchronization.
  */
 
 import { db, type LocalFoodLog, type DecryptedFoodLog, type LocalUserTarget } from '@/lib/db-local';
 import { decryptBatchInWorker } from '@/lib/worker-client';
+import { mergeCrdt, encodeYDoc, createYDoc } from '@/lib/crdt';
 
 /**
  * Sync conflict representation
@@ -16,48 +17,8 @@ export interface SyncConflict {
   id: string;
   localVersion: number;
   serverVersion: number;
-  localData?: {
-    foodName?: string;
-    calories?: number;
-    timestamp?: string;
-    mealType?: string;
-    updatedAt?: number;
-  };
-  serverData?: {
-    foodName?: string;
-    calories?: number;
-    timestamp?: string;
-    mealType?: string;
-    updatedAt?: number;
-  };
-}
-
-/**
- * Deep equality check for food log items
- */
-function itemsAreEqual(items1: any[], items2: any[]): boolean {
-  if (items1.length !== items2.length) return false;
-  const sorted1 = [...items1].sort((a, b) => a.foodName.localeCompare(b.foodName));
-  const sorted2 = [...items2].sort((a, b) => a.foodName.localeCompare(b.foodName));
-  return sorted1.every((item, i) =>
-    item.foodName === sorted2[i].foodName &&
-    item.calories === sorted2[i].calories &&
-    item.protein === sorted2[i].protein &&
-    item.carbs === sorted2[i].carbs &&
-    item.fat === sorted2[i].fat
-  );
-}
-
-/**
- * Merge items from two versions of a log
- * Uses Last-Write-Wins strategy based on updatedAt timestamp
- */
-function mergeItems(localItems: any[], serverItems: any[], localUpdatedAt: number, serverUpdatedAt: number): any[] {
-  // Last-Write-Wins: use the items from the most recently updated version
-  if (serverUpdatedAt > localUpdatedAt) {
-    return serverItems;
-  }
-  return localItems;
+  localData?: any;
+  serverData?: any;
 }
 
 /**
@@ -91,11 +52,19 @@ function setLastSyncTimestamp(timestamp: number): void {
 }
 
 /**
+ * Ensure an item has yjsData by seeding it if missing
+ */
+function ensureYjsData<T extends { yjsData?: string | null }>(item: T): T {
+  if (!item.yjsData) {
+    const doc = createYDoc(item as Record<string, any>);
+    return { ...item, yjsData: encodeYDoc(doc) };
+  }
+  return item;
+}
+
+/**
  * Global Delta Sync
  * Pulls all changes since last sync and pushes local changes.
- * This is more efficient than date-based sync for multi-device scenarios.
- * 
- * @returns Object with success status, pulled/pushed counts, and any conflicts detected
  */
 export async function syncDelta(
   userId: string,
@@ -106,13 +75,17 @@ export async function syncDelta(
     const since = getLastSyncTimestamp();
 
     // 1. PUSH: Find all unsynced local data
-    const unsyncedLogs = await db.foodLogs
+    let unsyncedLogs = await db.foodLogs
       .filter(log => !log.synced && log.userId === userId)
       .toArray();
 
-    const unsyncedTargets = await db.userTargets
+    let unsyncedTargets = await db.userTargets
       .filter(target => !target.synced && target.userId === userId)
       .toArray();
+
+    // Seed yjsData for items that don't have it yet (migration step)
+    unsyncedLogs = unsyncedLogs.map(ensureYjsData);
+    unsyncedTargets = unsyncedTargets.map(ensureYjsData);
 
     let pushed = 0;
     const conflicts: SyncConflict[] = [];
@@ -143,40 +116,30 @@ export async function syncDelta(
       if (response.ok) {
         const result = await response.json();
         
-        // Collect conflicts from server response
-        if (result.conflicts && Array.isArray(result.conflicts)) {
-          conflicts.push(...result.conflicts);
-        }
-
-        // Mark pushed items as synced (excluding conflicts)
-        const conflictedIds = new Set(result.conflicts?.map((c: SyncConflict) => c.id) || []);
-        
+        // Mark pushed items as synced
         if (unsyncedLogs.length > 0) {
           for (const log of unsyncedLogs) {
-            if (!conflictedIds.has(log.id)) {
-              await db.foodLogs.update(log.id, {
-                synced: true,
-                version: (log.version || 0) + 1,
-                deviceId,
-              });
-            }
+            await db.foodLogs.update(log.id, {
+              synced: true,
+              yjsData: log.yjsData,
+              version: (log.version || 0) + 1,
+              deviceId,
+            });
           }
         }
 
         if (unsyncedTargets.length > 0) {
           for (const target of unsyncedTargets) {
-            const targetId = `${target.userId}-${target.date}`;
-            if (!conflictedIds.has(targetId)) {
-              await db.userTargets.update([target.userId, target.date], {
-                synced: true,
-                version: (target.version || 0) + 1,
-                deviceId,
-              });
-            }
+            await db.userTargets.update([target.userId, target.date], {
+              synced: true,
+              yjsData: target.yjsData,
+              version: (target.version || 0) + 1,
+              deviceId,
+            });
           }
         }
 
-        pushed = unsyncedLogs.length + unsyncedTargets.length - conflicts.length;
+        pushed = unsyncedLogs.length + unsyncedTargets.length;
       }
     }
 
@@ -196,52 +159,62 @@ export async function syncDelta(
     const logsToDecrypt: LocalFoodLog[] = [];
 
     await db.transaction('rw', db.foodLogs, db.decryptedLogs, db.userTargets, async () => {
-      // Merge logs using Last-Write-Wins (LWW) strategy
+      // Merge logs using CRDT strategy
       for (const sLog of serverLogs) {
-        // Skip if this change originated from this device
         if (sLog.deviceId === deviceId) continue;
 
         const localLog = await db.foodLogs.get(sLog.id);
-        const serverUpdatedAt = new Date(sLog.updatedAt).getTime();
-        const localUpdatedAt = localLog?.updatedAt || 0;
+        
+        // CRDT Merge
+        const { mergedUpdate, mergedData } = mergeCrdt(
+          localLog?.yjsData || null,
+          sLog.yjsData || null,
+          localLog || sLog,
+          sLog
+        );
 
-        // Last-Write-Wins: use the most recently updated version
-        // This ensures the latest human action is preserved regardless of version numbers
-        if (!localLog || serverUpdatedAt > localUpdatedAt) {
-          const newLocalLog: LocalFoodLog = {
-            ...sLog,
-            timestamp: new Date(sLog.timestamp),
-            updatedAt: serverUpdatedAt,
-            synced: true,
-            version: sLog.version || 0,
-          };
+        const newLocalLog: LocalFoodLog = {
+          ...sLog,
+          ...mergedData,
+          yjsData: mergedUpdate,
+          timestamp: new Date(mergedData.timestamp || sLog.timestamp),
+          updatedAt: Date.now(),
+          synced: true,
+          version: Math.max(localLog?.version || 0, sLog.version || 0) + 1,
+        };
 
-          await db.foodLogs.put(newLocalLog);
+        await db.foodLogs.put(newLocalLog);
 
-          if (newLocalLog.encryptedData && newLocalLog.encryptionIv && vaultKey) {
-            logsToDecrypt.push(newLocalLog);
-          }
-
-          pulled++;
+        if (newLocalLog.encryptedData && newLocalLog.encryptionIv && vaultKey) {
+          logsToDecrypt.push(newLocalLog);
         }
+
+        pulled++;
       }
 
-      // Merge targets
+      // Merge targets using CRDT strategy
       for (const sTarget of serverTargets) {
         if (sTarget.deviceId === deviceId) continue;
 
         const localTarget = await db.userTargets.get([sTarget.userId, sTarget.date]);
-        const serverUpdatedAt = new Date(sTarget.updatedAt).getTime();
-        const localUpdatedAt = localTarget?.updatedAt || 0;
+        
+        // CRDT Merge
+        const { mergedUpdate, mergedData } = mergeCrdt(
+          localTarget?.yjsData || null,
+          sTarget.yjsData || null,
+          localTarget || sTarget,
+          sTarget
+        );
 
-        if (!localTarget || serverUpdatedAt > localUpdatedAt) {
-          await db.userTargets.put({
-            ...sTarget,
-            synced: true,
-            updatedAt: serverUpdatedAt,
-          });
-          pulled++;
-        }
+        await db.userTargets.put({
+          ...sTarget,
+          ...mergedData,
+          yjsData: mergedUpdate,
+          synced: true,
+          updatedAt: Date.now(),
+          version: Math.max(localTarget?.version || 0, sTarget.version || 0) + 1,
+        });
+        pulled++;
       }
 
       // 4. DECRYPT & CACHE logs
@@ -253,15 +226,9 @@ export async function syncDelta(
       }
     });
 
-    // 5. Update last sync timestamp
     setLastSyncTimestamp(data.serverTime || Date.now());
 
-    return { 
-      success: conflicts.length === 0, 
-      pulled, 
-      pushed,
-      conflicts: conflicts.length > 0 ? conflicts : undefined,
-    };
+    return { success: true, pulled, pushed };
   } catch (error) {
     console.error('SyncEngine: Delta sync error', error);
     return { success: false, pulled: 0, pushed: 0 };
@@ -270,158 +237,21 @@ export async function syncDelta(
 
 /**
  * Background sync process for a specific date
- * Performs delta-sync to minimize bandwidth and handle multi-device updates.
  */
 export async function syncLogsForDate(
   date: Date,
   userId: string,
   vaultKey: CryptoKey | null
 ): Promise<{ success: boolean; count: number }> {
-  try {
-    const dateStr = date.toISOString().split('T')[0];
-    const deviceId = getDeviceId();
-    
-    // 1. PUSH: Find unsynced local logs and push to server
-    const unsyncedLogs = await db.foodLogs
-      .filter(log => !log.synced && log.userId === userId)
-      .toArray();
-
-    if (unsyncedLogs.length > 0) {
-      console.log(`SyncEngine: Pushing ${unsyncedLogs.length} unsynced logs...`);
-      for (const log of unsyncedLogs) {
-        try {
-          const response = await fetch('/api/log/food', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              ...log,
-              timestamp: log.timestamp.toISOString(),
-              deviceId,
-              version: (log.version || 0) + 1, // Increment version on update
-            }),
-          });
-
-          if (response.ok) {
-            const { logId } = await response.json();
-            await db.foodLogs.update(log.id, { 
-              synced: true, 
-              version: (log.version || 0) + 1,
-              deviceId 
-            });
-          }
-        } catch (err) {
-          console.error(`SyncEngine: Failed to push log ${log.id}`, err);
-        }
-      }
-    }
-
-    // 2. PULL: Fetch latest logs from server
-    // We only pull logs with a version higher than what we have locally for this date
-    const startOfDay = new Date(dateStr);
-    const endOfDay = new Date(dateStr);
-    endOfDay.setHours(23, 59, 59, 999);
-
-    const localLogsForDate = await db.foodLogs
-      .where('timestamp')
-      .between(startOfDay, endOfDay)
-      .toArray();
-    
-    const maxLocalVersion = Math.max(0, ...localLogsForDate.map(l => l.version || 0));
-
-    const response = await fetch(`/api/log/daily?date=${dateStr}&v=${maxLocalVersion}`);
-    if (!response.ok) return { success: false, count: 0 };
-    
-    const data = await response.json();
-    const serverLogs = (data.logs || []) as (LocalFoodLog & { logItems?: unknown[] })[];
-
-    if (serverLogs.length === 0) return { success: true, count: 0 };
-
-    // 3. MERGE: Update local Dexie with server data
-    const logsToDecrypt: LocalFoodLog[] = [];
-
-    await db.transaction('rw', db.foodLogs, db.decryptedLogs, async () => {
-      for (const sLog of serverLogs) {
-        // Skip if this change originated from this device (and we already have it)
-        if (sLog.deviceId === deviceId) continue;
-
-        const localLog = await db.foodLogs.get(sLog.id);
-        const serverUpdatedAt = new Date(sLog.updatedAt).getTime();
-        const localUpdatedAt = localLog?.updatedAt || 0;
-
-        // Last-Write-Wins: use the most recently updated version
-        // This ensures the latest human action is preserved regardless of version numbers
-        if (!localLog || serverUpdatedAt > localUpdatedAt) {
-          const newLocalLog: LocalFoodLog = {
-            ...sLog,
-            timestamp: new Date(sLog.timestamp),
-            updatedAt: serverUpdatedAt,
-            synced: true,
-            version: sLog.version || 0,
-          };
-
-          await db.foodLogs.put(newLocalLog);
-
-          if (newLocalLog.encryptedData && newLocalLog.encryptionIv && vaultKey) {
-            logsToDecrypt.push(newLocalLog);
-          }
-        }
-      }
-
-      // 4. DECRYPT & CACHE
-      if (logsToDecrypt.length > 0 && vaultKey) {
-        const decryptedResults = await decryptBatchInWorker(logsToDecrypt, vaultKey);
-        if (decryptedResults.length > 0) {
-          await db.decryptedLogs.bulkPut(decryptedResults);
-        }
-      }
-    });
-
-    return { success: true, count: serverLogs.length };
-  } catch (error) {
-    console.error('SyncEngine: Global sync error', error);
-    return { success: false, count: 0 };
-  }
+  // Delegate to syncDelta for robust CRDT sync
+  const result = await syncDelta(userId, vaultKey);
+  return { success: result.success, count: result.pulled };
 }
 
 /**
- * Sync user targets (weight, calorie goals)
+ * Sync user targets
  */
 export async function syncUserTargets(userId: string): Promise<void> {
-  try {
-    // 1. PUSH unsynced targets
-    const unsynced = await db.userTargets
-      .filter(t => !t.synced && t.userId === userId)
-      .toArray();
-      
-    for (const target of unsynced) {
-      const res = await fetch('/api/targets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(target),
-      });
-      if (res.ok) {
-        await db.userTargets.update([target.userId, target.date], { synced: true });
-      }
-    }
-
-    // 2. PULL latest targets (last 30 days)
-    const res = await fetch('/api/targets');
-    if (res.ok) {
-      const { targets } = await res.json();
-      for (const sTarget of targets) {
-        const serverUpdatedAt = new Date(sTarget.updatedAt).getTime();
-        const local = await db.userTargets.get([userId, sTarget.date]);
-        
-        if (!local || serverUpdatedAt > local.updatedAt) {
-          await db.userTargets.put({
-            ...sTarget,
-            synced: true,
-            updatedAt: serverUpdatedAt,
-          });
-        }
-      }
-    }
-  } catch (err) {
-    console.error('SyncEngine: Targets sync error', err);
-  }
+  // Delegate to syncDelta for consistency
+  await syncDelta(userId, null);
 }

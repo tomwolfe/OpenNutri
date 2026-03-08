@@ -9,13 +9,13 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { 
-  generateCoachingInsights, 
   type CoachingInsight, 
   type IntakePoint,
   type MacroTargets,
   type CoachingAction
 } from '@/lib/coaching';
 import { db } from '@/lib/db-local';
+import { generateInsightsInWorker } from '@/lib/worker-client';
 
 export interface TrendSummary {
   dataQuality: {
@@ -43,6 +43,8 @@ export interface UseCoachingOptions {
   autoRefresh?: boolean;
   /** User ID for local data filtering */
   userId?: string;
+  /** Shared vault key for shared views */
+  sharedVaultKey?: CryptoKey | null;
 }
 
 /**
@@ -52,7 +54,8 @@ export function useCoaching(options: UseCoachingOptions = {}) {
   const { 
     refreshInterval = 60000, 
     autoRefresh = true,
-    userId
+    userId,
+    sharedVaultKey
   } = options;
 
   const [data, setData] = useState<CoachingData | null>(null);
@@ -68,7 +71,8 @@ export function useCoaching(options: UseCoachingOptions = {}) {
       setError(null);
 
       // 1. Fetch targets and weight records from server (minimal data)
-      const response = await fetch('/api/coaching/data');
+      const dataUrl = sharedVaultKey ? `/api/share/vault/data?userId=${userId}` : '/api/coaching/data';
+      const response = await fetch(dataUrl);
       if (!response.ok) throw new Error('Failed to fetch coaching data');
       const raw = await response.json();
       
@@ -79,49 +83,83 @@ export function useCoaching(options: UseCoachingOptions = {}) {
           weight: Number(r.weight),
         }));
 
-      // 2. Get intake data from Local Dexie (already decrypted)
-      // We fetch all decrypted logs for the last 90 days
-      const ninetyDaysAgo = new Date();
-      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-      
-      const localDecryptedLogs = await db.decryptedLogs
-        .where('timestamp')
-        .above(ninetyDaysAgo)
-        .filter(log => log.userId === userId)
-        .toArray();
+      // 2. Get intake data from Local Dexie (already decrypted) OR from Shared Logs
+      let intakeDataPoints: IntakePoint[] = [];
 
-      const intakeByDay = new Map<string, IntakePoint>();
-
-      for (const log of localDecryptedLogs) {
-        const dateKey = log.timestamp.toISOString().split('T')[0];
-        const timestamp = new Date(dateKey).getTime();
-
-        const existing = intakeByDay.get(dateKey) || {
-          timestamp,
-          calories: 0,
-          protein: 0,
-          carbs: 0,
-          fat: 0,
-        };
-
-        existing.calories += log.totalCalories || 0;
+      if (sharedVaultKey) {
+        // Fetch and decrypt shared logs for the recipient
+        const sharedLogsRes = await fetch(`/api/share/logs?userId=${userId}`);
+        const { logs } = await sharedLogsRes.json();
         
-        if (log.items) {
-          log.items.forEach((item: any) => {
-            existing.protein += item.protein || 0;
-            existing.carbs += item.carbs || 0;
-            existing.fat += item.fat || 0;
-          });
+        const intakeByDay = new Map<string, IntakePoint>();
+        for (const log of logs) {
+          // Decrypt shared log using the shared vault key
+          const decrypted = await decryptFoodLog(log.encryptedData, log.encryptionIv, sharedVaultKey);
+          
+          const dateKey = new Date(decrypted.timestamp).toISOString().split('T')[0];
+          const existing = intakeByDay.get(dateKey) || {
+            timestamp: new Date(dateKey).getTime(),
+            calories: 0,
+            protein: 0,
+            carbs: 0,
+            fat: 0,
+          };
+
+          existing.calories += decrypted.totalCalories || 0;
+          if (decrypted.items) {
+            decrypted.items.forEach((item: any) => {
+              existing.protein += item.protein || 0;
+              existing.carbs += item.carbs || 0;
+              existing.fat += item.fat || 0;
+            });
+          }
+          intakeByDay.set(dateKey, existing);
         }
+        intakeDataPoints = Array.from(intakeByDay.values());
+      } else {
+        // Standard flow from local Dexie
+        const ninetyDaysAgo = new Date();
+        ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
         
-        intakeByDay.set(dateKey, existing);
+        const localDecryptedLogs = await db.decryptedLogs
+          .where('timestamp')
+          .above(ninetyDaysAgo)
+          .filter(log => log.userId === userId)
+          .toArray();
+
+        const intakeByDay = new Map<string, IntakePoint>();
+
+        for (const log of localDecryptedLogs) {
+          const dateKey = log.timestamp.toISOString().split('T')[0];
+          const timestamp = new Date(dateKey).getTime();
+
+          const existing = intakeByDay.get(dateKey) || {
+            timestamp,
+            calories: 0,
+            protein: 0,
+            carbs: 0,
+            fat: 0,
+          };
+
+          existing.calories += log.totalCalories || 0;
+          
+          if (log.items) {
+            log.items.forEach((item: any) => {
+              existing.protein += item.protein || 0;
+              existing.carbs += item.carbs || 0;
+              existing.fat += item.fat || 0;
+            });
+          }
+          
+          intakeByDay.set(dateKey, existing);
+        }
+        intakeDataPoints = Array.from(intakeByDay.values());
       }
 
-      const intakeDataPoints = Array.from(intakeByDay.values());
       const targets: MacroTargets = raw.targets;
 
-      // 3. Run coaching analysis
-      const insights = generateCoachingInsights(
+      // 3. Run coaching analysis in Web Worker
+      const insights = await generateInsightsInWorker(
         weightData,
         intakeDataPoints,
         targets
@@ -151,7 +189,7 @@ export function useCoaching(options: UseCoachingOptions = {}) {
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, sharedVaultKey]);
 
   /**
    * Apply a coaching action (e.g., Update Target)

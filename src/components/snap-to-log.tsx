@@ -54,7 +54,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
   const [imageIv, setImageIv] = useState<string | null>(null);
   const [compressionStats, setCompressionStats] = useState<{ original: number; compressed: number } | null>(null);
   
-  const { encryptLog, encryptBinary, isReady } = useEncryption();
+  const { encryptLog, encryptBinary, generateSessionKey, exportKeyToBase64, isReady, vaultKey } = useEncryption();
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [isSyncing, setIsSyncing] = useState(false);
   const { queueImage, syncQueue, isAvailable: isIndexedDBAvailable } = useOfflineQueue();
@@ -235,10 +235,11 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
 
     try {
       const compressedBlob = await compressImage(selectedFile);
-      const compressedFile = new File([compressedBlob], 'food-analysis.webp', { type: 'image/webp' });
+      const arrayBuffer = await compressedBlob.arrayBuffer();
       setCompressionStats({ original: selectedFile.size, compressed: compressedBlob.size });
 
       if (!isOnline) {
+        const compressedFile = new File([compressedBlob], 'food-analysis.webp', { type: 'image/webp' });
         const queueId = await queueImage(compressedFile, selectedMealType);
         if (queueId) {
           setUploadError('You are offline. Image queued.');
@@ -248,49 +249,71 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
         throw new Error('Failed to queue image');
       }
 
-      // Convert to Base64 data URI for direct AI analysis (Zero-Knowledge: image never touches storage)
-      const base64DataUri = await blobToBase64DataUri(compressedBlob);
-      setImageUrl(base64DataUri); // Store Base64 temporarily for the session
+      // 1. Generate a one-time session key for Zero-Knowledge analysis
+      const sessionKey = await generateSessionKey();
+      const { ciphertext, iv } = await encryptBinary(arrayBuffer, sessionKey);
+      
+      // 2. Export key and IV to base64 for transmission
+      const sessionKeyBase64 = await exportKeyToBase64(sessionKey);
+      const ivArray = new Uint8Array(iv);
+      let binary = '';
+      for (let i = 0; i < ivArray.byteLength; i++) {
+        binary += String.fromCharCode(ivArray[i]);
+      }
+      const ivBase64 = btoa(binary);
 
-      // Encrypt and upload permanent version for Visual Diary (in parallel, non-blocking)
+      // 3. Convert ciphertext to Base64 for JSON transmission
+      const encryptedBase64 = btoa(
+        Array.from(new Uint8Array(ciphertext))
+          .map(byte => String.fromCharCode(byte))
+          .join('')
+      );
+
+      // Encrypt and upload permanent version for Visual Diary (in parallel)
       let vaultUrl = null;
       let vaultIv = null;
-      if (isReady && encryptBinary) {
+      if (isReady && vaultKey) {
         try {
-          const arrayBuffer = await compressedBlob.arrayBuffer();
-          const { ciphertext, iv } = await encryptBinary(arrayBuffer);
-
-          const encryptedFile = new File([ciphertext], 'vault-image.bin', { type: 'application/octet-stream' });
+          // Use the actual vault key for permanent storage
+          const vaultEnc = await encryptBinary(arrayBuffer);
+          const encryptedFile = new File([vaultEnc.ciphertext], 'vault-image.bin', { type: 'application/octet-stream' });
           const encryptedFormData = new FormData();
           encryptedFormData.append('image', encryptedFile);
           const encryptedUploadResponse = await fetch('/api/blob/upload', { method: 'POST', body: encryptedFormData });
           if (encryptedUploadResponse.ok) {
             const { imageUrl: eUrl } = await encryptedUploadResponse.json();
             vaultUrl = eUrl;
-            // Convert IV to base64 for JSON storage
-            const ivArray = new Uint8Array(iv);
-            const binary = Array.from(ivArray)
-              .map(byte => String.fromCharCode(byte))
-              .join('');
-            vaultIv = btoa(binary);
+            const vIvArray = new Uint8Array(vaultEnc.iv);
+            let vBinary = '';
+            for (let i = 0; i < vIvArray.byteLength; i++) {
+              vBinary += String.fromCharCode(vIvArray[i]);
+            }
+            vaultIv = btoa(vBinary);
           }
         } catch (err) {
-          console.error('Encryption failed', err);
+          console.error('Vault encryption failed', err);
         }
       }
 
-      setImageUrl(vaultUrl || base64DataUri);
+      setImageUrl(vaultUrl || `data:image/webp;base64,${encryptedBase64}`);
       setImageIv(vaultIv);
       setUploadProgress('streaming');
-      // Send Base64 directly to AI - no temporary storage needed
-      submit({ imageUrl: base64DataUri, mealTypeHint: selectedMealType });
+
+      // 4. Send Encrypted Data + Session Key directly to AI
+      submit({ 
+        imageUrl: encryptedBase64, 
+        isEncrypted: true,
+        sessionKey: sessionKeyBase64,
+        iv: ivBase64,
+        mealTypeHint: selectedMealType 
+      });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Upload failed';
       setUploadError(errorMessage);
       setUploadProgress('idle');
       onError?.(errorMessage);
     }
-  }, [selectedFile, selectedMealType, isOnline, queueImage, onError, submit, isReady, encryptBinary]);
+  }, [selectedFile, selectedMealType, isOnline, queueImage, onError, submit, isReady, vaultKey, encryptBinary, generateSessionKey, exportKeyToBase64]);
 
   const handleSaveDraft = useCallback(async () => {
     if (draftItems.length === 0) return;
@@ -343,7 +366,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
     } finally {
       setSaveInProgress(false);
     }
-  }, [draftItems, selectedMealType, onComplete, onError, onDraftSaved, imageUrl, isReady, encryptLog]);
+  }, [draftItems, selectedMealType, onComplete, onError, onDraftSaved, imageUrl, isReady, encryptLog, imageIv]);
 
   const handleClear = useCallback(async () => {
     // Only delete if it's a permanent vault URL (not a Base64 data URI)

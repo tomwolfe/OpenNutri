@@ -5,28 +5,44 @@
  */
 
 import { type DecryptedFoodLog } from './db-local';
+import { type CoachingInsight, type MacroTargets, type IntakePoint } from './coaching';
 
-let worker: Worker | null = null;
+let encryptionWorker: Worker | null = null;
+let coachingWorker: Worker | null = null;
 
-function getWorker(): Worker {
+function getEncryptionWorker(): Worker {
   if (typeof window === 'undefined') {
     throw new Error('Worker can only be used in the browser');
   }
   
-  if (!worker) {
-    worker = new Worker(
+  if (!encryptionWorker) {
+    encryptionWorker = new Worker(
       new URL('../workers/encryption.worker.ts', import.meta.url)
     );
   }
   
-  return worker;
+  return encryptionWorker;
+}
+
+function getCoachingWorker(): Worker {
+  if (typeof window === 'undefined') {
+    throw new Error('Worker can only be used in the browser');
+  }
+  
+  if (!coachingWorker) {
+    coachingWorker = new Worker(
+      new URL('../workers/coaching.worker.ts', import.meta.url)
+    );
+  }
+  
+  return coachingWorker;
 }
 
 /**
  * Decrypt a batch of logs using the web worker
  */
 export async function decryptBatchInWorker(logs: unknown[], key: CryptoKey): Promise<DecryptedFoodLog[]> {
-  const w = getWorker();
+  const w = getEncryptionWorker();
   const keyRaw = await crypto.subtle.exportKey('raw', key);
   
   return new Promise((resolve, reject) => {
@@ -54,7 +70,7 @@ export async function decryptBatchInWorker(logs: unknown[], key: CryptoKey): Pro
  * Encrypt a single log using the web worker
  */
 export async function encryptLogInWorker(data: unknown, key: CryptoKey): Promise<{ encryptedData: string; iv: string }> {
-  const w = getWorker();
+  const w = getEncryptionWorker();
   const keyRaw = await crypto.subtle.exportKey('raw', key);
   
   return new Promise((resolve, reject) => {
@@ -77,3 +93,35 @@ export async function encryptLogInWorker(data: unknown, key: CryptoKey): Promise
     });
   });
 }
+
+/**
+ * Generate coaching insights using the web worker
+ */
+export async function generateInsightsInWorker(
+  weightData: Array<{ timestamp: number; weight: number }>,
+  intakeData: IntakePoint[],
+  targets: MacroTargets
+): Promise<CoachingInsight[]> {
+  const w = getCoachingWorker();
+
+  return new Promise((resolve, reject) => {
+    const handler = (event: MessageEvent) => {
+      const { type, payload } = event.data;
+
+      if (type === 'GENERATE_INSIGHTS_SUCCESS') {
+        w.removeEventListener('message', handler);
+        resolve(payload as CoachingInsight[]);
+      } else if (type === 'ERROR') {
+        w.removeEventListener('message', handler);
+        reject(new Error(payload));
+      }
+    };
+
+    w.addEventListener('message', handler);
+    w.postMessage({
+      type: 'GENERATE_INSIGHTS',
+      payload: { weightData, intakeData, targets }
+    });
+  });
+}
+

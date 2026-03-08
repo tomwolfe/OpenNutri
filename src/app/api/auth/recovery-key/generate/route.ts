@@ -1,13 +1,13 @@
 /**
  * POST /api/auth/recovery-key/generate
  *
- * Generate a recovery key for the authenticated user.
- * Returns BIP-39 style mnemonics that can be used to recover the vault.
+ * Generate a sharded recovery kit for the authenticated user.
+ * Returns Shamir's Secret Sharing (SSS) shards for vault recovery.
  *
  * Security:
  * - Requires authentication
- * - Mnemonics returned ONCE and never stored on server
- * - User must store mnemonics securely (paper, password manager, etc.)
+ * - Shards returned ONCE and never stored on server
+ * - User must store shards securely (Local, Cloud, Manual)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -15,7 +15,7 @@ import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { userKeys } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { generateRecoveryKit } from '@/lib/recovery-kit';
+import { generateShardedRecoveryKit } from '@/lib/recovery-kit';
 import { z } from 'zod';
 
 const requestSchema = z.object({
@@ -53,56 +53,51 @@ export async function POST(request: NextRequest) {
       .from(userKeys)
       .where(eq(userKeys.userId, userId));
 
-    if (existingKey.length > 0 && existingKey[0].recoveryKeySalt) {
-      // Recovery key already exists - user must revoke first
-      return NextResponse.json(
-        { 
-          error: 'Recovery key already exists. Revoke existing key before generating a new one.',
-          exists: true 
-        },
-        { status: 409 }
-      );
-    }
+    // Generate sharded recovery kit (2-of-3 scheme)
+    const { shards, salt, encryptedKey, iv } = await generateShardedRecoveryKit(userId, password, 3, 2);
 
-    // Generate recovery kit
-    const recoveryKit = await generateRecoveryKit(userId, password);
-
-    // Store recovery key data in database
+    // Store recovery key metadata in database
     if (existingKey.length > 0) {
-      // Update existing key record
       await db
         .update(userKeys)
         .set({
-          recoveryKeySalt: recoveryKit.salt,
-          encryptedRecoveryKey: recoveryKit.encryptedKey,
-          recoveryKeyIv: recoveryKit.iv,
+          recoveryKeySalt: salt,
+          encryptedRecoveryKey: encryptedKey,
+          recoveryKeyIv: iv,
         })
         .where(eq(userKeys.userId, userId));
     } else {
-      // Create new key record
       await db
         .insert(userKeys)
         .values({
           userId,
-          salt: recoveryKit.salt,
-          encryptedVaultKey: recoveryKit.encryptedKey,
-          encryptionIv: recoveryKit.iv,
-          recoveryKeySalt: recoveryKit.salt,
-          encryptedRecoveryKey: recoveryKit.encryptedKey,
-          recoveryKeyIv: recoveryKit.iv,
+          salt,
+          encryptedVaultKey: encryptedKey,
+          encryptionIv: iv,
+          recoveryKeySalt: salt,
+          encryptedRecoveryKey: encryptedKey,
+          recoveryKeyIv: iv,
         });
     }
 
-    // Return mnemonics ONCE - never stored on server
+    // Return shards ONCE - never stored on server
+    // Shard 1: Local (Client will store in IndexedDB)
+    // Shard 2: Cloud (Client will store in encrypted metadata)
+    // Shard 3: Manual (User will store safely)
     return NextResponse.json({
       success: true,
-      mnemonics: recoveryKit.mnemonics,
-      warning: 'Store these mnemonics securely. They will NEVER be shown again. If you lose them, your data cannot be recovered.',
+      shards: {
+        local: shards[0],
+        cloud: shards[1],
+        manual: shards[2],
+      },
+      threshold: 2,
+      warning: 'Store these shards securely. Any 2 are required to recover your vault. OpenNutri does not store these shards.',
     });
   } catch (error) {
     console.error('Recovery key generation failed:', error);
     return NextResponse.json(
-      { error: 'Failed to generate recovery key' },
+      { error: 'Failed to generate recovery shards' },
       { status: 500 }
     );
   }

@@ -110,13 +110,13 @@ export type FoodAnalysis = z.infer<typeof FoodAnalysisSchema>;
 /**
  * Analyze food image with streaming
  *
- * @param imageUrl - Public URL or data URL of the food image
+ * @param image - Public URL, data URL, or binary data (Uint8Array/ArrayBuffer) of the food image
  * @param mealTypeHint - Optional meal type hint
  * @param recentFoods - Optional array of recently eaten foods with frequency data
  * @returns AsyncIterableStream of the analysis
  */
 export function analyzeFoodImageStream(
-  imageUrl: string,
+  image: string | Uint8Array | ArrayBuffer,
   mealTypeHint?: string | null,
   recentFoods?: Array<{ name: string; freq: number }>
 ) {
@@ -149,7 +149,7 @@ export function analyzeFoodImageStream(
           },
           {
             type: 'image',
-            image: imageUrl,
+            image,
           },
         ],
       },

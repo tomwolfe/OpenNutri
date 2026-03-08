@@ -30,8 +30,10 @@ interface UseEncryptionReturn {
   vaultKey: CryptoKey | null;
   encryptLog: (log: unknown) => Promise<{ encryptedData: string; iv: string }>;
   decryptLog: (encryptedData: string, iv: string) => Promise<EncryptedFoodLog>;
-  encryptBinary: (data: ArrayBuffer | Uint8Array) => Promise<{ ciphertext: ArrayBuffer; iv: Uint8Array }>;
-  decryptBinary: (ciphertext: ArrayBuffer, iv: ArrayBuffer | Uint8Array) => Promise<ArrayBuffer>;
+  encryptBinary: (data: ArrayBuffer | Uint8Array, key?: CryptoKey) => Promise<{ ciphertext: ArrayBuffer; iv: Uint8Array }>;
+  decryptBinary: (ciphertext: ArrayBuffer, iv: ArrayBuffer | Uint8Array, key?: CryptoKey) => Promise<ArrayBuffer>;
+  generateSessionKey: () => Promise<CryptoKey>;
+  exportKeyToBase64: (key: CryptoKey) => Promise<string>;
   initializeKey: (email: string, password: string) => Promise<VaultKeyData>;
   unlockVault: (password: string, salt: string, encryptedKey: string, iv: string) => Promise<void>;
   clearKey: () => void;
@@ -143,27 +145,42 @@ export function useEncryption(): UseEncryptionReturn {
 
   // Encrypt binary data (e.g. image)
   const encryptBinaryData = useCallback(
-    async (data: ArrayBuffer | Uint8Array): Promise<{ ciphertext: ArrayBuffer; iv: Uint8Array }> => {
-      if (!key) {
-        throw new Error('Vault not unlocked. Please log in first.');
+    async (data: ArrayBuffer | Uint8Array, customKey?: CryptoKey): Promise<{ ciphertext: ArrayBuffer; iv: Uint8Array }> => {
+      const targetKey = customKey || key;
+      if (!targetKey) {
+        throw new Error('Vault not unlocked and no session key provided.');
       }
       const { encryptBinary } = await import('@/lib/encryption');
-      return encryptBinary(data, key);
+      return encryptBinary(data, targetKey);
     },
     [key]
   );
 
   // Decrypt binary data
   const decryptBinaryData = useCallback(
-    async (ciphertext: ArrayBuffer, iv: ArrayBuffer | Uint8Array): Promise<ArrayBuffer> => {
-      if (!key) {
-        throw new Error('Vault not unlocked. Please log in first.');
+    async (ciphertext: ArrayBuffer, iv: ArrayBuffer | Uint8Array, customKey?: CryptoKey): Promise<ArrayBuffer> => {
+      const targetKey = customKey || key;
+      if (!targetKey) {
+        throw new Error('Vault not unlocked and no session key provided.');
       }
       const { decryptBinary } = await import('@/lib/encryption');
-      return decryptBinary(ciphertext, iv, key);
+      return decryptBinary(ciphertext, iv, targetKey);
     },
     [key]
   );
+
+  // Generate a session key
+  const generateOneTimeKey = useCallback(async () => {
+    const { generateSessionKey } = await import('@/lib/encryption');
+    return generateSessionKey();
+  }, []);
+
+  // Export key to base64
+  const exportKeyToBase64 = useCallback(async (targetKey: CryptoKey) => {
+    const { exportKeyRaw, arrayBufferToBase64 } = await import('@/lib/encryption');
+    const raw = await exportKeyRaw(targetKey);
+    return arrayBufferToBase64(raw);
+  }, []);
 
   // Clear key from memory
   const clearKey = useCallback(() => {
@@ -180,6 +197,8 @@ export function useEncryption(): UseEncryptionReturn {
     decryptLog,
     encryptBinary: encryptBinaryData,
     decryptBinary: decryptBinaryData,
+    generateSessionKey: generateOneTimeKey,
+    exportKeyToBase64,
     initializeKey,
     unlockVault,
     clearKey,

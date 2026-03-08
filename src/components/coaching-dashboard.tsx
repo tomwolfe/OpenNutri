@@ -81,10 +81,19 @@ function InsightIcon({ type }: { type: string }) {
   return <Icon className="h-5 w-5" />;
 }
 
-export function CoachingDashboard() {
+interface CoachingDashboardProps {
+  userId?: string;
+  sharedVaultKey?: CryptoKey | null;
+  isSharedView?: boolean;
+}
+
+export function CoachingDashboard({ userId, sharedVaultKey, isSharedView }: CoachingDashboardProps) {
   const { data: session } = useSession();
+  const effectiveUserId = userId || session?.user?.id;
+  
   const { data, loading, error, refresh, applyAction, isApplyingAction } = useCoaching({
-    userId: session?.user?.id
+    userId: effectiveUserId,
+    sharedVaultKey: sharedVaultKey,
   });
   const [lastActionId, setLastActionId] = useState<string | null>(null);
 

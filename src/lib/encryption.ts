@@ -205,9 +205,30 @@ export async function getVaultKey(
 }
 
 /**
+ * Generate a random session key for AES-GCM
+ * Used for one-time encryption of images before analysis
+ * @returns CryptoKey for AES-GCM encryption
+ */
+export async function generateSessionKey(): Promise<CryptoKey> {
+  return crypto.subtle.generateKey(
+    { name: ENCRYPTION_ALGORITHM, length: KEY_LENGTH },
+    true,
+    ['encrypt', 'decrypt']
+  );
+}
+
+/**
+ * Export a CryptoKey to raw format (Uint8Array)
+ */
+export async function exportKeyRaw(key: CryptoKey): Promise<Uint8Array> {
+  const exported = await crypto.subtle.exportKey('raw', key);
+  return new Uint8Array(exported);
+}
+
+/**
  * Helper: Convert ArrayBuffer to Base64 string
  */
-function arrayBufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
+export function arrayBufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   let binary = '';
   for (let i = 0; i < bytes.byteLength; i++) {

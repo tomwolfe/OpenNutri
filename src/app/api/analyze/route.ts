@@ -2,12 +2,10 @@
  * Food Image Analysis Streaming Route
  *
  * Streams AI vision analysis to the client using Vercel AI SDK.
- * Expects image to be already uploaded to Vercel Blob (or Base64 data URI).
- *
- * AI usage is logged BEFORE streaming to ensure accurate tracking.
- * NO server-side USDA enrichment - this is done client-side for true streaming.
+ * Supports multipart/form-data (binary) and application/json (base64/text).
  *
  * PURGES THE IMAGE IMMEDIATELY AFTER ANALYSIS for Zero-Knowledge security.
+ * Binary data and Base64 never touch storage - they stay in ephemeral memory.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -24,14 +22,14 @@ export const maxDuration = 60;
 /**
  * POST /api/analyze
  *
- * Accepts imageUrl and mealTypeHint, streams AI analysis back to client.
- * Returns the stream IMMEDIATELY without buffering or server-side enrichment.
- * AI usage is logged before streaming (counts all API executions).
- *
- * PURGES THE IMAGE IMMEDIATELY AFTER ANALYSIS for Zero-Knowledge security.
+ * Accepts imageUrl (blob URL or base64) or binary image data, and mealTypeHint.
+ * Streams AI analysis back to client immediately.
  */
 export async function POST(request: NextRequest) {
   let imageUrlToDelete: string | null = null;
+  let imageSource: string | Uint8Array | ArrayBuffer | null = null;
+  let textInput: string | null = null;
+  let mealTypeHint: string | null = null;
 
   try {
     // Check authentication
@@ -42,7 +40,7 @@ export async function POST(request: NextRequest) {
 
     const userId = session.user.id;
 
-    // Check AI scan rate limit BEFORE starting analysis
+    // Check AI scan rate limit
     const scanCount = await getUserDailyAiScanCount(userId);
     const dailyLimit = parseInt(process.env.AI_SCAN_LIMIT_FREE || '5', 10);
 
@@ -53,71 +51,129 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Parse request body
-    const { imageUrl, text, mealTypeHint } = await request.json();
+    // Determine request type
+    const contentType = request.headers.get('content-type') || '';
 
-    if (!imageUrl && !text) {
+    let isEncrypted = false;
+    let sessionKeyBase64: string | null = null;
+    let ivBase64: string | null = null;
+
+    if (contentType.includes('multipart/form-data')) {
+      const formData = await request.formData();
+      const imageFile = formData.get('image') as File | null;
+      textInput = formData.get('text') as string | null;
+      mealTypeHint = formData.get('mealTypeHint') as string | null;
+      isEncrypted = formData.get('isEncrypted') === 'true';
+      sessionKeyBase64 = formData.get('sessionKey') as string | null;
+      ivBase64 = formData.get('iv') as string | null;
+
+      if (imageFile) {
+        imageSource = await imageFile.arrayBuffer();
+      }
+    } else {
+      // Default to JSON
+      const body = await request.json();
+      const { imageUrl, text, mealTypeHint: hint, isEncrypted: enc, sessionKey: key, iv } = body;
+      
+      textInput = text;
+      mealTypeHint = hint;
+      isEncrypted = enc;
+      sessionKeyBase64 = key;
+      ivBase64 = iv;
+
+      if (imageUrl) {
+        if (imageUrl.startsWith('data:')) {
+          imageSource = imageUrl;
+        } else {
+          imageSource = imageUrl;
+          imageUrlToDelete = imageUrl;
+        }
+      }
+    }
+
+    // Decrypt if necessary
+    if (isEncrypted && imageSource && sessionKeyBase64 && ivBase64) {
+      try {
+        const ciphertext = typeof imageSource === 'string' 
+          ? Buffer.from(imageSource.split(',')[1] || imageSource, 'base64')
+          : Buffer.from(imageSource);
+        
+        const keyBuffer = Buffer.from(sessionKeyBase64, 'base64');
+        const ivBuffer = Buffer.from(ivBase64, 'base64');
+
+        // Import the session key
+        const cryptoKey = await crypto.subtle.importKey(
+          'raw',
+          keyBuffer,
+          { name: 'AES-GCM' },
+          false,
+          ['decrypt']
+        );
+
+        // Decrypt the image
+        const decrypted = await crypto.subtle.decrypt(
+          { name: 'AES-GCM', iv: ivBuffer },
+          cryptoKey,
+          ciphertext
+        );
+
+        imageSource = new Uint8Array(decrypted);
+        console.log('Successfully decrypted image in memory for analysis');
+      } catch (err) {
+        console.error('Decryption failed:', err);
+        return NextResponse.json({ error: 'Failed to decrypt image' }, { status: 400 });
+      }
+    }
+
+    if (!imageSource && !textInput) {
       return NextResponse.json(
-        { error: 'Image URL or text is required' },
+        { error: 'Image or text input is required' },
         { status: 400 }
       );
     }
 
-    // Track image for deletion after analysis (only if it's a Vercel Blob URL, not Base64)
-    // Base64 images are held in memory and automatically discarded after function execution
-    if (imageUrl && !imageUrl.startsWith('data:')) {
-      imageUrlToDelete = imageUrl;
-    }
-
-    // Fetch recent foods for context (last 7 days, top 20 most frequent)
+    // Fetch recent foods for context
     const recentFoods = await fetchRecentFoods(userId);
 
-    // Log AI usage BEFORE streaming (counts all API executions, not just successful ones)
+    // Log AI usage
     await db.insert(aiUsage).values({ userId });
 
-    // Call appropriate GLM API (Vision or Text)
+    // Call AI service
     let result;
-    if (imageUrl) {
-      result = await analyzeFoodImageStream(imageUrl, mealTypeHint, recentFoods);
+    if (imageSource) {
+      result = await analyzeFoodImageStream(imageSource, mealTypeHint, recentFoods);
+    } else if (textInput) {
+      result = await analyzeFoodTextStream(textInput, mealTypeHint, recentFoods);
     } else {
-      result = await analyzeFoodTextStream(text, mealTypeHint, recentFoods);
+      throw new Error('No input provided');
     }
 
-    // Return the stream IMMEDIATELY - do not await or parse it here!
-    // This enables true real-time streaming to the client
+    // Return the stream immediately
     return result.toTextStreamResponse();
   } catch (error) {
     console.error('Analysis error:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to process image' },
+      { error: error instanceof Error ? error.message : 'Failed to process request' },
       { status: 500 }
     );
   } finally {
-    // PURGE the unencrypted image from Vercel Blob storage (if applicable)
-    // Base64 images never touch storage - they're held in memory and automatically discarded
-    // This ensures Zero-Knowledge: plaintext images never persist on our servers
+    // PURGE external image if one was used
     if (imageUrlToDelete) {
       try {
         await deleteFoodImage(imageUrlToDelete);
-        console.log(`Successfully purged analysis image: ${imageUrlToDelete}`);
       } catch (err) {
-        console.error('Failed to purge analysis image from Blob storage:', err);
+        console.error('Failed to purge analysis image:', err);
       }
     }
   }
 }
 
 /**
- * Fetch user's most frequently eaten foods in the last 7 days with frequency data
+ * Fetch user's most frequently eaten foods in the last 7 days
  */
 async function fetchRecentFoods(
   userId: string
-): Promise<
-  Array<{
-    name: string;
-    freq: number;
-  }>
-> {
+): Promise<Array<{ name: string; freq: number }>> {
   try {
     const { foodLogs, logItems } = await import('@/db/schema');
     const { eq, desc } = await import('drizzle-orm');
@@ -125,34 +181,26 @@ async function fetchRecentFoods(
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    // Fetch food items from the last 7 days
     const items = await db
-      .select({
-        foodName: logItems.foodName,
-      })
+      .select({ foodName: logItems.foodName })
       .from(logItems)
       .innerJoin(foodLogs, eq(logItems.logId, foodLogs.id))
       .where(eq(foodLogs.userId, userId))
       .orderBy(desc(foodLogs.timestamp))
       .limit(100);
 
-    // Aggregate by food name: calculate frequency
     const foodMap = new Map<string, number>();
-
     for (const item of items) {
       if (!item.foodName || item.foodName.trim().length === 0) continue;
-
       const count = foodMap.get(item.foodName) || 0;
       foodMap.set(item.foodName, count + 1);
     }
 
-    // Convert to array with frequency
     const foods = Array.from(foodMap.entries()).map(([name, freq]) => ({
       name,
       freq,
     }));
 
-    // Sort by frequency and return top 20 (increased from 5 for better context)
     foods.sort((a, b) => b.freq - a.freq);
     return foods.slice(0, 20);
   } catch (error) {

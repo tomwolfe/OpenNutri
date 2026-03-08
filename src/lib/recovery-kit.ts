@@ -22,8 +22,49 @@ import {
   decrypt,
   generateSalt,
 } from './encryption';
+import { splitMnemonic, combineShards } from './sss';
 
 const MNEMONIC_COUNT = 24; // 24 words for 256-bit security
+
+/**
+ * Generate a sharded recovery kit using Shamir's Secret Sharing
+ */
+export async function generateShardedRecoveryKit(
+  email: string,
+  password: string,
+  totalShards: number = 3,
+  threshold: number = 2
+): Promise<{
+  shards: string[];
+  salt: string;
+  encryptedKey: string;
+  iv: string;
+}> {
+  const kit = await generateRecoveryKit(email, password);
+  const shards = splitMnemonic(kit.mnemonics, totalShards, threshold);
+  
+  return {
+    shards,
+    salt: kit.salt,
+    encryptedKey: kit.encryptedKey,
+    iv: kit.iv,
+  };
+}
+
+/**
+ * Recover vault key from shards
+ */
+export async function recoverVaultKeyFromShards(
+  shards: string[],
+  password: string
+): Promise<{
+  salt: string;
+  encryptedKey: string;
+  iv: string;
+}> {
+  const mnemonic = combineShards(shards);
+  return recoverVaultKeyFromMnemonic(mnemonic, password);
+}
 
 /**
  * Convert a master key (Uint8Array) to BIP-39 mnemonic phrase

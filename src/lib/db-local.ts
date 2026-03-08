@@ -28,6 +28,7 @@ export interface LocalFoodLog {
   isVerified: boolean;
   imageUrl: string | null;
   notes: string | null;
+  yjsData?: string | null; // Base64 encoded Yjs update
   encryptedData: string;
   encryptionIv: string;
   encryptionSalt: string | null;
@@ -58,6 +59,7 @@ export interface LocalUserTarget {
   carbTarget: number | null;
   fatTarget: number | null;
   weightRecord: number | null;
+  yjsData?: string | null; // Base64 encoded Yjs update
   version: number;
   deviceId: string | null;
   synced: boolean;
@@ -84,7 +86,7 @@ export class OpenNutriDB extends Dexie {
 
   constructor() {
     super('OpenNutriDB');
-    this.version(2).stores({
+    this.version(3).stores({
       pendingImages: 'id, timestamp',
       foodLogs: 'id, userId, timestamp, synced, updatedAt',
       decryptedLogs: 'id, userId, timestamp',

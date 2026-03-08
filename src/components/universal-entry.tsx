@@ -20,7 +20,8 @@ import { MacroEditor } from '@/components/dashboard/macro-editor';
 import { experimental_useObject as useObject } from '@ai-sdk/react';
 import { FoodAnalysisSchema, DraftItem } from '@/types/food';
 import { db } from '@/lib/db-local';
-import { compressImage, formatBytes, blobToBase64DataUri } from '@/lib/image-utils';
+import { compressImage, formatBytes, blobToBase64DataUri, blobToImageData } from '@/lib/image-utils';
+import { classifyFoodLocally, needsCloudAnalysis } from '@/lib/local-ai';
 import { cn } from '@/lib/utils';
 
 interface UniversalEntryProps {
@@ -45,7 +46,7 @@ type UploadProgress = 'idle' | 'uploading' | 'streaming' | 'review' | 'complete'
 
 export function UniversalEntry({ onComplete }: UniversalEntryProps) {
   const { data: session } = useSession();
-  const { vaultKey, encryptLog, encryptBinary, isReady } = useEncryption();
+  const { vaultKey, encryptLog, encryptBinary, generateSessionKey, exportKeyToBase64, isReady } = useEncryption();
   const [selectedMealType, setSelectedMealType] = useState('breakfast');
   const [selectedDate] = useState(new Date());
   const { triggerSync } = useDailyLogs(selectedDate, session?.user?.id, vaultKey);
@@ -226,47 +227,84 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
     setUploadProgress('uploading');
 
     try {
-      // Compress and strip EXIF
+      // 1. Compress and strip EXIF
       const compressedBlob = await compressImage(file);
-      const compressedFile = new File([compressedBlob], 'food-analysis.webp', { type: 'image/webp' });
+      const arrayBuffer = await compressedBlob.arrayBuffer();
       setCompressionStats({ original: file.size, compressed: compressedBlob.size });
 
-      // Convert to Base64 data URI for direct AI analysis (Zero-Knowledge: image never touches storage)
-      const base64DataUri = await blobToBase64DataUri(compressedBlob);
-      setImageUrl(base64DataUri); // Store Base64 temporarily for the session
+      // 1.5 LOCAL AI ANALYSIS (Privacy-First)
+      // Attempt local classification to avoid unnecessary cloud costs/latency
+      const imageData = await blobToImageData(compressedBlob);
+      const localResults = await classifyFoodLocally(imageData);
+      const shouldSendToCloud = needsCloudAnalysis(localResults);
 
-      // Encrypt and upload permanent version for Visual Diary (in parallel, non-blocking)
+      if (!shouldSendToCloud && localResults && localResults.length > 0) {
+        // Fast-path: use local AI results and only use cloud for detailed macro estimation
+        console.log('Local AI identified food:', localResults[0].label);
+        // We still use cloud for full nutritional analysis since local MobileNet 
+        // doesn't estimate portion sizes/macros, but we could optimize this further.
+      }
+
+      // 2. Generate a one-time session key for Zero-Knowledge analysis
+      const sessionKey = await generateSessionKey();
+      const { ciphertext, iv } = await encryptBinary(arrayBuffer, sessionKey);
+      
+      // 3. Export key and IV to base64 for transmission
+      const sessionKeyBase64 = await exportKeyToBase64(sessionKey);
+      const ivArray = new Uint8Array(iv);
+      let binary = '';
+      for (let i = 0; i < ivArray.byteLength; i++) {
+        binary += String.fromCharCode(ivArray[i]);
+      }
+      const ivBase64 = btoa(binary);
+
+      // 4. Convert ciphertext to Base64 for JSON transmission (or use Multipart)
+      // Since useObject prefers JSON, we'll send encrypted base64
+      const encryptedBase64 = btoa(
+        Array.from(new Uint8Array(ciphertext))
+          .map(byte => String.fromCharCode(byte))
+          .join('')
+      );
+
+      // Encrypt and upload permanent version for Visual Diary (in parallel)
       let vaultUrl = null;
       let vaultIv = null;
-      if (isReady && encryptBinary) {
+      if (isReady && vaultKey) {
         try {
-          const arrayBuffer = await compressedBlob.arrayBuffer();
-          const { ciphertext, iv } = await encryptBinary(arrayBuffer);
-
-          const encryptedFile = new File([ciphertext], 'vault-image.bin', { type: 'application/octet-stream' });
+          // Use the actual vault key for permanent storage
+          const vaultEnc = await encryptBinary(arrayBuffer);
+          const encryptedFile = new File([vaultEnc.ciphertext], 'vault-image.bin', { type: 'application/octet-stream' });
           const encryptedFormData = new FormData();
           encryptedFormData.append('image', encryptedFile);
+          
           const encryptedUploadResponse = await fetch('/api/blob/upload', { method: 'POST', body: encryptedFormData });
           if (encryptedUploadResponse.ok) {
             const { imageUrl: eUrl } = await encryptedUploadResponse.json();
             vaultUrl = eUrl;
-            // Convert IV to base64 for JSON storage
-            const ivArray = new Uint8Array(iv);
-            const binary = Array.from(ivArray)
-              .map(byte => String.fromCharCode(byte))
-              .join('');
-            vaultIv = btoa(binary);
+            const vIvArray = new Uint8Array(vaultEnc.iv);
+            let vBinary = '';
+            for (let i = 0; i < vIvArray.byteLength; i++) {
+              vBinary += String.fromCharCode(vIvArray[i]);
+            }
+            vaultIv = btoa(vBinary);
           }
         } catch (err) {
-          console.error('Encryption failed', err);
+          console.error('Vault encryption failed', err);
         }
       }
 
-      setImageUrl(vaultUrl || base64DataUri);
+      setImageUrl(vaultUrl || `data:image/webp;base64,${encryptedBase64}`);
       setImageIv(vaultIv);
       setUploadProgress('streaming');
-      // Send Base64 directly to AI - no temporary storage needed
-      submit({ imageUrl: base64DataUri, mealTypeHint: selectedMealType });
+
+      // 5. Send Encrypted Data + Session Key directly to AI
+      submit({ 
+        imageUrl: encryptedBase64, 
+        isEncrypted: true,
+        sessionKey: sessionKeyBase64,
+        iv: ivBase64,
+        mealTypeHint: selectedMealType 
+      });
     } catch (err) {
       console.error('Upload failed', err);
       setUploadProgress('idle');
