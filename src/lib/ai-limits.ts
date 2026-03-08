@@ -17,7 +17,7 @@ import { eq, and, gte, sql } from 'drizzle-orm';
  */
 export async function getUserDailyAiScanCount(userId: string): Promise<number> {
   const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  today.setUTCHours(0, 0, 0, 0); // Strict UTC midnight reset
 
   // Count ai_usage entries (API executions)
   const result = await db

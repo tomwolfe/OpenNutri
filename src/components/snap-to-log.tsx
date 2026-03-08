@@ -242,6 +242,15 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
         throw new Error(data.error || 'Failed to save log');
       }
 
+      // Cleanup: Delete the temporary image from Vercel Blob
+      if (imageUrl) {
+        fetch('/api/blob/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageUrl }),
+        }).catch((err) => console.error('Failed to cleanup blob:', err));
+      }
+
       setUploadProgress('complete');
       onDraftSaved?.();
       onComplete?.({
@@ -261,7 +270,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
     } finally {
       setSaveInProgress(false);
     }
-  }, [draftItems, selectedMealType, onComplete, onError, onDraftSaved]);
+  }, [draftItems, selectedMealType, onComplete, onError, onDraftSaved, imageUrl]);
 
   // Clear selection and reset
   const handleClear = useCallback(async () => {
