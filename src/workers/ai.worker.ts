@@ -1,51 +1,40 @@
 /**
- * Local AI Web Worker
+ * Local AI Web Worker (v3)
  * 
- * Handles Transformers.js inference in a background thread to keep UI responsive
- * and isolate native module dependencies.
+ * Handles Transformers.js v3 inference with WebGPU support.
+ * Offloads heavy classification and embedding generation to the browser's GPU.
  */
 
-import { pipeline, env } from '@xenova/transformers';
+import { pipeline, env } from '@huggingface/transformers';
 
-// Configure environment for worker/browser
+// Configure environment for WebGPU and browser
 env.allowLocalModels = false;
 env.useBrowserCache = true;
 
-let classifier: unknown = null;
+// Force WebGPU if available
+if (navigator.gpu) {
+  env.backends.onnx.wasm.proxy = false;
+}
 
-/**
- * Local Macro Database for Common Foods
- * (Averages for standard portion sizes)
- */
-const FOOD_MACROS: Record<string, { calories: number; protein: number; carbs: number; fat: number }> = {
-  'apple': { calories: 95, protein: 0.5, carbs: 25, fat: 0.3 },
-  'banana': { calories: 105, protein: 1.3, carbs: 27, fat: 0.4 },
-  'orange': { calories: 62, protein: 1.2, carbs: 15, fat: 0.2 },
-  'chicken breast': { calories: 165, protein: 31, carbs: 0, fat: 3.6 }, // 100g
-  'egg, boiled': { calories: 78, protein: 6.3, carbs: 0.6, fat: 5.3 },
-  'broccoli': { calories: 34, protein: 2.8, carbs: 7, fat: 0.4 }, // 100g
-  'pizza': { calories: 285, protein: 12, carbs: 36, fat: 10 }, // 1 slice
-  'hamburger': { calories: 250, protein: 12, carbs: 31, fat: 9 },
-  'coffee': { calories: 2, protein: 0.3, carbs: 0, fat: 0 },
-  'avocado': { calories: 160, protein: 2, carbs: 9, fat: 15 }, // 100g
-  'rice, white, cooked': { calories: 130, protein: 2.7, carbs: 28, fat: 0.3 }, // 100g
-  'yogurt, plain': { calories: 59, protein: 10, carbs: 3.6, fat: 0.4 }, // 100g
-  'almonds': { calories: 579, protein: 21, carbs: 22, fat: 49 }, // 100g
-  'salmon': { calories: 208, protein: 20, carbs: 0, fat: 13 }, // 100g
-  'sweet potato': { calories: 86, protein: 1.6, carbs: 20, fat: 0.1 }, // 100g
-  'blueberries': { calories: 57, protein: 0.7, carbs: 14, fat: 0.3 }, // 100g
-  'steak': { calories: 252, protein: 27, carbs: 0, fat: 15 }, // 100g
-  'bread, white': { calories: 265, protein: 9, carbs: 49, fat: 3.2 }, // 100g
-  'pasta, cooked': { calories: 131, protein: 5, carbs: 25, fat: 1.1 }, // 100g
-};
+let classifier: any = null;
 
-// Initialize the model
+// Initialize the model with WebGPU device if possible
 async function getClassifier() {
   if (classifier) return classifier;
   
-  // Use a specialized food model if possible, but MobileNet is okay for general categories
-  classifier = await pipeline('image-classification', 'Xenova/mobilenet_v1_1.0_224_quantized');
-  return classifier;
+  try {
+    // MobileNet v2 is lightweight and supports WebGPU well
+    classifier = await pipeline('image-classification', 'onnx-community/mobilenetv2-1.0-224', {
+      device: navigator.gpu ? 'webgpu' : 'wasm',
+    });
+    return classifier;
+  } catch (err) {
+    console.warn('WebGPU initialization failed, falling back to WASM', err);
+    classifier = await pipeline('image-classification', 'onnx-community/mobilenetv2-1.0-224', {
+      device: 'wasm',
+    });
+    return classifier;
+  }
 }
 
 /**

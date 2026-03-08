@@ -96,8 +96,12 @@ self.onmessage = async (event: MessageEvent) => {
         .filter(target => !target.synced && target.userId === userId)
         .toArray();
 
+      const unsyncedRecipes = await db.userRecipes
+        .filter(recipe => !recipe.synced && recipe.userId === userId)
+        .toArray();
+
       let pushed = 0;
-      if (unsyncedLogs.length > 0 || unsyncedTargets.length > 0) {
+      if (unsyncedLogs.length > 0 || unsyncedTargets.length > 0 || unsyncedRecipes.length > 0) {
         const pushPayload = {
           logs: unsyncedLogs.map(log => ({
             ...log,
@@ -109,6 +113,11 @@ self.onmessage = async (event: MessageEvent) => {
             ...target,
             deviceId,
             version: (target.version || 0) + 1,
+          })),
+          recipes: unsyncedRecipes.map(recipe => ({
+            ...recipe,
+            deviceId,
+            version: (recipe.version || 0) + 1,
           })),
         };
 
@@ -133,7 +142,18 @@ self.onmessage = async (event: MessageEvent) => {
               pushed++;
             }
           }
-          // Same for targets... (omitted for brevity in this step, but should be complete)
+          
+          for (const recipe of unsyncedRecipes) {
+            const hasConflict = serverConflicts.some((c) => c.type === 'recipe' && c.id === recipe.id);
+            if (!hasConflict) {
+              await db.userRecipes.update(recipe.id, {
+                synced: true,
+                version: (recipe.version || 0) + 1,
+                deviceId,
+              });
+              pushed++;
+            }
+          }
         }
       }
 
@@ -143,8 +163,10 @@ self.onmessage = async (event: MessageEvent) => {
       const data = await pullRes.json();
       
       const serverLogs = (data.logs || []) as LocalFoodLog[];
+      const serverRecipes = (data.recipes || []) as any[];
       let pulled = 0;
 
+      // Sync Logs
       for (const sLog of serverLogs) {
         if (sLog.deviceId === deviceId) continue;
         const localLog = await db.foodLogs.get(sLog.id);
@@ -163,6 +185,21 @@ self.onmessage = async (event: MessageEvent) => {
           version: Math.max(localLog?.version || 0, sLog.version || 0) + 1,
         } as LocalFoodLog);
         pulled++;
+      }
+
+      // Sync Recipes (LWW - Last Write Wins)
+      for (const sRecipe of serverRecipes) {
+        if (sRecipe.deviceId === deviceId) continue;
+        const localRecipe = await db.userRecipes.get(sRecipe.id);
+        
+        if (!localRecipe || new Date(sRecipe.updatedAt) > new Date(localRecipe.updatedAt)) {
+          await db.userRecipes.put({
+            ...sRecipe,
+            synced: true,
+            updatedAt: sRecipe.updatedAt,
+          });
+          pulled++;
+        }
       }
 
       self.postMessage({

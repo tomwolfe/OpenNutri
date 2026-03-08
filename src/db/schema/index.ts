@@ -123,13 +123,40 @@ export const logItems = pgTable('log_items', {
 }));
 
 // ============================================
+// User Recipes Table (custom meals/food bundles)
+// ============================================
+export const userRecipes = pgTable('user_recipes', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: text('user_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .notNull(),
+  name: text('name').notNull(), // Encrypted or plaintext? Let's keep searchable name plaintext but details encrypted.
+  description: text('description'),
+  encryptedData: text('encrypted_data').notNull(), // Encrypted recipe items (AES-GCM)
+  encryptionIv: text('encryption_iv').notNull(), // IV for decryption
+  version: integer('version').default(1).notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  userIdIdx: index('user_recipes_user_id_idx').on(table.userId),
+  updatedAtIdx: index('user_recipes_updated_at_idx').on(table.updatedAt),
+}));
+
+// ============================================
 // Table Relations (for Drizzle queries)
 // ============================================
 
 export const usersRelations = relations(users, ({ many }) => ({
   userTargets: many(userTargets),
   foodLogs: many(foodLogs),
+  userRecipes: many(userRecipes),
   aiUsage: many(aiUsage),
+}));
+
+export const userRecipesRelations = relations(userRecipes, ({ one }) => ({
+  user: one(users, {
+    fields: [userRecipes.userId],
+    references: [users.id],
+  }),
 }));
 
 export const aiUsageRelations = relations(aiUsage, ({ one }) => ({

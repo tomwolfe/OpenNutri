@@ -33,6 +33,7 @@ import Image from 'next/image';
 import { Calendar } from '@/components/ui/calendar';
 import { Loader2, LogOut, Plus, Utensils, Settings, Image as ImageIcon } from 'lucide-react';
 import { EncryptedImage } from '@/components/encrypted-image';
+import { db } from '@/lib/db-local';
 
 const MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'];
 
@@ -56,6 +57,15 @@ export default function DashboardPage() {
   const [snapDialogOpen, setSnapDialogOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [checkingOnboarding, setCheckingOnboarding] = useState(true);
+
+  // Cleanup old decrypted images on initialization
+  useEffect(() => {
+    if (status === 'authenticated') {
+      db.cleanupDecryptedImages().catch(err => 
+        console.warn('Failed to cleanup decrypted images:', err)
+      );
+    }
+  }, [status]);
 
   // Trigger background sync when authenticated
   useEffect(() => {

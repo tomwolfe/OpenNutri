@@ -77,22 +77,65 @@ export interface UserFavorite {
   lastUsed: Date;
 }
 
+export interface DecryptedImage {
+  id: string; // imageUrl
+  blob: Blob;
+  timestamp: number;
+}
+
+export interface LocalUserRecipe {
+  id: string;
+  userId: string;
+  name: string;
+  description?: string;
+  encryptedData: string;
+  encryptionIv: string;
+  updatedAt: string;
+  synced: 0 | 1;
+}
+
 export class OpenNutriDB extends Dexie {
   pendingImages!: Table<PendingImage>;
   foodLogs!: Table<LocalFoodLog>;
   decryptedLogs!: Table<DecryptedFoodLog>;
   userTargets!: Table<LocalUserTarget>;
   userFavorites!: Table<UserFavorite>;
+  decryptedImages!: Table<DecryptedImage>;
+  userRecipes!: Table<LocalUserRecipe>;
 
   constructor() {
     super('OpenNutriDB');
-    this.version(3).stores({
+    this.version(5).stores({
       pendingImages: 'id, timestamp',
       foodLogs: 'id, userId, timestamp, synced, updatedAt',
       decryptedLogs: 'id, userId, timestamp',
       userTargets: '[userId+date], userId, date, synced, updatedAt',
       userFavorites: 'id, foodName, frequency, lastUsed',
+      decryptedImages: 'id, timestamp',
+      userRecipes: 'id, userId, name, synced, updatedAt',
     });
+  }
+
+  /**
+   * Cleanup Decrypted Images
+   * 
+   * Removes cached decrypted blobs that are older than the specified TTL.
+   * Default TTL is 1 hour (3600000ms).
+   */
+  async cleanupDecryptedImages(ttlMs: number = 3600000) {
+    const cutoff = Date.now() - ttlMs;
+    try {
+      const oldImages = await this.decryptedImages
+        .where('timestamp')
+        .below(cutoff)
+        .delete();
+      
+      if (oldImages > 0) {
+        console.log(`Cleaned up ${oldImages} old decrypted images from cache.`);
+      }
+    } catch (err) {
+      console.error('Failed to cleanup decrypted images:', err);
+    }
   }
 }
 

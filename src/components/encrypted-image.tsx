@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useEncryption } from '@/hooks/useEncryption';
 import Image from 'next/image';
 import { Loader2, AlertCircle } from 'lucide-react';
+import { db } from '@/lib/db-local';
 
 interface EncryptedImageProps {
   imageUrl: string;
@@ -19,6 +20,7 @@ interface EncryptedImageProps {
  * 
  * Fetches and decrypts images client-side.
  * Used for the "Visual Diary" feature while maintaining Zero-Knowledge.
+ * Uses IndexedDB to cache decrypted blobs for performance.
  */
 export function EncryptedImage({ imageUrl, imageIv, alt, fill, className, sizes }: EncryptedImageProps) {
   const [decryptedUrl, setDecryptedUrl] = useState<string | null>(null);
@@ -39,6 +41,16 @@ export function EncryptedImage({ imageUrl, imageIv, alt, fill, className, sizes 
         setIsLoading(true);
         setError(null);
         
+        // 1. Check Dexie Cache
+        const cached = await db.decryptedImages.get(imageUrl);
+        if (cached) {
+          objectUrl = URL.createObjectURL(cached.blob);
+          setDecryptedUrl(objectUrl);
+          setIsLoading(false);
+          return;
+        }
+
+        // 2. Fetch encrypted image
         const response = await fetch(imageUrl);
         if (!response.ok) throw new Error('Failed to fetch image');
         const ciphertext = await response.arrayBuffer();
@@ -50,9 +62,21 @@ export function EncryptedImage({ imageUrl, imageIv, alt, fill, className, sizes 
           ivArr[i] = binaryIv.charCodeAt(i);
         }
         
+        // 3. Decrypt
         const decrypted = await decryptBinary(ciphertext, ivArr);
-        
         const blob = new Blob([decrypted], { type: 'image/webp' });
+
+        // 4. Cache Decrypted Blob
+        try {
+          await db.decryptedImages.put({
+            id: imageUrl,
+            blob,
+            timestamp: Date.now()
+          });
+        } catch (cacheErr) {
+          console.warn('Failed to cache decrypted image', cacheErr);
+        }
+        
         objectUrl = URL.createObjectURL(blob);
         setDecryptedUrl(objectUrl);
       } catch (err) {
