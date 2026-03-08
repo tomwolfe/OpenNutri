@@ -40,6 +40,11 @@ export const users = pgTable('users', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   subscriptionTier: text('subscription_tier').default('free'),
   weightGoal: text('weight_goal').default('maintain'), // lose, maintain, gain
+  // Profile fields for TDEE calculation
+  birthDate: date('birth_date'),
+  gender: text('gender'), // male, female, other
+  heightCm: integer('height_cm'),
+  activityLevel: text('activity_level'), // sedentary, light, moderate, active, very_active
 });
 
 // ============================================

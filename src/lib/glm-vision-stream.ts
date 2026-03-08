@@ -39,11 +39,13 @@ const FoodAnalysisSchema = z.object({
  *
  * @param imageUrl - Public URL of the food image
  * @param mealTypeHint - Optional meal type hint
+ * @param recentFoods - Optional array of recently eaten foods for context
  * @returns AsyncIterableStream of the analysis
  */
 export function analyzeFoodImageStream(
   imageUrl: string,
-  mealTypeHint?: string | null
+  mealTypeHint?: string | null,
+  recentFoods?: string[]
 ) {
   const apiKey = process.env.GLM_API_KEY;
 
@@ -57,20 +59,26 @@ export function analyzeFoodImageStream(
       ? `The user is currently eating ${mealTypeHint}. Focus on foods typical for this meal (e.g., eggs, toast, cereal for breakfast; sandwich, salad for lunch; pasta, rice, meat for dinner).`
       : '';
 
+  // Build recent foods context
+  const recentFoodsContext =
+    recentFoods && recentFoods.length > 0
+      ? `The user frequently eats: ${recentFoods.join(', ')}. Use this context to bias your identification if the image is ambiguous or contains familiar ingredients.`
+      : '';
+
   return streamObject({
     model: glm('glm-4v-flash'),
     schema: FoodAnalysisSchema,
     messages: [
       {
         role: 'system',
-        content: `You are a nutritionist AI. Analyze the food image. Return ONLY valid JSON matching the schema. No markdown. No explanations. If unsure, estimate conservatively. Set confidence < 0.5 if unclear. ${mealTypeContext}`,
+        content: `You are a nutritionist AI. Analyze the food image. Return ONLY valid JSON matching the schema. No markdown. No explanations. If unsure, estimate conservatively. Set confidence < 0.5 if unclear. ${mealTypeContext} ${recentFoodsContext}`,
       },
       {
         role: 'user',
         content: [
           {
             type: 'text',
-            text: `Analyze this food image and provide nutritional information for each visible food item. ${mealTypeContext ? 'Consider the meal type context when identifying foods.' : ''}`,
+            text: `Analyze this food image and provide nutritional information for each visible food item. ${mealTypeContext ? 'Consider the meal type context when identifying foods.' : ''} ${recentFoodsContext ? 'Consider the user\'s eating habits when making identifications.' : ''}`,
           },
           {
             type: 'image',

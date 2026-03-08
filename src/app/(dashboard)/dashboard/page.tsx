@@ -33,7 +33,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Calendar } from '@/components/ui/calendar';
-import { Loader2, LogOut, Plus, Utensils, Camera } from 'lucide-react';
+import { Loader2, LogOut, Plus, Utensils, Camera, Settings } from 'lucide-react';
 
 interface LogItem {
   id: string;
@@ -139,6 +139,10 @@ export default function DashboardPage() {
             <h1 className="text-xl font-bold">OpenNutri</h1>
           </div>
           <div className="flex items-center gap-4">
+            <Button variant="ghost" size="sm" onClick={() => router.push('/settings')}>
+              <Settings className="mr-2 h-4 w-4" />
+              Settings
+            </Button>
             <span className="text-sm text-muted-foreground">
               {session?.user?.email}
             </span>

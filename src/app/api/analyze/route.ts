@@ -54,8 +54,11 @@ export async function POST(request: NextRequest) {
     // Log AI usage BEFORE starting analysis
     await db.insert(aiUsage).values({ userId });
 
+    // Fetch recent foods for context (last 7 days, top 5 most frequent)
+    const recentFoods = await fetchRecentFoods(userId);
+
     // Call GLM Vision API with streaming
-    const result = await analyzeFoodImageStream(imageUrl, mealTypeHint);
+    const result = await analyzeFoodImageStream(imageUrl, mealTypeHint, recentFoods);
 
     // Return using AI SDK's native streaming response
     return result.toTextStreamResponse();
@@ -65,5 +68,45 @@ export async function POST(request: NextRequest) {
       { error: error instanceof Error ? error.message : 'Failed to process image' },
       { status: 500 }
     );
+  }
+}
+
+/**
+ * Fetch user's most frequently eaten foods in the last 7 days
+ */
+async function fetchRecentFoods(userId: string): Promise<string[]> {
+  try {
+    const { foodLogs, logItems } = await import('@/db/schema');
+    const { eq, desc } = await import('drizzle-orm');
+
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const items = await db
+      .select({
+        foodName: logItems.foodName,
+      })
+      .from(logItems)
+      .innerJoin(foodLogs, eq(logItems.logId, foodLogs.id))
+      .where(
+        eq(foodLogs.userId, userId)
+      )
+      .orderBy(desc(foodLogs.timestamp))
+      .limit(20);
+
+    // Get unique food names, filter out empty/null
+    const uniqueFoods = Array.from(
+      new Set(
+        items
+          .map((item) => item.foodName)
+          .filter((name): name is string => !!name && name.trim().length > 0)
+      )
+    );
+
+    // Return top 5
+    return uniqueFoods.slice(0, 5);
+  } catch (error) {
+    console.error('Failed to fetch recent foods:', error);
+    return [];
   }
 }

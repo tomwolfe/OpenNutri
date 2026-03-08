@@ -13,7 +13,7 @@
 
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import Image from 'next/image';
 import { Camera, Upload, X, CheckCircle, AlertCircle, Loader2, Edit2, Save } from 'lucide-react';
 import { experimental_useObject as useObject } from '@ai-sdk/react';
@@ -84,6 +84,22 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
   const [isEnhancingUsda, setIsEnhancingUsda] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Cleanup: Delete blob image if component unmounts without saving
+  useEffect(() => {
+    return () => {
+      // Only cleanup if we have an image that wasn't saved
+      if (imageUrl && uploadProgress !== 'complete' && uploadProgress !== 'idle') {
+        fetch('/api/blob/delete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ imageUrl }),
+        }).catch((err) => console.error('Cleanup blob deletion:', err));
+      }
+    };
+  }, [imageUrl, uploadProgress]);
 
   // Vercel AI SDK useObject hook for native streaming
   const { submit, object } = useObject({
