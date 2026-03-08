@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 import { ManualFoodEntryForm } from '@/components/forms/manual-food-entry';
 import { SnapToLog } from '@/components/snap-to-log';
 import { AiUsageTracker } from '@/components/ai-usage-tracker';
+import { CoachingDashboard } from '@/components/coaching-dashboard';
+import { DataExport } from '@/components/data-export';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -222,6 +224,11 @@ export default function DashboardPage() {
                 <AiUsageTracker />
               </div>
 
+              {/* Data Export */}
+              <div className="flex justify-end pb-2 border-b">
+                <DataExport />
+              </div>
+
               {/* Snap to Log */}
               <Dialog open={snapDialogOpen} onOpenChange={setSnapDialogOpen}>
                 <DialogTrigger>
@@ -345,6 +352,11 @@ export default function DashboardPage() {
               </Card>
             );
           })}
+        </div>
+
+        {/* Coaching Insights Section */}
+        <div className="mt-8">
+          <CoachingDashboard />
         </div>
       </main>
     </div>
