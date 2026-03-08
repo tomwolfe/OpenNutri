@@ -19,6 +19,7 @@ export const maxDuration = 60; // 60 seconds max for cron job
  * POST /api/cron/process-ai-jobs
  *
  * Triggered by Vercel Cron to process pending AI jobs.
+ * Can also be triggered with ?jobId=xxx for immediate processing.
  */
 export async function POST(request: NextRequest) {
   // Verify cron secret (if configured)
@@ -33,7 +34,11 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await processAiJobsQueue();
+    // Check if this is an immediate trigger for a specific job
+    const { searchParams } = new URL(request.url);
+    const jobId = searchParams.get('jobId');
+
+    const result = await processAiJobsQueue(jobId || undefined);
 
     return NextResponse.json({
       ...result,

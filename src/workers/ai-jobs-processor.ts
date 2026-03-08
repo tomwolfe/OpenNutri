@@ -261,26 +261,59 @@ export async function processAiJob(job: typeof aiJobs.$inferSelect): Promise<boo
 }
 
 /**
- * Main queue processor - called by cron
+ * Main queue processor - called by cron or immediate trigger
+ * @param specificJobId - Optional specific job ID to process immediately
  * @returns Summary of processed jobs
  */
-export async function processAiJobsQueue() {
-  console.log('Starting AI jobs queue processor...');
+export async function processAiJobsQueue(specificJobId?: string) {
+  console.log(
+    specificJobId
+      ? `Starting AI jobs processor for specific job ${specificJobId}...`
+      : 'Starting AI jobs queue processor...'
+  );
 
-  const pendingJobs = await fetchPendingJobs();
+  let jobsToProcess: typeof aiJobs.$inferSelect[];
 
-  if (pendingJobs.length === 0) {
-    console.log('No pending jobs');
-    return { processed: 0, success: 0, failed: 0 };
+  if (specificJobId) {
+    // Process a specific job immediately
+    const job = await db
+      .select()
+      .from(aiJobs)
+      .where(eq(aiJobs.id, specificJobId))
+      .limit(1);
+
+    if (job.length === 0) {
+      console.log(`Job ${specificJobId} not found`);
+      return { processed: 0, success: 0, failed: 0 };
+    }
+
+    // Only process if still pending or processing
+    if (job[0].status !== 'pending' && job[0].status !== 'processing') {
+      console.log(
+        `Job ${specificJobId} already ${job[0].status}, skipping`
+      );
+      return { processed: 0, success: 0, failed: 0 };
+    }
+
+    jobsToProcess = job;
+    console.log(`Processing specific job ${specificJobId}`);
+  } else {
+    // Process queue normally
+    jobsToProcess = await fetchPendingJobs();
+
+    if (jobsToProcess.length === 0) {
+      console.log('No pending jobs');
+      return { processed: 0, success: 0, failed: 0 };
+    }
+
+    console.log(`Found ${jobsToProcess.length} pending jobs`);
   }
-
-  console.log(`Found ${pendingJobs.length} pending jobs`);
 
   let successCount = 0;
   let failedCount = 0;
 
   // Process jobs sequentially to avoid rate limits
-  for (const job of pendingJobs) {
+  for (const job of jobsToProcess) {
     const success = await processAiJob(job);
     if (success) {
       successCount++;
@@ -289,7 +322,7 @@ export async function processAiJobsQueue() {
     }
 
     // Add small delay between jobs to avoid API rate limits
-    if (pendingJobs.length > 1) {
+    if (jobsToProcess.length > 1) {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
   }
@@ -299,7 +332,7 @@ export async function processAiJobsQueue() {
   );
 
   return {
-    processed: pendingJobs.length,
+    processed: jobsToProcess.length,
     success: successCount,
     failed: failedCount,
   };

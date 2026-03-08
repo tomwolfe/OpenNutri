@@ -4,6 +4,10 @@
  * Handles food image uploads for AI vision processing.
  * Creates an AI job in 'pending' status and returns job ID.
  * Client will poll for status while Vercel Cron processes the job.
+ *
+ * Immediate Trigger: After creating the job, we fire a background request
+ * to the cron endpoint to start processing immediately (instead of waiting
+ * for the next cron run). The cron serves as a safety net.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -16,6 +20,32 @@ import { createImageHash } from '@/lib/glm-vision';
 
 export const runtime = 'edge'; // Use Edge runtime for faster response
 export const maxDuration = 10; // 10 seconds max (Vercel Hobby limit)
+
+/**
+ * Trigger immediate AI processing for a job.
+ * Fire-and-forget: we don't await this to avoid blocking the upload response.
+ */
+async function triggerImmediateProcessing(jobId: string, host: string | null) {
+  const baseUrl =
+    process.env.NEXTAUTH_URL ||
+    (host ? `https://${host}` : 'http://localhost:3000');
+
+  const cronSecret = process.env.CRON_SECRET;
+
+  // Fire-and-forget fetch - don't wait for response
+  // Use no-wait pattern to avoid blocking this route
+  fetch(`${baseUrl}/api/cron/process-ai-jobs?jobId=${jobId}`, {
+    method: 'POST',
+    headers: {
+      Authorization: cronSecret ? `Bearer ${cronSecret}` : '',
+    },
+    // Keepalive ensures the request continues even if this response finishes
+    keepalive: true,
+  }).catch((err) => {
+    // Log error but don't fail the upload - cron will pick it up anyway
+    console.error('Immediate trigger failed, cron will handle:', err.message);
+  });
+}
 
 /**
  * POST /api/upload
@@ -94,6 +124,11 @@ export async function POST(request: NextRequest) {
         status: 'pending',
       })
       .returning();
+
+    // Fire-and-forget: trigger immediate processing
+    // Don't await this - let it run in background
+    const host = request.headers.get('host');
+    triggerImmediateProcessing(job.id, host);
 
     return NextResponse.json({
       success: true,
