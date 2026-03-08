@@ -18,6 +18,8 @@ import {
   blobToFile,
   isIndexedDBAvailable,
 } from '@/lib/offline-queue';
+import { useEncryption } from '@/hooks/useEncryption';
+import { blobToBase64DataUri } from '@/lib/image-utils';
 
 interface UseOfflineQueueReturn {
   /** Whether IndexedDB is available */
@@ -55,27 +57,8 @@ async function uploadToBlob(file: File): Promise<string> {
   return data.imageUrl;
 }
 
-/**
- * Analyze uploaded image
- */
-async function analyzeImage(imageUrl: string, mealType: string): Promise<void> {
-  const response = await fetch('/api/analyze', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      imageUrl,
-      mealTypeHint: mealType,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error('Analysis failed');
-  }
-}
-
 export function useOfflineQueue(): UseOfflineQueueReturn {
+  const { vaultKey, encryptLog, encryptBinary } = useEncryption();
   const [isAvailable] = useState(() => isIndexedDBAvailable());
   const [pendingCount, setPendingCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -131,11 +114,79 @@ export function useOfflineQueue(): UseOfflineQueueReturn {
           // Convert blob to file
           const file = blobToFile(pending.file, pending.fileName);
 
-          // Upload to blob storage
-          const imageUrl = await uploadToBlob(file);
+          // 1. Encrypt Image for the Vault (Zero-Knowledge storage)
+          let vaultUrl = null;
+          let vaultIv = null;
+          if (vaultKey && encryptBinary) {
+            const buffer = await file.arrayBuffer();
+            const { ciphertext, iv } = await encryptBinary(buffer);
+            const encFile = new File([ciphertext], 'vault.bin', { type: 'application/octet-stream' });
+            vaultUrl = await uploadToBlob(encFile);
+            // Convert Uint8Array to base64 safely without spread operator
+            const ivBytes = new Uint8Array(iv);
+            let binary = '';
+            for (let i = 0; i < ivBytes.byteLength; i++) {
+              binary += String.fromCharCode(ivBytes[i]);
+            }
+            vaultIv = btoa(binary);
+          }
 
-          // Analyze the image
-          await analyzeImage(imageUrl, pending.mealType);
+          // 2. Pass Base64 image to AI purely in memory (Zero Knowledge)
+          const base64Uri = await blobToBase64DataUri(pending.file);
+          const aiResponse = await fetch('/api/analyze', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              imageUrl: base64Uri,
+              mealTypeHint: pending.mealType,
+            }),
+          });
+
+          if (!aiResponse.ok) {
+            throw new Error('AI Analysis failed');
+          }
+
+          // 3. Capture and parse the AI response
+          const textData = await aiResponse.text();
+          const { items } = JSON.parse(textData);
+          const totalCalories = items.reduce((sum: number, item: any) => sum + item.calories, 0);
+
+          // 4. Encrypt the resulting food log
+          let encryptedData = null;
+          let encryptionIv = null;
+          if (vaultKey && encryptLog) {
+            const res = await encryptLog({
+              mealType: pending.mealType,
+              items,
+              timestamp: pending.timestamp,
+              imageUrl: vaultUrl,
+              imageIv: vaultIv,
+            });
+            encryptedData = res.encryptedData;
+            encryptionIv = res.iv;
+          }
+
+          // 5. ACTUALLY SAVE THE LOG TO THE DATABASE
+          const logResponse = await fetch('/api/log/food', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              mealType: encryptedData ? 'encrypted' : pending.mealType,
+              items: encryptedData ? [] : items,
+              totalCalories: encryptedData ? 0 : totalCalories,
+              imageUrl: encryptedData ? null : vaultUrl,
+              encryptedData,
+              encryptionIv,
+            }),
+          });
+
+          if (!logResponse.ok) {
+            throw new Error('Failed to save food log');
+          }
 
           // Remove from queue on success
           await removeFromQueue(pending.id);
@@ -159,7 +210,7 @@ export function useOfflineQueue(): UseOfflineQueueReturn {
       // Refresh count after sync
       refreshCount();
     }
-  }, [isAvailable]);
+  }, [isAvailable, vaultKey, encryptLog, encryptBinary]);
 
   /**
    * Refresh the pending count

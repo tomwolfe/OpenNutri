@@ -18,6 +18,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Download, FileJson, FileSpreadsheet, Loader2 } from 'lucide-react';
+import { db } from '@/lib/db-local';
 
 export function DataExport() {
   const [exporting, setExporting] = useState(false);
@@ -30,17 +31,48 @@ export function DataExport() {
       setExportFormat(format);
       setError(null);
 
-      const response = await fetch(`/api/export?format=${format}`);
+      // Fetch decrypted data directly from local Dexie DB
+      const logs = await db.decryptedLogs.toArray();
+      const targets = await db.userTargets.toArray();
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Export failed');
+      let content = '';
+      let mimeType = '';
+      let ext = '';
+
+      if (format === 'json') {
+        content = JSON.stringify({
+          exportedAt: new Date().toISOString(),
+          logs,
+          targets,
+        }, null, 2);
+        mimeType = 'application/json';
+        ext = 'json';
+      } else {
+        const headers = ['Timestamp', 'Meal', 'Food', 'Calories', 'Protein', 'Carbs', 'Fat'];
+        const rows = [headers.join(',')];
+
+        logs.forEach((log) => {
+          if (log.items) {
+            log.items.forEach((item: any) => {
+              rows.push([
+                log.timestamp.toISOString(),
+                log.mealType || '',
+                `"${item.foodName}"`,
+                item.calories,
+                item.protein,
+                item.carbs,
+                item.fat,
+              ].join(','));
+            });
+          }
+        });
+        content = rows.join('\n');
+        mimeType = 'text/csv';
+        ext = 'csv';
       }
 
-      // Get the blob from response
-      const blob = await response.blob();
-
-      // Create download link
+      // Trigger local download
+      const blob = new Blob([content], { type: mimeType });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
