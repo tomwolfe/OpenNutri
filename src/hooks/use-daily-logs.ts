@@ -42,6 +42,8 @@ export interface DailyTotals {
   protein: number;
   carbs: number;
   fat: number;
+  activeEnergyBurned?: number;
+  netCalories: number;
 }
 
 export interface UseDailyLogsReturn {
@@ -73,10 +75,10 @@ function convertToFoodLog(log: DecryptedFoodLog): FoodLog {
 }
 
 /**
- * Calculate daily totals from logs
+ * Calculate daily totals from logs and health data
  */
-function calculateDailyTotals(logs: FoodLog[]): DailyTotals {
-  return logs.reduce(
+function calculateDailyTotals(logs: FoodLog[], activeEnergyBurned: number = 0): DailyTotals {
+  const totals = logs.reduce(
     (acc, log) => {
       log.items.forEach(item => {
         acc.calories += item.calories || 0;
@@ -88,6 +90,12 @@ function calculateDailyTotals(logs: FoodLog[]): DailyTotals {
     },
     { calories: 0, protein: 0, carbs: 0, fat: 0 }
   );
+
+  return {
+    ...totals,
+    activeEnergyBurned,
+    netCalories: totals.calories - activeEnergyBurned,
+  };
 }
 
 /**
@@ -116,6 +124,15 @@ export function useDailyLogs(
     [userId, startOfDay, endOfDay]
   );
 
+  // Live query for health data
+  const healthData = useLiveQuery(
+    async () => {
+      if (!userId) return null;
+      return await db.healthData.get([userId, dateStr]);
+    },
+    [userId, dateStr]
+  );
+
   // Convert logs to UI format
   const logs: FoodLog[] = useMemo(
     () => (decryptedLogs || []).map(convertToFoodLog),
@@ -124,8 +141,8 @@ export function useDailyLogs(
 
   // Calculate totals
   const dailyTotals = useMemo(
-    () => calculateDailyTotals(logs),
-    [logs]
+    () => calculateDailyTotals(logs, healthData?.activeCalories || 0),
+    [logs, healthData]
   );
 
   // Trigger background sync

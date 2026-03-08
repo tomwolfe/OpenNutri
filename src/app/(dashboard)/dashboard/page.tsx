@@ -34,6 +34,8 @@ import { Calendar } from '@/components/ui/calendar';
 import { Loader2, LogOut, Plus, Utensils, Settings, Image as ImageIcon } from 'lucide-react';
 import { EncryptedImage } from '@/components/encrypted-image';
 import { db } from '@/lib/db-local';
+import { useHealthData } from '@/hooks/use-health-data';
+import { Activity, RefreshCw } from 'lucide-react';
 
 const MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'];
 
@@ -52,7 +54,9 @@ export default function DashboardPage() {
     dailyTotals,
     isLoading: loading,
     triggerSync,
-  } = useDailyLogs(selectedDate, session?.user?.id, vaultKey);
+  } = useDailyLogs(selectedDate, session?.user?.id);
+
+  const { healthData, syncHealthData, isSyncing } = useHealthData(selectedDate);
 
   const [snapDialogOpen, setSnapDialogOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -191,9 +195,20 @@ export default function DashboardPage() {
                 <CardTitle className="text-base">
                   Daily Summary - {selectedDate.toLocaleDateString()}
                 </CardTitle>
-                {selectedDate.toDateString() === new Date().toDateString() && (
-                  <QuickWeightInput />
-                )}
+                <div className="flex items-center gap-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => syncHealthData()}
+                    disabled={isSyncing}
+                  >
+                    <RefreshCw className={`mr-2 h-3 w-3 ${isSyncing ? 'animate-spin' : ''}`} />
+                    Sync Health
+                  </Button>
+                  {selectedDate.toDateString() === new Date().toDateString() && (
+                    <QuickWeightInput />
+                  )}
+                </div>
               </div>
             </CardHeader>
             <CardContent>
@@ -202,30 +217,36 @@ export default function DashboardPage() {
                   <Loader2 className="h-6 w-6 animate-spin" />
                 </div>
               ) : (
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-5 gap-4">
                   <div className="text-center">
-                    <div className="text-3xl font-bold text-orange-500">
+                    <div className="text-2xl font-bold text-orange-500">
                       {dailyTotals.calories}
                     </div>
-                    <div className="text-sm text-muted-foreground">Calories</div>
+                    <div className="text-xs text-muted-foreground">Logged</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-3xl font-bold text-blue-500">
+                    <div className="text-2xl font-bold text-red-400">
+                      -{dailyTotals.activeEnergyBurned || 0}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Active</div>
+                  </div>
+                  <div className="text-center bg-muted/50 rounded-md py-1">
+                    <div className="text-3xl font-bold text-primary">
+                      {dailyTotals.netCalories}
+                    </div>
+                    <div className="text-xs font-medium">Net kcal</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-blue-500">
                       {Math.round(dailyTotals.protein)}g
                     </div>
-                    <div className="text-sm text-muted-foreground">Protein</div>
+                    <div className="text-xs text-muted-foreground">Protein</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-3xl font-bold text-green-500">
+                    <div className="text-2xl font-bold text-green-500">
                       {Math.round(dailyTotals.carbs)}g
                     </div>
-                    <div className="text-sm text-muted-foreground">Carbs</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-purple-500">
-                      {Math.round(dailyTotals.fat)}g
-                    </div>
-                    <div className="text-sm text-muted-foreground">Fat</div>
+                    <div className="text-xs text-muted-foreground">Carbs</div>
                   </div>
                 </div>
               )}

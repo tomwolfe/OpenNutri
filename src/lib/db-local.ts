@@ -94,6 +94,15 @@ export interface LocalUserRecipe {
   synced: 0 | 1;
 }
 
+export interface LocalHealthData {
+  date: string; // YYYY-MM-DD
+  userId: string;
+  steps?: number;
+  activeCalories?: number;
+  source: 'apple_health' | 'google_fit' | 'manual';
+  updatedAt: number;
+}
+
 export class OpenNutriDB extends Dexie {
   pendingImages!: Table<PendingImage>;
   foodLogs!: Table<LocalFoodLog>;
@@ -102,10 +111,11 @@ export class OpenNutriDB extends Dexie {
   userFavorites!: Table<UserFavorite>;
   decryptedImages!: Table<DecryptedImage>;
   userRecipes!: Table<LocalUserRecipe>;
+  healthData!: Table<LocalHealthData>;
 
   constructor() {
     super('OpenNutriDB');
-    this.version(5).stores({
+    this.version(6).stores({
       pendingImages: 'id, timestamp',
       foodLogs: 'id, userId, timestamp, synced, updatedAt',
       decryptedLogs: 'id, userId, timestamp',
@@ -113,6 +123,7 @@ export class OpenNutriDB extends Dexie {
       userFavorites: 'id, foodName, frequency, lastUsed',
       decryptedImages: 'id, timestamp',
       userRecipes: 'id, userId, name, synced, updatedAt',
+      healthData: '[userId+date], userId, date',
     });
   }
 

@@ -79,6 +79,7 @@ export function calculateBMR(
  * @param age - Age in years
  * @param gender - Gender (male/female/other)
  * @param activityLevel - Activity level
+ * @param activeCaloriesBurned - Optional empirical data from Health API
  * @returns TDEE result with BMR and calorie targets
  */
 export function calculateTDEE(
@@ -86,11 +87,15 @@ export function calculateTDEE(
   heightCm: number,
   age: number,
   gender: Gender,
-  activityLevel: ActivityLevel
+  activityLevel: ActivityLevel,
+  activeCaloriesBurned?: number
 ): TDEEResult {
   const bmr = calculateBMR(weightKg, heightCm, age, gender);
-  const multiplier = ACTIVITY_MULTIPLIERS[activityLevel];
-  const tdee = Math.round(bmr * multiplier);
+  
+  // Use empirical active energy if available, otherwise fallback to multiplier
+  const tdee = activeCaloriesBurned !== undefined
+    ? Math.round(bmr + activeCaloriesBurned)
+    : Math.round(bmr * ACTIVITY_MULTIPLIERS[activityLevel]);
   
   // Calorie targets based on goals
   return {
