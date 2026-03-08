@@ -202,6 +202,7 @@ self.onmessage = async (event: MessageEvent) => {
       let pulled = 0;
 
       // Sync Logs
+      const pulledLogIds: string[] = [];
       for (const sLog of serverLogs) {
         if (sLog.deviceId === deviceId) continue;
         const localLog = await db.foodLogs.get(sLog.id);
@@ -219,10 +220,12 @@ self.onmessage = async (event: MessageEvent) => {
           synced: !needsRePush,
           version: Math.max(localLog?.version || 0, sLog.version || 0) + 1,
         } as LocalFoodLog);
+        pulledLogIds.push(sLog.id);
         pulled++;
       }
 
       // Sync Recipes (LWW - Last Write Wins)
+      const pulledRecipeIds: string[] = [];
       for (const sRecipe of serverRecipes) {
         if (sRecipe.deviceId === deviceId) continue;
         const localRecipe = await db.userRecipes.get(sRecipe.id);
@@ -233,13 +236,14 @@ self.onmessage = async (event: MessageEvent) => {
             synced: true,
             updatedAt: sRecipe.updatedAt,
           });
+          pulledRecipeIds.push(sRecipe.id);
           pulled++;
         }
       }
 
       self.postMessage({
         type: 'SYNC_DELTA_SUCCESS',
-        payload: { pulled, pushed, serverTime: data.serverTime }
+        payload: { pulled, pushed, serverTime: data.serverTime, pulledLogIds, pulledRecipeIds }
       });
     }
   } catch (err: unknown) {

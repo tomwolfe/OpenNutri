@@ -55,21 +55,21 @@ function setLastSyncTimestamp(timestamp: number): void {
 export async function syncDelta(
   userId: string,
   vaultKey: CryptoKey | null
-): Promise<{ success: boolean; pulled: number; pushed: number; conflicts?: SyncConflict[] }> {
+): Promise<{ success: boolean; pulled: number; pushed: number; pulledLogIds?: string[] }> {
   try {
     const { syncDeltaInWorker, decryptBatchInWorker } = await import('@/lib/worker-client');
     const deviceId = getDeviceId();
     const since = getLastSyncTimestamp();
 
     // 1. Offload the main sync logic to the worker
-    const { pulled, pushed, serverTime } = await syncDeltaInWorker(userId, deviceId, since);
+    const { pulled, pushed, serverTime, pulledLogIds } = await syncDeltaInWorker(userId, deviceId, since);
 
-    // 2. Handle decryption (optional, could also be moved to sync worker if desired)
-    // For now we still do batch decryption on the main thread's trigger but in its own worker
-    if (pulled > 0 && vaultKey) {
-      // Find logs that were just pulled and need decryption
+    // 2. Handle decryption using explicit pulled IDs
+    if (pulledLogIds && pulledLogIds.length > 0 && vaultKey) {
+      // Find logs that were explicitly pulled
       const logsToDecrypt = await db.foodLogs
-        .filter(log => log.updatedAt >= Date.now() - 5000) // Rough filter for just-pulled
+        .where('id')
+        .anyOf(pulledLogIds)
         .toArray();
       
       if (logsToDecrypt.length > 0) {
@@ -81,7 +81,7 @@ export async function syncDelta(
     }
 
     setLastSyncTimestamp(serverTime);
-    return { success: true, pulled, pushed };
+    return { success: true, pulled, pushed, pulledLogIds };
   } catch (error) {
     console.error('SyncEngine: Delta sync error', error);
     return { success: false, pulled: 0, pushed: 0 };

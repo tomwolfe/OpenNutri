@@ -26,15 +26,25 @@ export function createYDoc(data: Record<string, unknown>): Y.Doc {
  */
 export function encodeYDoc(doc: Y.Doc): string {
   const update = Y.encodeStateAsUpdate(doc);
-  return Buffer.from(update).toString('base64');
+  let binary = '';
+  const len = update.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(update[i]);
+  }
+  return typeof btoa !== 'undefined' ? btoa(binary) : Buffer.from(update).toString('base64');
 }
 
 /**
  * Decodes a Base64 update and applies it to a Yjs Doc
  */
 export function applyYUpdate(doc: Y.Doc, base64Update: string): void {
-  const update = Buffer.from(base64Update, 'base64');
-  Y.applyUpdate(doc, update);
+  const binaryString = typeof atob !== 'undefined' ? atob(base64Update) : Buffer.from(base64Update, 'base64').toString('binary');
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  Y.applyUpdate(doc, bytes);
 }
 
 /**

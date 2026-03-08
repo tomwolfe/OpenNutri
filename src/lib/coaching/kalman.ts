@@ -92,19 +92,42 @@ export class WeightKalmanFilter {
   }
 
   /**
+   * Predict weight n steps (days) into the future
+   * @param steps - Number of days to look ahead
+   */
+  public predictFutureWeight(steps: number): number {
+    // Current weight + (current velocity * steps)
+    return this.x[0] + (this.x[1] * steps);
+  }
+
+  /**
    * Process a series of weights with optional metadata
    */
   public static filter(
-    entries: Array<{ weight: number; highSodium?: boolean; highCarbs?: boolean }>
-  ): number[] {
+    entries: Array<{ 
+      weight: number; 
+      highSodium?: boolean; 
+      highCarbs?: boolean;
+      holiday?: boolean; 
+      traveling?: boolean;
+    }>
+  ): { weight: number; trend: number; prediction7Days: number }[] {
     if (entries.length === 0) return [];
     
     const kf = new WeightKalmanFilter(entries[0].weight);
     return entries.map(e => {
       let noise = 1.5; // Default measurement noise
       if (e.highSodium) noise += 2.0;
-      if (e.highCarbs) noise += 1.0;
-      return kf.update(e.weight, noise);
+      if (e.highCarbs) noise += 1.5;
+      if (e.holiday) noise += 3.0;
+      if (e.traveling) noise += 2.0;
+
+      const weight = kf.update(e.weight, noise);
+      return {
+        weight,
+        trend: kf.getVelocity(),
+        prediction7Days: kf.predictFutureWeight(7)
+      };
     });
   }
 }

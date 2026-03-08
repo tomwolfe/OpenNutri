@@ -66,12 +66,21 @@ export async function classifyFoodLocally(image: string | ImageData): Promise<Im
 export function needsCloudAnalysis(localResults: ImageClassificationResult[] | null): boolean {
   if (!localResults || localResults.length === 0) return true;
   
+  const hasWebGPU = typeof navigator !== 'undefined' && !!navigator.gpu;
   const topResult = localResults[0];
-  if (topResult.score < 0.6) return true;
+  
+  // If we have WebGPU, we assume Moondream2 was used, which is significantly more accurate.
+  if (hasWebGPU) {
+    // If we have even one result with decent score from Moondream2, skip cloud
+    return topResult.score < 0.7;
+  }
+
+  // MobileNet fallback (conservative)
+  if (topResult.score < 0.8) return true;
   
   if (localResults.length > 1) {
     const diff = topResult.score - localResults[1].score;
-    if (diff < 0.2) return true;
+    if (diff < 0.3) return true;
   }
 
   return false;

@@ -78,13 +78,50 @@ self.onmessage = async (event) => {
   if (type === 'classify') {
     try {
       const model = await getClassifier();
-      const rawResults = await model(image);
+      let results: any[] = [];
       
-      // Enrich results with macro estimates
-      const results = rawResults.map((res: { label: string; score: number }) => ({
-        ...res,
-        macros: getMacrosForLabel(res.label)
-      }));
+      if (model.task === 'image-to-text') {
+        // Moondream2 / VQA path
+        console.log('Using Moondream2 for VQA...');
+        const prompt = "Describe the food items in this image and estimate their weight in grams. Format: Item (Weight)";
+        const output = await model(image, prompt);
+        const generatedText = Array.isArray(output) ? output[0].generated_text : output.generated_text;
+        
+        // Simple parser for "Item (Weight)"
+        const lines = generatedText.split('\n');
+        results = lines.map((line: string) => {
+          const match = line.match(/(.+)\s*\((\d+)g\)/);
+          if (match) {
+            const label = match[1].trim();
+            const weight = parseInt(match[2]);
+            const macros = getMacrosForLabel(label);
+            return {
+              label,
+              score: 0.95, // High confidence for Moondream2
+              weight,
+              macros: macros ? {
+                calories: (macros.calories * weight) / 100,
+                protein: (macros.protein * weight) / 100,
+                carbs: (macros.carbs * weight) / 100,
+                fat: (macros.fat * weight) / 100,
+              } : null
+            };
+          }
+          return null;
+        }).filter(Boolean);
+
+        // If parser failed, return the raw text as a single label
+        if (results.length === 0) {
+          results = [{ label: generatedText, score: 0.9, macros: null }];
+        }
+      } else {
+        // MobileNet fallback
+        const rawResults = await model(image);
+        results = rawResults.map((res: { label: string; score: number }) => ({
+          ...res,
+          macros: getMacrosForLabel(res.label)
+        }));
+      }
 
       self.postMessage({ type: 'results', results });
     } catch (error) {
