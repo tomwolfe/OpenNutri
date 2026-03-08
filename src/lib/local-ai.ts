@@ -1,63 +1,63 @@
 /**
  * Local AI Inference Service
  * 
- * Powered by Transformers.js for on-device food classification.
- * Reduces latency, costs, and improves privacy for simple tasks.
+ * Proxies inference requests to a background Web Worker (Transformers.js).
+ * Reduces main-thread load and avoids native module build errors.
  */
 
-import { pipeline } from '@xenova/transformers';
-
-let classifier: any = null;
+let worker: Worker | null = null;
+let classificationPromise: ((results: any) => void) | null = null;
 
 /**
- * Initialize the food classifier model
- * Uses a lightweight quantized model for browser performance
+ * Initialize the AI Web Worker
  */
-export async function initLocalClassifier() {
-  if (classifier) return classifier;
+export function getAiWorker(): Worker | null {
+  if (typeof window === 'undefined') return null;
+  if (worker) return worker;
   
   try {
-    // Using a general image classification model that performs well on food
-    // In production, you would use a specialized food-101 model
-    classifier = await pipeline('image-classification', 'Xenova/mobilenet_v1_1.0_224_quantized');
-    return classifier;
+    worker = new Worker(new URL('../workers/ai.worker.ts', import.meta.url), {
+      type: 'module',
+    });
+    
+    worker.onmessage = (event) => {
+      if (event.data.type === 'results' && classificationPromise) {
+        classificationPromise(event.data.results);
+        classificationPromise = null;
+      }
+    };
+    
+    return worker;
   } catch (error) {
-    console.error('Failed to initialize local AI:', error);
+    console.error('Failed to create AI worker:', error);
     return null;
   }
 }
 
 /**
- * Classify a food image locally
- * @param image - ImageData from canvas or image URL
- * @returns Array of classifications with labels and scores
+ * Classify a food image using the background worker
+ * @param image - Image URL or ImageData
+ * @returns Promise with results
  */
-export async function classifyFoodLocally(image: any) {
-  const model = await initLocalClassifier();
-  if (!model) return null;
+export async function classifyFoodLocally(image: any): Promise<any[] | null> {
+  const aiWorker = getAiWorker();
+  if (!aiWorker) return null;
 
-  try {
-    const results = await model(image);
-    return results;
-  } catch (error) {
-    console.error('Local classification failed:', error);
-    return null;
-  }
+  return new Promise((resolve) => {
+    classificationPromise = resolve;
+    aiWorker.postMessage({ type: 'classify', image });
+  });
 }
 
 /**
  * Determine if an image needs cloud AI analysis
- * @param localResults - Results from local classification
- * @returns boolean
  */
 export function needsCloudAnalysis(localResults: any[] | null): boolean {
   if (!localResults || localResults.length === 0) return true;
   
-  // If top result confidence is low (< 60%), send to cloud for better accuracy
   const topResult = localResults[0];
   if (topResult.score < 0.6) return true;
   
-  // If results are ambiguous (top 2 are very close), send to cloud
   if (localResults.length > 1) {
     const diff = topResult.score - localResults[1].score;
     if (diff < 0.2) return true;

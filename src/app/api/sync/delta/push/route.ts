@@ -33,6 +33,7 @@ interface SyncRequest {
     encryptedData: string;
     encryptionIv: string;
     encryptionSalt?: string | null;
+    yjsData?: string | null;
     version: number;
     deviceId?: string | null;
     updatedAt: number;
@@ -53,6 +54,7 @@ interface SyncRequest {
     carbTarget?: number | null;
     fatTarget?: number | null;
     weightRecord?: number | null;
+    yjsData?: string | null;
     version: number;
     deviceId?: string | null;
     updatedAt: number;
@@ -121,6 +123,7 @@ export async function POST(request: NextRequest) {
             encryptedData: log.encryptedData,
             encryptionIv: log.encryptionIv,
             encryptionSalt: log.encryptionSalt,
+            yjsData: log.yjsData,
             version: log.version,
             deviceId: log.deviceId,
             updatedAt: new Date(log.updatedAt),
@@ -137,6 +140,7 @@ export async function POST(request: NextRequest) {
               encryptedData: log.encryptedData,
               encryptionIv: log.encryptionIv,
               encryptionSalt: log.encryptionSalt,
+              yjsData: log.yjsData,
               version: log.version,
               deviceId: log.deviceId,
               updatedAt: new Date(log.updatedAt),
@@ -205,6 +209,7 @@ export async function POST(request: NextRequest) {
             carbTarget: target.carbTarget,
             fatTarget: target.fatTarget,
             weightRecord: target.weightRecord,
+            yjsData: target.yjsData,
             version: target.version,
             deviceId: target.deviceId,
             updatedAt: new Date(target.updatedAt),
@@ -217,6 +222,7 @@ export async function POST(request: NextRequest) {
               carbTarget: target.carbTarget,
               fatTarget: target.fatTarget,
               weightRecord: target.weightRecord,
+              yjsData: target.yjsData,
               version: target.version,
               deviceId: target.deviceId,
               updatedAt: new Date(target.updatedAt),

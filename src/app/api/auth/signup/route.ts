@@ -13,9 +13,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { users, userKeys } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import bcrypt from 'bcryptjs';
+import * as argon2 from 'argon2';
 
-const PASSWORD_HASH_SALT_ROUNDS = parseInt(process.env.PASSWORD_HASH_SALT_ROUNDS || '12', 10);
+export const runtime = 'nodejs'; // Argon2 needs Node.js, not Edge
+
 const MIN_PASSWORD_LENGTH = 8;
 
 function validateEmail(email: string): boolean {
@@ -75,7 +76,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Hash password and create user
-    const passwordHash = await bcrypt.hash(password, PASSWORD_HASH_SALT_ROUNDS);
+    const passwordHash = await argon2.hash(password, {
+      type: argon2.argon2id, // Use Argon2id for maximum security
+    });
     const userId = `user_${crypto.randomUUID().replace(/-/g, '')}`;
 
     // Create user and their encryption key record in a transaction

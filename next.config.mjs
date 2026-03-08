@@ -18,6 +18,19 @@ const nextConfig = {
       },
     ],
   },
+  webpack: (config, { isServer }) => {
+    // If we're building for the client (browser), ignore node-specific modules
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        path: false,
+        child_process: false,
+        crypto: false,
+      };
+    }
+    return config;
+  },
 };
 
 const withPWA = withPWAInit({

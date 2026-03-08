@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useEncryption } from '@/hooks/useEncryption';
-import { hashForAuth } from '@/lib/encryption';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -35,12 +34,9 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      // Hash password client-side to prevent plaintext transmission
-      const authPasswordHash = await hashForAuth(password);
-
       const result = await signIn('credentials', {
         email,
-        password: authPasswordHash, // Server only ever sees the hash
+        password, // Send raw password (now secure via server-side Argon2)
         redirect: false,
       });
 
@@ -102,16 +98,13 @@ export default function LoginPage() {
         return;
       }
 
-      // Hash password client-side to prevent plaintext transmission
-      const authPasswordHash = await hashForAuth(password);
-
       // Step 2: Send signup request with encryption metadata
       const response = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email,
-          password: authPasswordHash, // Server only ever sees the hash
+          password, // Send raw password
           keyMetadata, // Store this on the server
         }),
       });
@@ -127,7 +120,7 @@ export default function LoginPage() {
       // Step 3: Auto sign in after successful signup
       const result = await signIn('credentials', {
         email,
-        password: authPasswordHash, // Use hashed password for consistency
+        password, // Use raw password
         redirect: false,
       });
 

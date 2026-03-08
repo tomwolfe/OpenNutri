@@ -10,7 +10,7 @@ import Credentials from 'next-auth/providers/credentials';
 import { db } from '@/lib/db';
 import { users } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import bcrypt from 'bcryptjs';
+import * as argon2 from 'argon2';
 import { authConfig } from './auth.config';
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
@@ -37,19 +37,28 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           .where(eq(users.email, email))
           .limit(1);
 
-        if (!user) {
-          // No user found - require explicit signup
+        if (!user || !user.passwordHash) {
           return null;
         }
 
-        // Verify password against stored hash
-        if (!user.passwordHash) {
-          // User exists but has no password hash (legacy auto-created user)
-          // Reject login - they need to sign up properly
+        // Verify password against stored hash (Argon2id)
+        let isValid = false;
+        try {
+          // If the hash starts with $argon2, it's an argon2 hash
+          if (user.passwordHash.startsWith('$argon2')) {
+            isValid = await argon2.verify(user.passwordHash, password);
+          } else {
+            // Legacy check (optional, but good for migration)
+            // If the hash is SHA-256 + bcrypt as it was before, 
+            // the capture of that SHA-256 hash would work.
+            // For a clean break per roadmap, we could just reject.
+            return null; 
+          }
+        } catch (err) {
+          console.error('Password verification failed:', err);
           return null;
         }
 
-        const isValid = await bcrypt.compare(password, user.passwordHash);
         if (!isValid) {
           return null;
         }

@@ -74,13 +74,14 @@ export async function GET(request: NextRequest) {
           encryptedData: true,
           encryptionIv: true,
           encryptionSalt: true,
+          yjsData: true,
           version: true,
           deviceId: true,
           updatedAt: true,
         },
       });
 
-      results.logs = logsWithItems;
+      results.logs = logsWithItems as any;
     }
 
     // Fetch user targets modified since timestamp
@@ -90,9 +91,22 @@ export async function GET(request: NextRequest) {
           eq(userTargets.userId, session.user.id),
           gt(userTargets.updatedAt, sinceTimestamp)
         ),
+        columns: {
+          userId: true,
+          date: true,
+          calorieTarget: true,
+          proteinTarget: true,
+          carbTarget: true,
+          fatTarget: true,
+          weightRecord: true,
+          yjsData: true,
+          version: true,
+          deviceId: true,
+          updatedAt: true,
+        },
       });
 
-      results.targets = targets;
+      results.targets = targets as any;
     }
 
     return NextResponse.json(results);
