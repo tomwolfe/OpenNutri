@@ -2,11 +2,11 @@
  * Snap-to-Log Component
  *
  * Food image capture and upload UI with real-time AI streaming.
- * Uses camera or file upload, then streams AI analysis results in real-time.
+ * Uses Vercel AI SDK's useObject hook for native streaming support.
  *
  * Flow:
- * 1. User uploads image
- * 2. AI streams analysis back in real-time
+ * 1. User uploads image to blob storage
+ * 2. AI streams analysis back in real-time via useObject
  * 3. User reviews and edits the draft (adjust portions, meal type)
  * 4. User confirms to save as verified food log
  */
@@ -16,6 +16,23 @@
 import { useState, useRef, useCallback } from 'react';
 import Image from 'next/image';
 import { Camera, Upload, X, CheckCircle, AlertCircle, Loader2, Edit2, Save } from 'lucide-react';
+import { experimental_useObject as useObject } from '@ai-sdk/react';
+import { z } from 'zod';
+
+// Schema matching the GLM vision response
+const FoodAnalysisSchema = z.object({
+  items: z.array(
+    z.object({
+      name: z.string().describe('Food item name'),
+      calories: z.number().describe('Calories in kcal'),
+      protein_g: z.number().describe('Protein in grams'),
+      carbs_g: z.number().describe('Carbohydrates in grams'),
+      fat_g: z.number().describe('Fat in grams'),
+      confidence: z.number().describe('Confidence score 0-1'),
+      portion_guess: z.string().describe('Estimated portion size'),
+    })
+  ),
+});
 
 interface DraftItem {
   foodName: string;
@@ -46,41 +63,6 @@ interface SnapToLogProps {
   onDraftSaved?: () => void;
 }
 
-interface StreamStatus {
-  type: 'status';
-  status: 'uploading' | 'analyzing' | 'enhancing';
-  message: string;
-}
-
-interface StreamResult {
-  type: 'result';
-  items: DraftItem[];
-  totalCalories: number;
-  aiConfidenceScore: number;
-  usdaMatchCount: number;
-  imageUrl: string;
-}
-
-interface StreamError {
-  type: 'error';
-  error: string;
-}
-
-interface StreamPartial {
-  type: 'partial';
-  items: Array<{
-    name: string;
-    calories?: number;
-    protein_g?: number;
-    carbs_g?: number;
-    fat_g?: number;
-    confidence?: number;
-    portion_guess?: string;
-  }>;
-}
-
-type StreamMessage = StreamStatus | StreamResult | StreamError | StreamPartial;
-
 const MEAL_TYPES = [
   { value: 'breakfast', label: 'Breakfast' },
   { value: 'lunch', label: 'Lunch' },
@@ -92,53 +74,68 @@ const MEAL_TYPES = [
 export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [uploadProgress, setUploadProgress] = useState<'idle' | 'streaming' | 'review' | 'complete'>('idle');
-  const [streamError, setStreamError] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<'idle' | 'uploading' | 'streaming' | 'review' | 'complete'>('idle');
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [selectedMealType, setSelectedMealType] = useState<string>('unclassified');
   const [draftItems, setDraftItems] = useState<DraftItem[]>([]);
   const [isEditingItems, setIsEditingItems] = useState(false);
   const [saveInProgress, setSaveInProgress] = useState(false);
-  const [currentStatus, setCurrentStatus] = useState<string>('');
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isEnhancingUsda, setIsEnhancingUsda] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Client-side USDA enhancement (runs in background after AI analysis)
+  // Vercel AI SDK useObject hook for native streaming
+  const { submit, object } = useObject({
+    api: '/api/analyze',
+    schema: FoodAnalysisSchema,
+    onFinish: async (event) => {
+      if (event.object?.items) {
+        // Convert AI response to draft format
+        const convertedItems = event.object.items.map((item) => ({
+          foodName: item.name,
+          calories: item.calories || 0,
+          protein: item.protein_g || 0,
+          carbs: item.carbs_g || 0,
+          fat: item.fat_g || 0,
+          source: 'AI_ESTIMATE',
+          servingGrams: 100,
+        }));
+
+        setDraftItems(convertedItems);
+        setUploadProgress('review');
+
+        // Trigger batch USDA enhancement
+        await enhanceItemsWithUSDA(convertedItems);
+      }
+    },
+    onError: (err) => {
+      const errorMessage = err instanceof Error ? err.message : 'Analysis failed';
+      setUploadError(errorMessage);
+      setUploadProgress('idle');
+      onError?.(errorMessage);
+    },
+  });
+
+  // Client-side USDA enhancement (batch request)
   const enhanceItemsWithUSDA = useCallback(async (items: DraftItem[]) => {
     setIsEnhancingUsda(true);
 
     try {
-      // Enhance each item in parallel
-      const enhancedItems = await Promise.all(
-        items.map(async (item) => {
-          try {
-            const response = await fetch(`/api/food/usda?query=${encodeURIComponent(item.foodName)}`);
-            if (response.ok) {
-              const data = await response.json();
-              if (data.foods && data.foods.length > 0) {
-                const usdaFood = data.foods[0];
-                // Found a USDA match - use official data
-                return {
-                  ...item,
-                  foodName: usdaFood.description,
-                  calories: usdaFood.calories || item.calories,
-                  protein: usdaFood.protein || item.protein,
-                  carbs: usdaFood.carbohydrate || item.carbs,
-                  fat: usdaFood.totalLipid || item.fat,
-                  source: 'USDA',
-                };
-              }
-            }
-          } catch {
-            // Ignore individual item errors, keep AI estimate
-          }
-          return item;
-        })
-      );
+      const response = await fetch('/api/food/usda/batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ items }),
+      });
 
-      setDraftItems(enhancedItems);
+      if (response.ok) {
+        const data = await response.json();
+        setDraftItems(data.items);
+      }
+    } catch {
+      // Ignore errors, keep AI estimates
     } finally {
       setIsEnhancingUsda(false);
     }
@@ -178,106 +175,44 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
     fileInputRef.current?.click();
   }, []);
 
-  // Upload image and stream AI analysis
+  // Upload image and start AI analysis
   const handleUpload = useCallback(async () => {
     if (!selectedFile) return;
 
-    setUploadProgress('streaming');
-    setStreamError(null);
-    setCurrentStatus('Uploading image...');
-
-    // Create abort controller for canceling the stream
-    abortControllerRef.current = new AbortController();
+    setUploadProgress('uploading');
+    setUploadError(null);
 
     try {
+      // Step 1: Upload image to blob storage
       const formData = new FormData();
       formData.append('image', selectedFile);
-      formData.append('mealType', selectedMealType);
 
-      const response = await fetch('/api/analyze', {
+      const uploadResponse = await fetch('/api/blob/upload', {
         method: 'POST',
         body: formData,
-        signal: abortControllerRef.current.signal,
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Analysis failed');
+      if (!uploadResponse.ok) {
+        const errorData = await uploadResponse.json();
+        throw new Error(errorData.error || 'Upload failed');
       }
 
-      // Process the streaming response
-      const stream = response.body;
-      if (!stream) {
-        throw new Error('No stream available');
-      }
+      const { imageUrl: uploadedImageUrl } = await uploadResponse.json();
+      setImageUrl(uploadedImageUrl);
 
-      const reader = stream.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        // Buffer incomplete chunks to handle JSON split across boundaries
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('0:')) {
-            try {
-              const jsonStr = line.slice(2);
-              const message: StreamMessage = JSON.parse(jsonStr);
-
-              if (message.type === 'status') {
-                setCurrentStatus(message.message);
-                setUploadProgress('streaming');
-              } else if (message.type === 'partial') {
-                // Update UI instantly as AI streams partial results
-                const convertedItems = message.items.map(item => ({
-                  foodName: item.name,
-                  calories: item.calories || 0,
-                  protein: item.protein_g || 0,
-                  carbs: item.carbs_g || 0,
-                  fat: item.fat_g || 0,
-                  source: 'AI',
-                  servingGrams: 100,
-                }));
-                setDraftItems(convertedItems);
-                setUploadProgress('streaming');
-              } else if (message.type === 'result') {
-                // Analysis complete
-                setDraftItems(message.items);
-                setImageUrl(message.imageUrl);
-                setUploadProgress('review');
-                setCurrentStatus('');
-                // Trigger client-side USDA enhancement
-                enhanceItemsWithUSDA(message.items);
-              } else if (message.type === 'error') {
-                throw new Error(message.error);
-              }
-            } catch {
-              // Ignore JSON parse errors for partial chunks
-            }
-          }
-        }
-      }
+      // Step 2: Start AI streaming analysis
+      setUploadProgress('streaming');
+      submit({
+        imageUrl: uploadedImageUrl,
+        mealTypeHint: selectedMealType,
+      });
     } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        // Stream was canceled
-        setUploadProgress('idle');
-        return;
-      }
-
-      const errorMessage = err instanceof Error ? err.message : 'Analysis failed';
-      setStreamError(errorMessage);
+      const errorMessage = err instanceof Error ? err.message : 'Upload failed';
+      setUploadError(errorMessage);
       setUploadProgress('idle');
       onError?.(errorMessage);
-    } finally {
-      abortControllerRef.current = null;
     }
-  }, [selectedFile, selectedMealType, onError, enhanceItemsWithUSDA]);
+  }, [selectedFile, selectedMealType, onError, submit]);
 
   // Save draft as verified food log
   const handleSaveDraft = useCallback(async () => {
@@ -297,7 +232,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
           mealType: selectedMealType,
           items: draftItems,
           totalCalories,
-          aiConfidenceScore: 0.8, // Default confidence for AI-assisted entries
+          aiConfidenceScore: 0.8,
         }),
       });
 
@@ -312,7 +247,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
       onComplete?.({
         id: data.logId,
         totalCalories,
-        items: draftItems.map(item => ({
+        items: draftItems.map((item) => ({
           foodName: item.foodName,
           calories: item.calories,
           protein: item.protein,
@@ -351,14 +286,9 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
     setSelectedMealType('unclassified');
     setIsEditingItems(false);
     setUploadProgress('idle');
-    setStreamError(null);
-    setCurrentStatus('');
+    setUploadError(null);
     setImageUrl(null);
     setIsEnhancingUsda(false);
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -366,71 +296,98 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
 
   // Update item field
   const updateItemField = useCallback((index: number, field: keyof DraftItem, value: number | string) => {
-    setDraftItems(prev => prev.map((item, i) => {
-      if (i !== index) return item;
-      
-      if (field === 'calories') {
-        // Recalculate macros proportionally when calories change
-        const ratio = Number(value) / item.calories;
-        return {
-          ...item,
-          calories: Number(value),
-          protein: item.protein * ratio,
-          carbs: item.carbs * ratio,
-          fat: item.fat * ratio,
-        };
-      }
-      
-      return { ...item, [field]: value };
-    }));
+    setDraftItems((prev) =>
+      prev.map((item, i) => {
+        if (i !== index) return item;
+
+        if (field === 'calories') {
+          // Recalculate macros proportionally when calories change
+          const ratio = Number(value) / item.calories;
+          return {
+            ...item,
+            calories: Number(value),
+            protein: item.protein * ratio,
+            carbs: item.carbs * ratio,
+            fat: item.fat * ratio,
+          };
+        }
+
+        return { ...item, [field]: value };
+      })
+    );
   }, []);
 
   // Remove item from draft
   const removeItem = useCallback((index: number) => {
-    setDraftItems(prev => prev.filter((_, i) => i !== index));
+    setDraftItems((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   // Convert failed AI scan to manual log entry
   const handleConvertToManual = useCallback(() => {
     // Clear the failed stream but keep the image preview
-    setDraftItems([{
-      foodName: '',
-      calories: 0,
-      protein: 0,
-      carbs: 0,
-      fat: 0,
-      source: 'MANUAL',
-      servingGrams: 100,
-    }]);
+    setDraftItems([
+      {
+        foodName: '',
+        calories: 0,
+        protein: 0,
+        carbs: 0,
+        fat: 0,
+        source: 'MANUAL',
+        servingGrams: 100,
+      },
+    ]);
     setUploadProgress('review');
     setIsEditingItems(true);
-    setStreamError(null);
+    setUploadError(null);
   }, []);
 
   // Add new item to draft
   const addItem = useCallback(() => {
-    setDraftItems(prev => [...prev, {
-      foodName: '',
-      calories: 0,
-      protein: 0,
-      carbs: 0,
-      fat: 0,
-      source: 'MANUAL',
-      servingGrams: 100,
-    }]);
+    setDraftItems((prev) => [
+      ...prev,
+      {
+        foodName: '',
+        calories: 0,
+        protein: 0,
+        carbs: 0,
+        fat: 0,
+        source: 'MANUAL',
+        servingGrams: 100,
+      },
+    ]);
   }, []);
 
   // Calculate total from draft items
   const calculatedTotal = draftItems.reduce((sum, item) => sum + item.calories, 0);
 
+  // Get current items for display (from streaming or final)
+  const displayItems = object?.items
+    ? object.items.map((item) => ({
+        foodName: item?.name ?? '',
+        calories: item?.calories ?? 0,
+        protein: item?.protein_g ?? 0,
+        carbs: item?.carbs_g ?? 0,
+        fat: item?.fat_g ?? 0,
+        source: 'AI_ESTIMATE',
+        servingGrams: 100,
+      }))
+    : draftItems;
+
   // Render status message
   const renderStatus = () => {
     switch (uploadProgress) {
+      case 'uploading':
+        return (
+          <div className="flex items-center gap-2 text-blue-600">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>Uploading image...</span>
+          </div>
+        );
       case 'streaming':
         return (
           <div className="flex items-center gap-2 text-blue-600">
             <Loader2 className="w-4 h-4 animate-spin" />
-            <span>{currentStatus || 'AI is analyzing your food...'}</span>
+            <span>AI is analyzing your food...</span>
           </div>
         );
       case 'review':
@@ -455,9 +412,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
   return (
     <div className="w-full max-w-md mx-auto p-4 bg-white rounded-lg shadow-sm border">
       <div className="mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">
-          Snap to Log
-        </h3>
+        <h3 className="text-lg font-semibold text-gray-900">Snap to Log</h3>
         <p className="text-sm text-gray-500">
           Take a photo of your meal for instant nutrition analysis
         </p>
@@ -507,7 +462,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
             <button
               type="button"
               onClick={handleClear}
-              disabled={uploadProgress !== 'idle'}
+              disabled={uploadProgress !== 'idle' && uploadProgress !== 'review'}
               className="absolute top-2 right-2 p-2 bg-white/90 rounded-full hover:bg-white transition-colors disabled:opacity-50"
             >
               <X className="w-4 h-4" />
@@ -546,19 +501,17 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
           )}
 
           {/* Status */}
-          {uploadProgress === 'streaming' && (
-            <div className="p-3 bg-gray-50 rounded-lg">
-              {renderStatus()}
-            </div>
+          {(uploadProgress === 'uploading' || uploadProgress === 'streaming') && (
+            <div className="p-3 bg-gray-50 rounded-lg">{renderStatus()}</div>
           )}
 
           {/* Error display */}
-          {streamError && (
+          {uploadError && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
               <AlertCircle className="w-4 h-4 text-red-600 mt-0.5" />
               <div className="flex-1">
                 <p className="text-sm font-medium text-red-900">Analysis failed</p>
-                <p className="text-xs text-red-700">{streamError}</p>
+                <p className="text-xs text-red-700">{uploadError}</p>
                 <div className="flex gap-2 mt-3">
                   <button
                     type="button"
@@ -580,165 +533,178 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
           )}
 
           {/* Review UI - shown when AI analysis is complete */}
-          {uploadProgress === 'review' && draftItems.length > 0 && (
-            <div className="space-y-4">
-              {/* Meal type selector */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Meal Type
-                </label>
-                <select
-                  value={selectedMealType}
-                  onChange={(e) => setSelectedMealType(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                >
-                  {MEAL_TYPES.map((type) => (
-                    <option key={type.value} value={type.value}>
-                      {type.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+          {(uploadProgress === 'review' || uploadProgress === 'complete') &&
+            displayItems.length > 0 && (
+              <div className="space-y-4">
+                {/* Meal type selector */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Meal Type
+                  </label>
+                  <select
+                    value={selectedMealType}
+                    onChange={(e) => setSelectedMealType(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    {MEAL_TYPES.map((type) => (
+                      <option key={type.value} value={type.value}>
+                        {type.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-              {/* Detected items with editing */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-sm font-medium text-gray-900">
-                    Food Items ({draftItems.length})
-                  </h4>
-                  <div className="flex gap-2">
-                    {isEnhancingUsda && (
-                      <span className="text-xs text-blue-600 flex items-center gap-1">
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        Enhancing...
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setIsEditingItems(!isEditingItems)}
-                      className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
-                    >
-                      <Edit2 className="w-3 h-3" />
-                      {isEditingItems ? 'Done' : 'Edit'}
-                    </button>
-                    {isEditingItems && (
+                {/* Detected items with editing */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-medium text-gray-900">
+                      Food Items ({displayItems.length})
+                    </h4>
+                    <div className="flex gap-2">
+                      {isEnhancingUsda && (
+                        <span className="text-xs text-blue-600 flex items-center gap-1">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          Enhancing...
+                        </span>
+                      )}
                       <button
                         type="button"
-                        onClick={addItem}
-                        className="text-xs text-green-600 hover:text-green-800 flex items-center gap-1"
+                        onClick={() => setIsEditingItems(!isEditingItems)}
+                        className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
                       >
-                        + Add Item
+                        <Edit2 className="w-3 h-3" />
+                        {isEditingItems ? 'Done' : 'Edit'}
                       </button>
-                    )}
+                      {isEditingItems && (
+                        <button
+                          type="button"
+                          onClick={addItem}
+                          className="text-xs text-green-600 hover:text-green-800 flex items-center gap-1"
+                        >
+                          + Add Item
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {displayItems.map((item, index) => (
+                      <div
+                        key={index}
+                        className="p-3 bg-gray-50 rounded-lg border border-gray-200"
+                      >
+                        <div className="flex justify-between items-start mb-2">
+                          <p className="text-sm font-medium text-gray-900">
+                            {item.foodName}
+                          </p>
+                          {isEditingItems && (
+                            <button
+                              type="button"
+                              onClick={() => removeItem(index)}
+                              className="text-red-500 hover:text-red-700"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+
+                        {isEditingItems ? (
+                          <div className="space-y-2">
+                            <div>
+                              <label className="text-xs text-gray-600">Calories</label>
+                              <input
+                                type="number"
+                                value={item.calories}
+                                onChange={(e) => updateItemField(index, 'calories', e.target.value)}
+                                className="w-full px-2 py-1 text-sm border rounded"
+                              />
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                              <div>
+                                <label className="text-xs text-gray-600">Protein (g)</label>
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  value={item.protein.toFixed(1)}
+                                  onChange={(e) =>
+                                    updateItemField(index, 'protein', parseFloat(e.target.value) || 0)
+                                  }
+                                  className="w-full px-2 py-1 text-sm border rounded"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-xs text-gray-600">Carbs (g)</label>
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  value={item.carbs.toFixed(1)}
+                                  onChange={(e) =>
+                                    updateItemField(index, 'carbs', parseFloat(e.target.value) || 0)
+                                  }
+                                  className="w-full px-2 py-1 text-sm border rounded"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-xs text-gray-600">Fat (g)</label>
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  value={item.fat.toFixed(1)}
+                                  onChange={(e) =>
+                                    updateItemField(index, 'fat', parseFloat(e.target.value) || 0)
+                                  }
+                                  className="w-full px-2 py-1 text-sm border rounded"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-gray-500">
+                            {item.calories} cal • P: {item.protein.toFixed(1)}g • C:{' '}
+                            {item.carbs.toFixed(1)}g • F: {item.fat.toFixed(1)}g
+                          </p>
+                        )}
+
+                        <span className="inline-block mt-2 text-xs px-2 py-1 bg-gray-200 rounded">
+                          {item.source.replace('_', ' ')}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {draftItems.map((item, index) => (
-                    <div
-                      key={index}
-                      className="p-3 bg-gray-50 rounded-lg border border-gray-200"
+                {/* Total and save button */}
+                <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <div className="flex justify-between items-center mb-3">
+                    <span className="text-sm font-medium text-blue-900">Total Calories:</span>
+                    <span className="text-lg font-bold text-blue-900">
+                      {calculatedTotal.toFixed(0)} cal
+                    </span>
+                  </div>
+
+                  {uploadProgress === 'review' && (
+                    <button
+                      type="button"
+                      onClick={handleSaveDraft}
+                      disabled={saveInProgress}
+                      className="w-full py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
-                      <div className="flex justify-between items-start mb-2">
-                        <p className="text-sm font-medium text-gray-900">
-                          {item.foodName}
-                        </p>
-                        {isEditingItems && (
-                          <button
-                            type="button"
-                            onClick={() => removeItem(index)}
-                            className="text-red-500 hover:text-red-700"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-
-                      {isEditingItems ? (
-                        <div className="space-y-2">
-                          <div>
-                            <label className="text-xs text-gray-600">Calories</label>
-                            <input
-                              type="number"
-                              value={item.calories}
-                              onChange={(e) => updateItemField(index, 'calories', e.target.value)}
-                              className="w-full px-2 py-1 text-sm border rounded"
-                            />
-                          </div>
-                          <div className="grid grid-cols-3 gap-2">
-                            <div>
-                              <label className="text-xs text-gray-600">Protein (g)</label>
-                              <input
-                                type="number"
-                                step="0.1"
-                                value={item.protein.toFixed(1)}
-                                onChange={(e) => updateItemField(index, 'protein', parseFloat(e.target.value) || 0)}
-                                className="w-full px-2 py-1 text-sm border rounded"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-xs text-gray-600">Carbs (g)</label>
-                              <input
-                                type="number"
-                                step="0.1"
-                                value={item.carbs.toFixed(1)}
-                                onChange={(e) => updateItemField(index, 'carbs', parseFloat(e.target.value) || 0)}
-                                className="w-full px-2 py-1 text-sm border rounded"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-xs text-gray-600">Fat (g)</label>
-                              <input
-                                type="number"
-                                step="0.1"
-                                value={item.fat.toFixed(1)}
-                                onChange={(e) => updateItemField(index, 'fat', parseFloat(e.target.value) || 0)}
-                                className="w-full px-2 py-1 text-sm border rounded"
-                              />
-                            </div>
-                          </div>
-                        </div>
+                      {saveInProgress ? (
+                        <>
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                          Saving...
+                        </>
                       ) : (
-                        <p className="text-xs text-gray-500">
-                          {item.calories} cal • P: {item.protein.toFixed(1)}g • C: {item.carbs.toFixed(1)}g • F: {item.fat.toFixed(1)}g
-                        </p>
+                        <>
+                          <Save className="w-5 h-5" />
+                          Save to Log
+                        </>
                       )}
-
-                      <span className="inline-block mt-2 text-xs px-2 py-1 bg-gray-200 rounded">
-                        {item.source.replace('_', ' ')}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Total and save button */}
-              <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-sm font-medium text-blue-900">Total Calories:</span>
-                  <span className="text-lg font-bold text-blue-900">{calculatedTotal.toFixed(0)} cal</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleSaveDraft}
-                  disabled={saveInProgress}
-                  className="w-full py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {saveInProgress ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <Save className="w-5 h-5" />
-                      Save to Log
-                    </>
+                    </button>
                   )}
-                </button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
           {/* Success state */}
           {uploadProgress === 'complete' && (

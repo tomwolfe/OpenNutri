@@ -15,6 +15,7 @@ import {
   date,
   boolean,
   index,
+  primaryKey,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
@@ -55,7 +56,7 @@ export const userTargets = pgTable('user_targets', {
   fatTarget: integer('fat_target'),
   weightRecord: doublePrecision('weight_record'),
 }, (table) => ({
-  pk: { primaryKey: { columns: [table.userId, table.date] } },
+  pk: primaryKey({ columns: [table.userId, table.date] }),
 }));
 
 // ============================================
