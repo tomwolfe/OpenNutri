@@ -1,12 +1,12 @@
 /**
  * Snap-to-Log Component
  *
- * Food image capture and upload UI with real-time AI processing status.
- * Uses camera or file upload, then polls for AI analysis results.
- * 
+ * Food image capture and upload UI with real-time AI streaming.
+ * Uses camera or file upload, then streams AI analysis results in real-time.
+ *
  * Flow:
  * 1. User uploads image
- * 2. AI processes and returns draft analysis
+ * 2. AI streams analysis back in real-time
  * 3. User reviews and edits the draft (adjust portions, meal type)
  * 4. User confirms to save as verified food log
  */
@@ -15,7 +15,6 @@
 
 import { useState, useRef, useCallback } from 'react';
 import Image from 'next/image';
-import { useJobStatus } from '@/hooks/useJobStatus';
 import { Camera, Upload, X, CheckCircle, AlertCircle, Loader2, Edit2, Save } from 'lucide-react';
 
 interface DraftItem {
@@ -47,6 +46,28 @@ interface SnapToLogProps {
   onDraftSaved?: () => void;
 }
 
+interface StreamStatus {
+  type: 'status';
+  status: 'uploading' | 'analyzing' | 'enhancing';
+  message: string;
+}
+
+interface StreamResult {
+  type: 'result';
+  items: DraftItem[];
+  totalCalories: number;
+  aiConfidenceScore: number;
+  usdaMatchCount: number;
+  imageUrl: string;
+}
+
+interface StreamError {
+  type: 'error';
+  error: string;
+}
+
+type StreamMessage = StreamStatus | StreamResult | StreamError;
+
 const MEAL_TYPES = [
   { value: 'breakfast', label: 'Breakfast' },
   { value: 'lunch', label: 'Lunch' },
@@ -58,35 +79,16 @@ const MEAL_TYPES = [
 export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [uploadProgress, setUploadProgress] = useState<'idle' | 'uploading' | 'analyzing' | 'review' | 'complete'>('idle');
-  const [jobId, setJobId] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<'idle' | 'streaming' | 'review' | 'complete'>('idle');
+  const [streamError, setStreamError] = useState<string | null>(null);
   const [selectedMealType, setSelectedMealType] = useState<string>('unclassified');
   const [draftItems, setDraftItems] = useState<DraftItem[]>([]);
   const [isEditingItems, setIsEditingItems] = useState(false);
   const [saveInProgress, setSaveInProgress] = useState(false);
+  const [currentStatus, setCurrentStatus] = useState<string>('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Poll job status when we have a job ID
-  const { data: jobStatus, error: pollError } = useJobStatus(jobId, {
-    onComplete: (data) => {
-      if (data.foodLog && data.status === 'completed') {
-        // AI analysis complete - show review UI
-        setDraftItems(data.foodLog.items.map(item => ({
-          ...item,
-          servingGrams: 100, // Default serving size
-        })));
-        setUploadProgress('review');
-      }
-    },
-    onError: (errorMessage) => {
-      onError?.(errorMessage);
-      setUploadProgress('idle');
-    },
-  });
-
-  // Suppress unused variable warning - jobStatus is used in render
-  void jobStatus;
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Handle file selection
   const handleFileSelect = useCallback((file: File) => {
@@ -122,49 +124,92 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
     fileInputRef.current?.click();
   }, []);
 
-  // Upload image and start AI job
+  // Upload image and stream AI analysis
   const handleUpload = useCallback(async () => {
     if (!selectedFile) return;
 
-    setUploadProgress('uploading');
+    setUploadProgress('streaming');
+    setStreamError(null);
+    setCurrentStatus('Uploading image...');
+
+    // Create abort controller for canceling the stream
+    abortControllerRef.current = new AbortController();
 
     try {
       const formData = new FormData();
       formData.append('image', selectedFile);
       formData.append('mealType', selectedMealType);
 
-      const response = await fetch('/api/upload', {
+      const response = await fetch('/api/analyze', {
         method: 'POST',
         body: formData,
+        signal: abortControllerRef.current.signal,
       });
-
-      const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'Upload failed');
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Analysis failed');
       }
 
-      setJobId(data.jobId);
-      setUploadProgress('analyzing');
+      // Process the streaming response
+      const stream = response.body;
+      if (!stream) {
+        throw new Error('No stream available');
+      }
 
-      // Trigger immediate processing from the client (fire-and-forget)
-      // The polling mechanism will handle the actual result, so we suppress timeout errors
-      fetch(`/api/cron/process-ai-jobs?jobId=${data.jobId}`, {
-        method: 'POST',
-      }).catch(() => {
-        // Suppress timeout errors here. The 2-second poller
-        // to /api/jobs/[jobId]/status will handle the actual result.
-      });
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        // Parse stream data (Vercel AI SDK format: "0:{...}\n")
+        const lines = chunk.split('\n').filter(line => line.trim());
+
+        for (const line of lines) {
+          if (line.startsWith('0:')) {
+            try {
+              const jsonStr = line.slice(2);
+              const message: StreamMessage = JSON.parse(jsonStr);
+
+              if (message.type === 'status') {
+                setCurrentStatus(message.message);
+                setUploadProgress('streaming');
+              } else if (message.type === 'result') {
+                // Analysis complete
+                setDraftItems(message.items);
+                setUploadProgress('review');
+                setCurrentStatus('');
+              } else if (message.type === 'error') {
+                throw new Error(message.error);
+              }
+            } catch {
+              // Ignore JSON parse errors for partial chunks
+            }
+          }
+        }
+      }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Upload failed';
-      onError?.(errorMessage);
+      if (err instanceof Error && err.name === 'AbortError') {
+        // Stream was canceled
+        setUploadProgress('idle');
+        return;
+      }
+
+      const errorMessage = err instanceof Error ? err.message : 'Analysis failed';
+      setStreamError(errorMessage);
       setUploadProgress('idle');
+      onError?.(errorMessage);
+    } finally {
+      abortControllerRef.current = null;
     }
   }, [selectedFile, selectedMealType, onError]);
 
   // Save draft as verified food log
   const handleSaveDraft = useCallback(async () => {
-    if (!jobId || draftItems.length === 0) return;
+    if (draftItems.length === 0) return;
 
     setSaveInProgress(true);
 
@@ -180,7 +225,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
           mealType: selectedMealType,
           items: draftItems,
           totalCalories,
-          jobId,
+          aiConfidenceScore: 0.8, // Default confidence for AI-assisted entries
         }),
       });
 
@@ -209,17 +254,22 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
     } finally {
       setSaveInProgress(false);
     }
-  }, [jobId, draftItems, selectedMealType, onComplete, onError, onDraftSaved]);
+  }, [draftItems, selectedMealType, onComplete, onError, onDraftSaved]);
 
   // Clear selection and reset
   const handleClear = useCallback(() => {
     setSelectedFile(null);
     setPreviewUrl(null);
-    setJobId(null);
     setDraftItems([]);
     setSelectedMealType('unclassified');
     setIsEditingItems(false);
     setUploadProgress('idle');
+    setStreamError(null);
+    setCurrentStatus('');
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -253,8 +303,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
 
   // Convert failed AI scan to manual log entry
   const handleConvertToManual = useCallback(() => {
-    // Clear the failed job but keep the image preview
-    setJobId(null);
+    // Clear the failed stream but keep the image preview
     setDraftItems([{
       foodName: '',
       calories: 0,
@@ -266,6 +315,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
     }]);
     setUploadProgress('review');
     setIsEditingItems(true);
+    setStreamError(null);
   }, []);
 
   // Add new item to draft
@@ -287,18 +337,11 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
   // Render status message
   const renderStatus = () => {
     switch (uploadProgress) {
-      case 'uploading':
+      case 'streaming':
         return (
           <div className="flex items-center gap-2 text-blue-600">
             <Loader2 className="w-4 h-4 animate-spin" />
-            <span>Uploading image...</span>
-          </div>
-        );
-      case 'analyzing':
-        return (
-          <div className="flex items-center gap-2 text-blue-600">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span>AI is analyzing your food...</span>
+            <span>{currentStatus || 'AI is analyzing your food...'}</span>
           </div>
         );
       case 'review':
@@ -414,24 +457,19 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
           )}
 
           {/* Status */}
-          {uploadProgress !== 'idle' && uploadProgress !== 'review' && uploadProgress !== 'complete' && (
+          {uploadProgress === 'streaming' && (
             <div className="p-3 bg-gray-50 rounded-lg">
               {renderStatus()}
-              {jobId && (
-                <p className="text-xs text-gray-500 mt-2">
-                  Job ID: {jobId.slice(0, 8)}...
-                </p>
-              )}
             </div>
           )}
 
           {/* Error display */}
-          {pollError && (
+          {streamError && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
               <AlertCircle className="w-4 h-4 text-red-600 mt-0.5" />
               <div className="flex-1">
                 <p className="text-sm font-medium text-red-900">Analysis failed</p>
-                <p className="text-xs text-red-700">{pollError}</p>
+                <p className="text-xs text-red-700">{streamError}</p>
                 <div className="flex gap-2 mt-3">
                   <button
                     type="button"

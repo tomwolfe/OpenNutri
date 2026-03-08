@@ -3,13 +3,13 @@
  * GET /api/export?format=json|csv
  *
  * Exports user's complete data for privacy compliance.
- * Includes: food logs, weight records, targets, AI jobs history.
+ * Includes: food logs, weight records, targets.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
-import { foodLogs, logItems, userTargets, aiJobs } from '@/db/schema';
+import { foodLogs, logItems, userTargets } from '@/db/schema';
 import { eq, desc } from 'drizzle-orm';
 
 /**
@@ -21,7 +21,6 @@ async function exportAsJSON(userId: string) {
     .select({
       id: foodLogs.id,
       userId: foodLogs.userId,
-      jobId: foodLogs.jobId,
       timestamp: foodLogs.timestamp,
       mealType: foodLogs.mealType,
       totalCalories: foodLogs.totalCalories,
@@ -66,19 +65,6 @@ async function exportAsJSON(userId: string) {
     .where(eq(userTargets.userId, userId))
     .orderBy(desc(userTargets.date));
 
-  // Fetch AI jobs history
-  const aiJobsHistory = await db
-    .select({
-      id: aiJobs.id,
-      imageUrl: aiJobs.imageUrl,
-      status: aiJobs.status,
-      createdAt: aiJobs.createdAt,
-      completedAt: aiJobs.completedAt,
-    })
-    .from(aiJobs)
-    .where(eq(aiJobs.userId, userId))
-    .orderBy(desc(aiJobs.createdAt));
-
   // Compile complete export data
   const exportData = {
     exportedAt: new Date().toISOString(),
@@ -86,7 +72,7 @@ async function exportAsJSON(userId: string) {
     summary: {
       totalLogs: logs.length,
       totalWeightRecords: weightRecords.filter((w) => w.weight !== null).length,
-      totalAiScans: aiJobsHistory.length,
+      totalAiScans: logs.filter((log) => log.aiConfidenceScore && log.aiConfidenceScore > 0).length,
       dateRange: {
         earliest: logs.length > 0 ? logs[logs.length - 1].timestamp : null,
         latest: logs.length > 0 ? logs[0].timestamp : null,
@@ -94,7 +80,6 @@ async function exportAsJSON(userId: string) {
     },
     foodLogs: logsWithItems,
     weightRecords,
-    aiJobsHistory,
   };
 
   return exportData;

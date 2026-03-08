@@ -14,6 +14,7 @@ src/
 │   ├── api/
 │   │   ├── auth/            # NextAuth endpoints
 │   │   ├── food/usda        # USDA food search API
+│   │   ├── analyze          # AI vision streaming endpoint
 │   │   └── log/             # Food logging endpoints
 │   ├── layout.tsx           # Root layout with SessionProvider
 │   └── page.tsx             # Landing page
@@ -28,13 +29,16 @@ src/
 │   └── schema/
 │       └── index.ts         # Database schema
 ├── hooks/                   # Custom React hooks
+│   └── use-stream.ts        # Streaming response utilities
 ├── lib/
 │   ├── auth.ts              # NextAuth configuration
 │   ├── db.ts                # NeonDB connection
-│   └── usda.ts              # USDA API client
+│   ├── usda.ts              # USDA API client
+│   ├── ai-limits.ts         # AI rate limiting
+│   ├── ai-usda-bridge.ts    # USDA data enhancement
+│   └── glm-vision-stream.ts # Vision AI streaming (Zhipu GLM)
 ├── stores/                  # Zustand stores
-├── types/                   # TypeScript types
-└── workers/                 # AI job workers (Phase 2)
+└── types/                   # TypeScript types
 ```
 
 ## Tech Stack
@@ -46,6 +50,7 @@ src/
 - **Auth:** NextAuth v5 (Credentials provider)
 - **UI:** Tailwind CSS + Shadcn/UI
 - **State:** Zustand
+- **AI Streaming:** Vercel AI SDK (`@ai-sdk/openai`)
 - **Hosting:** Vercel (Hobby tier)
 
 ## Getting Started
@@ -67,15 +72,14 @@ src/
    ```bash
    cp .env.example .env.local
    ```
-   
+
    Edit `.env.local` with your credentials:
    - `DATABASE_URL`: NeonDB connection string
    - `NEXTAUTH_SECRET`: Generate with `openssl rand -base64 32`
    - `NEXTAUTH_URL`: Your app URL (http://localhost:3000 for dev)
    - `USDA_API_KEY`: USDA FoodData Central API key (optional)
-   - `BLOB_READ_WRITE_TOKEN`: Vercel Blob token (Phase 2)
-   - `GLM_API_KEY`: Zhipu GLM Vision API key (Phase 2)
-   - `CRON_SECRET`: Cron worker secret (optional, Phase 2)
+   - `BLOB_READ_WRITE_TOKEN`: Vercel Blob token
+   - `GLM_API_KEY`: Zhipu GLM Vision API key
    - `AI_SCAN_LIMIT_FREE`: Daily AI scan limit (default: 5)
 
 3. **Set up the database:**
@@ -111,42 +115,68 @@ npm run db:studio     # Open Drizzle Studio
 ## Phase 2 Features (Complete ✅)
 
 - ✅ Vision AI integration (Zhipu GLM-4.6V-Flash)
-- ✅ Async job processing with Vercel Cron
+- ✅ **Real-time streaming architecture** (no polling)
 - ✅ Image upload with Vercel Blob
-- ✅ Client-side job status polling (`useJobStatus` hook)
 - ✅ AI scan rate limiting (5/day for free users)
-- ✅ Semantic caching for food descriptions
+- ✅ USDA data enhancement
 - ✅ Snap-to-Log UI component (camera + upload)
 - ✅ AI usage tracker with daily progress
 
 ## Architecture Notes
 
-### Async Job Pattern (Phase 2)
+### Streaming Architecture (Current)
 
 ```
-Upload → Create Pending Job → Return Job ID → Client Polls → Cron Worker → AI → DB Update
+Upload → Stream AI Response → Real-time Display → User Review → Save
 ```
 
-**Why?** Vercel Hobby functions timeout at 10s. AI vision takes 30-60s.
+**Why streaming?** Vercel Hobby functions timeout at 10s for non-streaming responses, but AI vision takes 30-60s. By using Vercel AI SDK's streaming capabilities, we keep the connection alive with continuous data flow, allowing the function to run for up to 120 seconds.
 
-**Solution:**
-1. Upload creates `pending` job in DB
-2. Client polls `/api/jobs/[id]/status` every 2s
-3. Vercel Cron triggers worker every minute
-4. Worker calls GLM Vision API
-5. Worker updates job to `completed` with results
+**Flow:**
+1. User uploads food image via `/api/analyze`
+2. Image uploaded to Vercel Blob
+3. Server initiates streaming connection to client
+4. GLM Vision API processes image (30-60s)
+5. Response streams back token-by-token
+6. Client parses and displays results in real-time
+7. User reviews and confirms the AI analysis
+8. Verified data saved to food_logs table
+
+**Benefits:**
+- ✅ No database polling (saves NeonDB compute)
+- ✅ No cron jobs needed
+- ✅ No stuck/failed job cleanup
+- ✅ Better UX with real-time feedback
+- ✅ Simpler architecture (no job queue)
+
+### Previous Architecture (Removed)
+
+The original implementation used an async job polling pattern:
+- ❌ `ai_jobs` table for job queue
+- ❌ Vercel Cron every minute
+- ❌ Client polling every 2 seconds
+- ❌ Complex job state management (pending/processing/completed/failed)
+- ❌ Timeout and retry logic
+
+This was replaced with streaming for simplicity and reliability.
 
 ### Serverless Considerations
 
-- **Vercel Timeout:** AI processing uses async job pattern (DB polling + Cron)
-- **Database Size:** Images stored in Vercel Blob, only URLs in database
+- **Vercel Timeout:** Streaming allows up to 120s execution (vs 10s normal)
+- **Database:** Only final results stored, no job queue needed
 - **Connection Pooling:** Neon serverless driver handles pooling automatically
-- **Cron Schedule:** `* * * * *` (every minute) via `vercel.json`
+- **Rate Limiting:** AI scans tracked via food_logs table (aiConfidenceScore > 0)
+
+### Database Schema
+
+**food_logs** table tracks all meals:
+- `aiConfidenceScore > 0` → AI-assisted entry (counts toward daily limit)
+- `aiConfidenceScore = 0` or `null` → Manual entry (unlimited)
 
 ### Privacy
 
 - No data selling
-- Full data export capability (Phase 3)
+- Full data export capability (`/api/export`)
 - E2E encryption options (Phase 3)
 
 ## License

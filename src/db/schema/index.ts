@@ -85,30 +85,6 @@ export const userTargets = pgTable('user_targets', {
 }));
 
 // ============================================
-// AI Jobs Table (async vision processing)
-// ============================================
-export const aiJobs = pgTable('ai_jobs', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  userId: text('user_id').references(() => users.id),
-  imageUrl: text('image_url'),
-  imageHash: text('image_hash'), // For caching
-  mealTypeHint: text('meal_type_hint'), // Meal type hint from upload
-  rawAiResponse: text('raw_ai_response'), // JSON string of GLM API response
-  draftAnalysis: text('draft_analysis'), // JSON string of final frontend draft
-  status: text('status').default('pending'), // pending, processing, completed, failed
-  retryCount: integer('retry_count').default(0),
-  errorMessage: text('error_message'),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
-  completedAt: timestamp('completed_at', { withTimezone: true }),
-}, (table) => ({
-  userIdIdx: index('ai_jobs_user_id_idx').on(table.userId),
-  statusIdx: index('ai_jobs_status_idx').on(table.status),
-  imageHashIdx: index('ai_jobs_image_hash_idx').on(table.imageHash),
-  createdAtIdx: index('ai_jobs_created_at_idx').on(table.createdAt),
-}));
-
-// ============================================
 // Food Logs Table (daily meal entries)
 // ============================================
 export const foodLogs = pgTable('food_logs', {
@@ -116,16 +92,14 @@ export const foodLogs = pgTable('food_logs', {
   userId: text('user_id')
     .references(() => users.id, { onDelete: 'cascade' })
     .notNull(),
-  jobId: uuid('job_id').references(() => aiJobs.id),
   timestamp: timestamp('timestamp', { withTimezone: true }).defaultNow(),
   mealType: text('meal_type'), // breakfast, lunch, dinner, snack
   totalCalories: integer('total_calories'),
-  aiConfidenceScore: doublePrecision('ai_confidence_score'),
+  aiConfidenceScore: doublePrecision('ai_confidence_score'), // >0 for AI-assisted, 0/null for manual
   isVerified: boolean('is_verified').default(false),
 }, (table) => ({
   userIdIdx: index('food_logs_user_id_idx').on(table.userId),
   timestampIdx: index('food_logs_timestamp_idx').on(table.timestamp),
-  jobIdIdx: index('food_logs_job_id_idx').on(table.jobId),
 }));
 
 // ============================================
@@ -153,7 +127,6 @@ export const logItems = pgTable('log_items', {
 
 export const usersRelations = relations(users, ({ many }) => ({
   userTargets: many(userTargets),
-  aiJobs: many(aiJobs),
   foodLogs: many(foodLogs),
 }));
 
@@ -164,22 +137,10 @@ export const userTargetsRelations = relations(userTargets, ({ one }) => ({
   }),
 }));
 
-export const aiJobsRelations = relations(aiJobs, ({ one, many }) => ({
-  user: one(users, {
-    fields: [aiJobs.userId],
-    references: [users.id],
-  }),
-  foodLogs: many(foodLogs),
-}));
-
 export const foodLogsRelations = relations(foodLogs, ({ one, many }) => ({
   user: one(users, {
     fields: [foodLogs.userId],
     references: [users.id],
-  }),
-  aiJob: one(aiJobs, {
-    fields: [foodLogs.jobId],
-    references: [aiJobs.id],
   }),
   logItems: many(logItems),
 }));
@@ -200,9 +161,6 @@ export type NewUser = typeof users.$inferInsert;
 
 export type UserTargets = typeof userTargets.$inferSelect;
 export type NewUserTargets = typeof userTargets.$inferInsert;
-
-export type AiJob = typeof aiJobs.$inferSelect;
-export type NewAiJob = typeof aiJobs.$inferInsert;
 
 export type FoodLog = typeof foodLogs.$inferSelect;
 export type NewFoodLog = typeof foodLogs.$inferInsert;

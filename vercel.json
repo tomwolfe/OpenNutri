@@ -1,11 +1,2 @@
 {
-  "crons": [
-    {
-      "path": "/api/cron/process-ai-jobs",
-      "schedule": "* * * * *",
-      "headers": {
-        "Authorization": "Bearer ${CRON_SECRET}"
-      }
-    }
-  ]
 }
