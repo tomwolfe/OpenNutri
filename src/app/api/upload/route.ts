@@ -93,8 +93,8 @@ export async function POST(request: NextRequest) {
         userId,
         imageUrl,
         imageHash,
+        mealTypeHint: mealTypeHint,
         status: 'pending',
-        cachedAnalysis: mealTypeHint ? JSON.stringify({ mealTypeHint }) : null,
       })
       .returning();
 

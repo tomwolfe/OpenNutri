@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { processAiJobsQueue } from '@/workers/ai-jobs-processor';
 import { auth } from '@/lib/auth';
 
-export const maxDuration = 60; // 60 seconds max for cron job
+export const runtime = 'edge';
 
 /**
  * POST /api/cron/process-ai-jobs

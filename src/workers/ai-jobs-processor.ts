@@ -31,7 +31,6 @@ import { enhanceWithUSDAData } from '@/lib/ai-usda-bridge';
 const MAX_JOBS_PER_RUN = 10; // Process max 10 jobs per cron invocation
 const JOB_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes before marking stuck jobs as failed
 const MAX_RETRIES = 3; // Maximum retry attempts for failed jobs
-const BASE_RETRY_DELAY_MS = 1000; // Base delay for exponential backoff (1s)
 
 /**
  * Fetch pending AI jobs from the queue
@@ -51,7 +50,7 @@ export async function fetchPendingJobs(limit: number = MAX_JOBS_PER_RUN) {
     .where(
       and(
         eq(aiJobs.status, 'processing'),
-        lte(aiJobs.createdAt, cutoffTime)
+        lte(aiJobs.updatedAt, cutoffTime)
       )
     );
 
@@ -75,6 +74,7 @@ export async function markJobProcessing(jobId: string) {
     .update(aiJobs)
     .set({
       status: 'processing',
+      updatedAt: new Date(),
     })
     .where(eq(aiJobs.id, jobId));
 }
@@ -88,6 +88,7 @@ export async function markJobCompleted(jobId: string) {
     .update(aiJobs)
     .set({
       status: 'completed',
+      updatedAt: new Date(),
       completedAt: new Date(),
     })
     .where(eq(aiJobs.id, jobId));
@@ -115,6 +116,7 @@ export async function markJobFailed(
       status: shouldRetry ? 'pending' : 'failed',
       retryCount: shouldRetry ? retryCount + 1 : retryCount,
       errorMessage: error,
+      updatedAt: new Date(),
       completedAt: shouldRetry ? null : new Date(),
     })
     .where(eq(aiJobs.id, jobId));
@@ -134,18 +136,8 @@ export async function processAiJob(job: typeof aiJobs.$inferSelect): Promise<boo
   const imageUrl = job.imageUrl;
   const currentRetryCount = job.retryCount ?? 0;
 
-  // Extract meal type hint from cachedAnalysis if present
-  let mealTypeHint: string | null = null;
-  if (job.cachedAnalysis) {
-    try {
-      const tempData = JSON.parse(job.cachedAnalysis);
-      if (tempData.mealTypeHint) {
-        mealTypeHint = tempData.mealTypeHint;
-      }
-    } catch {
-      // Ignore parse errors for temporary data
-    }
-  }
+  // Extract meal type hint from the dedicated column
+  const mealTypeHint: string | null = job.mealTypeHint ?? null;
 
   if (!imageUrl) {
     await markJobFailed(jobId, 'No image URL', currentRetryCount);
@@ -218,7 +210,7 @@ export async function processAiJob(job: typeof aiJobs.$inferSelect): Promise<boo
       usdaMatch: 'usdaMatch' in item ? item.usdaMatch : undefined,
     }));
 
-    // Save analysis as draft in cachedAnalysis
+    // Save raw AI response and draft analysis to dedicated columns
     const draftAnalysis = {
       items: draftItems,
       totalCalories,
@@ -229,7 +221,8 @@ export async function processAiJob(job: typeof aiJobs.$inferSelect): Promise<boo
     await db
       .update(aiJobs)
       .set({
-        cachedAnalysis: JSON.stringify(draftAnalysis),
+        rawAiResponse: JSON.stringify(analysisResult),
+        draftAnalysis: JSON.stringify(draftAnalysis),
         status: 'completed',
         completedAt: new Date(),
       })
@@ -243,22 +236,17 @@ export async function processAiJob(job: typeof aiJobs.$inferSelect): Promise<boo
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     const shouldRetry = await markJobFailed(jobId, errorMessage, currentRetryCount);
-    
+
     if (shouldRetry) {
-      // Calculate exponential backoff delay
-      const backoffDelay = BASE_RETRY_DELAY_MS * Math.pow(2, currentRetryCount);
       console.log(
-        `Job ${jobId} failed with "${errorMessage}". Retrying after ${backoffDelay}ms (attempt ${currentRetryCount + 1}/${MAX_RETRIES})`
+        `Job ${jobId} failed with "${errorMessage}". Will be retried on next tick (attempt ${currentRetryCount + 1}/${MAX_RETRIES})`
       );
-      
-      // Add delay before retry (pending status will be picked up in next cron run)
-      await new Promise((resolve) => setTimeout(resolve, backoffDelay));
     } else {
       console.error(
         `Job ${jobId} failed permanently after ${MAX_RETRIES} retries: ${errorMessage}`
       );
     }
-    
+
     return false;
   }
 }

@@ -61,8 +61,8 @@ export async function POST(request: NextRequest) {
           jobId,
           mealType,
           totalCalories,
-          aiConfidenceScore: job.cachedAnalysis 
-            ? JSON.parse(job.cachedAnalysis).aiConfidenceScore 
+          aiConfidenceScore: job.draftAnalysis
+            ? JSON.parse(job.draftAnalysis).aiConfidenceScore
             : 0,
           isVerified: true,
         })

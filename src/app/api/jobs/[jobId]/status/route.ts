@@ -77,10 +77,10 @@ export async function GET(
       response.completedAt = job.completedAt.toISOString();
     }
 
-    // If completed, check for draft analysis in cachedAnalysis
-    if (job.status === 'completed' && job.cachedAnalysis) {
+    // If completed, check for draft analysis
+    if (job.status === 'completed' && job.draftAnalysis) {
       try {
-        const draftAnalysis = JSON.parse(job.cachedAnalysis) as {
+        const draftAnalysis = JSON.parse(job.draftAnalysis) as {
           items: Array<{
             foodName: string;
             calories: number;
@@ -103,7 +103,7 @@ export async function GET(
           items: draftAnalysis.items || [],
         };
       } catch (e) {
-        console.error('Failed to parse cachedAnalysis:', e);
+        console.error('Failed to parse draftAnalysis:', e);
       }
     }
 

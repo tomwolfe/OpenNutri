@@ -92,11 +92,14 @@ export const aiJobs = pgTable('ai_jobs', {
   userId: text('user_id').references(() => users.id),
   imageUrl: text('image_url'),
   imageHash: text('image_hash'), // For caching
-  cachedAnalysis: text('cached_analysis'), // JSON string of cached result
+  mealTypeHint: text('meal_type_hint'), // Meal type hint from upload
+  rawAiResponse: text('raw_ai_response'), // JSON string of GLM API response
+  draftAnalysis: text('draft_analysis'), // JSON string of final frontend draft
   status: text('status').default('pending'), // pending, processing, completed, failed
   retryCount: integer('retry_count').default(0),
   errorMessage: text('error_message'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   completedAt: timestamp('completed_at', { withTimezone: true }),
 }, (table) => ({
   userIdIdx: index('ai_jobs_user_id_idx').on(table.userId),

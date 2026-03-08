@@ -147,11 +147,13 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
       setJobId(data.jobId);
       setUploadProgress('analyzing');
 
-      // Trigger immediate processing from the client
+      // Trigger immediate processing from the client (fire-and-forget)
+      // The polling mechanism will handle the actual result, so we suppress timeout errors
       fetch(`/api/cron/process-ai-jobs?jobId=${data.jobId}`, {
         method: 'POST',
-      }).catch((err) => {
-        console.error('Immediate processing trigger failed:', err);
+      }).catch(() => {
+        // Suppress timeout errors here. The 2-second poller
+        // to /api/jobs/[jobId]/status will handle the actual result.
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Upload failed';

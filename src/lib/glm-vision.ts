@@ -60,7 +60,7 @@ export async function createImageHash(imageUrl: string): Promise<string> {
 export async function getCachedImageAnalysis(
   imageHash: string
 ): Promise<VisionAnalysisResult | null> {
-  // Find completed jobs with this image hash and cached analysis
+  // Find completed jobs with this image hash and raw AI response
   const [cachedJob] = await db
     .select()
     .from(aiJobs)
@@ -68,15 +68,15 @@ export async function getCachedImageAnalysis(
       and(
         eq(aiJobs.imageHash, imageHash),
         eq(aiJobs.status, 'completed'),
-        eq(aiJobs.cachedAnalysis, sql`IS NOT NULL`)
+        eq(aiJobs.rawAiResponse, sql`IS NOT NULL`)
       )
     )
     .orderBy(aiJobs.completedAt)
     .limit(1);
 
-  if (cachedJob?.cachedAnalysis) {
+  if (cachedJob?.rawAiResponse) {
     try {
-      return JSON.parse(cachedJob.cachedAnalysis) as VisionAnalysisResult;
+      return JSON.parse(cachedJob.rawAiResponse) as VisionAnalysisResult;
     } catch {
       return null;
     }
@@ -101,12 +101,12 @@ export async function saveAnalysisToCache(
       .update(aiJobs)
       .set({
         imageHash,
-        cachedAnalysis: JSON.stringify(result),
+        rawAiResponse: JSON.stringify(result),
       })
       .where(
         and(
           eq(aiJobs.imageHash, imageHash),
-          eq(aiJobs.cachedAnalysis, sql`IS NULL`)
+          eq(aiJobs.rawAiResponse, sql`IS NULL`)
         )
       );
 
