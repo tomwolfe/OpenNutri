@@ -4,11 +4,13 @@
  * Automatically matches AI-detected food items with USDA database entries
  * to provide more accurate and "official" nutritional data.
  *
- * Uses in-memory LRU cache for faster repeated lookups.
+ * Uses semantic search (pgvector) for intelligent matching.
+ * Falls back to Levenshtein distance for edge cases.
  */
 
 import { searchFoods, extractMacros, type USDAFoodItem } from '@/lib/usda';
 import { getCachedUSDAMatch, cacheUSDAMatch } from '@/lib/ai-usda-cache';
+import { hybridMatch } from '@/lib/ai-usda-semantic';
 
 /**
  * Calculate Levenshtein distance between two strings
@@ -66,39 +68,43 @@ function stringSimilarity(str1: string, str2: string): number {
  */
 export async function matchFoodToUSDA(foodName: string): Promise<USDAFoodItem | null> {
   try {
-    // Check cache first
+    // Check in-memory cache first (fastest)
     const cachedFdcId = getCachedUSDAMatch(foodName);
     if (cachedFdcId) {
       console.log(`Cache hit for "${foodName}" -> FDC ID: ${cachedFdcId}`);
-      // Fetch full details from cache or API
       const details = await getFoodDetailsWithCache(cachedFdcId);
       return details;
     }
 
-    // Clean up the food name for better search
+    // Use semantic matching (pgvector) with Levenshtein fallback
+    const semanticMatch = await hybridMatch(foodName);
+    
+    if (semanticMatch) {
+      console.log(`Semantic match for "${foodName}" -> FDC ID: ${semanticMatch.fdcId}`);
+      cacheUSDAMatch(foodName, semanticMatch.fdcId);
+      return semanticMatch;
+    }
+
+    // Final fallback: direct keyword search
     const cleanName = foodName
       .replace(/\b(?:grilled|fried|baked|roasted|steamed|boiled)\b/gi, '')
       .replace(/\s+/g, ' ')
       .trim()
-      .slice(0, 50); // Limit length for API
+      .slice(0, 50);
 
     if (cleanName.length < 2) {
       return null;
     }
 
-    // Search USDA database with more results for better matching
     const results = await searchFoods(cleanName, 10, 1);
-
+    
     if (!results.foods || results.foods.length === 0) {
       return null;
     }
 
-    // Find best match using Levenshtein distance and word overlap
     const bestMatch = findBestMatch(cleanName, results.foods);
-
-    // Cache the result if we found a good match
+    
     if (bestMatch) {
-      console.log(`Caching "${foodName}" -> FDC ID: ${bestMatch.fdcId}`);
       cacheUSDAMatch(foodName, bestMatch.fdcId);
     }
 

@@ -16,6 +16,7 @@ import {
   boolean,
   index,
   primaryKey,
+  vector,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
@@ -83,6 +84,10 @@ export const foodLogs = pgTable('food_logs', {
   isVerified: boolean('is_verified').default(false),
   imageUrl: text('image_url'), // Vercel Blob URL for meal photo
   notes: text('notes'), // AI-generated explanations or user notes
+  // E2E encryption fields (Phase 3)
+  encryptedData: text('encrypted_data'), // Encrypted log items (AES-GCM)
+  encryptionIv: text('encryption_iv'), // IV for decryption
+  encryptionSalt: text('encryption_salt'), // Salt for key derivation
 }, (table) => ({
   userIdIdx: index('food_logs_user_id_idx').on(table.userId),
   timestampIdx: index('food_logs_timestamp_idx').on(table.timestamp),
@@ -147,6 +152,59 @@ export const logItemsRelations = relations(logItems, ({ one }) => ({
 }));
 
 // ============================================
+// USDA Cache Table with Vector Embeddings
+// ============================================
+/**
+ * Caches USDA food items with their vector embeddings for semantic search.
+ * Embeddings are generated from food descriptions for similarity matching.
+ */
+export const usdaCache = pgTable('usda_cache', {
+  fdcId: integer('fdc_id').primaryKey(),
+  description: text('description').notNull(),
+  dataType: text('data_type'),
+  embedding: vector('embedding', { dimensions: 1024 }), // GLM embedding dimension
+  calories: doublePrecision('calories'),
+  protein: doublePrecision('protein'),
+  carbs: doublePrecision('carbs'),
+  fat: doublePrecision('fat'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  lastAccessed: timestamp('last_accessed', { withTimezone: true }).defaultNow(),
+}, (table) => ({
+  // Vector similarity index for fast semantic search
+  embeddingIdx: index('usda_cache_embedding_idx')
+    .using('hnsw', table.embedding.op('vector_cosine_ops')),
+  descriptionIdx: index('usda_cache_description_idx').on(table.description),
+  lastAccessedIdx: index('usda_cache_last_accessed_idx').on(table.lastAccessed),
+}));
+
+export const usdaCacheRelations = relations(usdaCache, () => ({}));
+
+// ============================================
+// User Encryption Keys Table
+// ============================================
+/**
+ * Stores encryption key metadata for E2E encryption.
+ * The actual key is encrypted with user's password and never stored in plaintext.
+ */
+export const userKeys = pgTable('user_keys', {
+  userId: text('user_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .primaryKey(),
+  salt: text('salt').notNull(), // Salt for PBKDF2 key derivation
+  encryptedVaultKey: text('encrypted_vault_key').notNull(), // Encrypted master key
+  encryptionIv: text('encryption_iv').notNull(), // IV for decryption
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  lastRotated: timestamp('last_rotated', { withTimezone: true }),
+});
+
+export const userKeysRelations = relations(userKeys, ({ one }) => ({
+  user: one(users, {
+    fields: [userKeys.userId],
+    references: [users.id],
+  }),
+}));
+
+// ============================================
 // Type Exports (for TypeScript)
 // ============================================
 
@@ -164,3 +222,9 @@ export type NewFoodLog = typeof foodLogs.$inferInsert;
 
 export type LogItem = typeof logItems.$inferSelect;
 export type NewLogItem = typeof logItems.$inferInsert;
+
+export type UsdaCache = typeof usdaCache.$inferSelect;
+export type NewUsdaCache = typeof usdaCache.$inferInsert;
+
+export type UserKeys = typeof userKeys.$inferSelect;
+export type NewUserKeys = typeof userKeys.$inferInsert;

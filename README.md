@@ -82,17 +82,24 @@ src/
    - `GLM_API_KEY`: Zhipu GLM Vision API key
    - `AI_SCAN_LIMIT_FREE`: Daily AI scan limit (default: 5)
 
-3. **Set up the database:**
+3. **Enable pgvector in NeonDB:**
+   ```bash
+   npx tsx scripts/setup-pgvector.ts
+   ```
+   
+   This enables semantic food matching (e.g., "fried bird" → "Fried Chicken").
+
+4. **Set up the database:**
    ```bash
    npm run db:push
    ```
 
-4. **Run development server:**
+5. **Run development server:**
    ```bash
    npm run dev
    ```
 
-5. **Open http://localhost:3000**
+6. **Open http://localhost:3000**
 
 ## Database Scripts
 
@@ -122,7 +129,34 @@ npm run db:studio     # Open Drizzle Studio
 - ✅ Snap-to-Log UI component (camera + upload)
 - ✅ AI usage tracker with daily progress
 
+## Phase 3 Features (In Progress 🚧)
+
+- ✅ **Semantic food matching** (pgvector)
+- ✅ **E2E encryption** (Web Crypto API / AES-GCM)
+- ⬜ Barcode scanning for packaged foods
+- ⬜ Apple Health / Google Fit integration
+
 ## Architecture Notes
+
+### Semantic Food Matching (New)
+
+```
+AI Detection → Generate Embedding → Vector Search (pgvector) → USDA Match
+```
+
+**Why semantic search?** Traditional string matching (Levenshtein) fails on:
+- "fried bird" vs "Fried Chicken" ❌
+- "grilled salmon fillet" vs "Salmon, grilled" ❌
+
+Semantic search using vector embeddings understands meaning:
+- "fried bird" → embedding → cosine similarity → "Fried Chicken" ✅
+- "grilled salmon" → embedding → "Salmon, grilled" ✅
+
+**Implementation:**
+- Uses GLM embedding API (same provider as vision)
+- 1024-dimensional vectors stored in NeonDB with pgvector
+- HNSW index for fast similarity search (<10ms)
+- Automatic caching: every match populates the cache for future searches
 
 ### Streaming Architecture (Current)
 
@@ -175,9 +209,28 @@ This was replaced with streaming for simplicity and reliability.
 
 ### Privacy
 
-- No data selling
-- Full data export capability (`/api/export`)
-- E2E encryption options (Phase 3)
+- ✅ No data selling
+- ✅ Full data export capability (`/api/export`)
+- ✅ **E2E encryption** (AES-GCM, PBKDF2 key derivation)
+- ✅ Semantic matching runs server-side (no client data leakage)
+- 🔒 Encryption keys never leave the client
+- 🔒 Server stores only encrypted food logs (zero-knowledge architecture)
+
+### Migration from Levenshtein Matching
+
+If you're upgrading from the string-based matching:
+
+1. **Run the pgvector setup:**
+   ```bash
+   npx tsx scripts/setup-pgvector.ts
+   npm run db:push
+   ```
+
+2. **Existing data is preserved:** The new system is additive - it builds a cache of embeddings as foods are matched.
+
+3. **Optional: Pre-populate cache** - If you have frequently logged foods, you can pre-generate embeddings by running a custom script.
+
+The system automatically falls back to Levenshtein matching if pgvector is unavailable, ensuring backward compatibility.
 
 ## License
 

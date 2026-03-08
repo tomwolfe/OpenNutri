@@ -29,6 +29,7 @@
     "nanoid": "^5.1.6",
     "next": "14.2.35",
     "next-auth": "^5.0.0-beta.30",
+    "pgvector": "^0.2.1",
     "react": "^18",
     "react-day-picker": "^9.14.0",
     "react-dom": "^18",
