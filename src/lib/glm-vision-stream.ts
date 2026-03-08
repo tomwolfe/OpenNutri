@@ -30,6 +30,10 @@ const FoodAnalysisSchema = z.object({
       fat_g: z.number().describe('Fat in grams'),
       confidence: z.number().describe('Confidence score 0-1'),
       portion_guess: z.string().describe('Estimated portion size'),
+      notes: z
+        .string()
+        .optional()
+        .describe('Brief explanation of estimation (e.g., "Visible oil sheen suggests higher fat")'),
     })
   ),
 });
@@ -39,13 +43,13 @@ const FoodAnalysisSchema = z.object({
  *
  * @param imageUrl - Public URL of the food image
  * @param mealTypeHint - Optional meal type hint
- * @param recentFoods - Optional array of recently eaten foods for context
+ * @param recentFoods - Optional array of recently eaten foods with frequency data
  * @returns AsyncIterableStream of the analysis
  */
 export function analyzeFoodImageStream(
   imageUrl: string,
   mealTypeHint?: string | null,
-  recentFoods?: string[]
+  recentFoods?: Array<{ name: string; freq: number }>
 ) {
   const apiKey = process.env.GLM_API_KEY;
 
@@ -59,10 +63,14 @@ export function analyzeFoodImageStream(
       ? `The user is currently eating ${mealTypeHint}. Focus on foods typical for this meal (e.g., eggs, toast, cereal for breakfast; sandwich, salad for lunch; pasta, rice, meat for dinner).`
       : '';
 
-  // Build recent foods context
+  // Build recent foods context with frequency weighting
   const recentFoodsContext =
     recentFoods && recentFoods.length > 0
-      ? `The user frequently eats: ${recentFoods.join(', ')}. Use this context to bias your identification if the image is ambiguous or contains familiar ingredients.`
+      ? `The user frequently eats these foods (with frequency in parentheses): ${recentFoods
+          .map((f) => `${f.name} (${f.freq}x)`)
+          .join(
+            ', '
+          )}. When the image is ambiguous, bias your identification toward these familiar foods. For example, if you see a grain-based food and the user frequently eats "Sourdough", prefer that identification over generic "White Bread".`
       : '';
 
   return streamObject({
@@ -78,7 +86,7 @@ export function analyzeFoodImageStream(
         content: [
           {
             type: 'text',
-            text: `Analyze this food image and provide nutritional information for each visible food item. ${mealTypeContext ? 'Consider the meal type context when identifying foods.' : ''} ${recentFoodsContext ? 'Consider the user\'s eating habits when making identifications.' : ''}`,
+            text: `Analyze this food image and provide nutritional information for each visible food item. ${mealTypeContext ? 'Consider the meal type context when identifying foods.' : ''} ${recentFoodsContext ? 'Use the user\'s eating habits to make more personalized identifications.' : ''}`,
           },
           {
             type: 'image',

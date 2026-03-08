@@ -30,6 +30,10 @@ const FoodAnalysisSchema = z.object({
       fat_g: z.number().describe('Fat in grams'),
       confidence: z.number().describe('Confidence score 0-1'),
       portion_guess: z.string().describe('Estimated portion size'),
+      notes: z
+        .string()
+        .optional()
+        .describe('Brief explanation of estimation (e.g., "Visible oil sheen suggests higher fat")'),
     })
   ),
 });
@@ -43,6 +47,7 @@ interface DraftItem {
   source: string;
   servingGrams: number;
   isEnhancing?: boolean; // Track per-item enhancement status
+  notes?: string; // AI-generated notes or user notes
 }
 
 interface SnapToLogProps {
@@ -101,6 +106,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
           source: 'AI_ESTIMATE',
           servingGrams: 100,
           isEnhancing: true, // Mark as being enhanced
+          notes: item.notes, // Capture AI notes
         }));
 
         setDraftItems(convertedItems);
@@ -118,39 +124,35 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
     },
   });
 
-  // Enhance items individually for smoother UX (no global "pop-in")
+  // Enhance all items in a single batch request for better performance
   const enhanceItemsIndividually = useCallback(async (items: DraftItem[]) => {
-    // Process each item one at a time for visible progress
-    const enhancedItems = [...items];
+    try {
+      // Send all items in one batch request instead of sequential calls
+      const response = await fetch('/api/food/usda/batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ items }),
+      });
 
-    for (let i = 0; i < enhancedItems.length; i++) {
-      try {
-        const response = await fetch('/api/food/usda/batch', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ items: [enhancedItems[i]] }),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          if (data.items && data.items[0]) {
-            // Update this specific item with USDA data
-            enhancedItems[i] = {
-              ...data.items[0],
-              isEnhancing: false,
-            };
-            setDraftItems([...enhancedItems]);
-          }
-        } else {
-          // Mark enhancement as complete even on error
-          enhancedItems[i].isEnhancing = false;
+      if (response.ok) {
+        const data = await response.json();
+        if (data.items) {
+          // Mark all items as no longer enhancing
+          const enhancedItems = data.items.map((item: DraftItem) => ({
+            ...item,
+            isEnhancing: false,
+          }));
+          setDraftItems(enhancedItems);
         }
-      } catch {
-        // Ignore errors, keep AI estimates
-        enhancedItems[i].isEnhancing = false;
+      } else {
+        // Mark all items as complete even on error
+        setDraftItems(items.map((item) => ({ ...item, isEnhancing: false })));
       }
+    } catch {
+      // Ignore errors, keep AI estimates
+      setDraftItems(items.map((item) => ({ ...item, isEnhancing: false })));
     }
   }, []);
 
@@ -247,6 +249,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
           totalCalories,
           aiConfidenceScore: 0.8,
           imageUrl, // Save the image URL for future reference
+          notes: draftItems.map((item) => item.notes).filter(Boolean).join(' ') || null, // Combine AI notes
         }),
       });
 
@@ -347,6 +350,21 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
     setIsEditingItems(true);
     setUploadError(null);
   }, []);
+
+  // Retry AI analysis without re-uploading the image
+  const handleRetryAnalysis = useCallback(() => {
+    if (!imageUrl) return;
+
+    setUploadError(null);
+    setUploadProgress('streaming');
+    setDraftItems([]);
+
+    // Re-run the AI analysis with the existing image URL
+    submit({
+      imageUrl,
+      mealTypeHint: selectedMealType,
+    });
+  }, [imageUrl, selectedMealType, submit]);
 
   // Add new item to draft
   const addItem = useCallback(() => {
@@ -528,12 +546,22 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
                   >
                     Convert to Manual Entry
                   </button>
+                  {imageUrl && (
+                    <button
+                      type="button"
+                      onClick={handleRetryAnalysis}
+                      className="text-xs px-3 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700 transition-colors flex items-center gap-1"
+                    >
+                      <Loader2 className="w-3 h-3" />
+                      Retry Analysis
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={handleClear}
                     className="text-xs px-3 py-1.5 text-red-700 underline hover:text-red-900"
                   >
-                    Try Again
+                    Clear
                   </button>
                 </div>
               </div>

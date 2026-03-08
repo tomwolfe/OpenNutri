@@ -3,6 +3,8 @@
  *
  * Streams AI vision analysis to the client using Vercel AI SDK.
  * Expects image to be already uploaded to Vercel Blob.
+ *
+ * AI usage is logged atomically AFTER successful analysis (confidence > 0.5).
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -19,6 +21,7 @@ export const maxDuration = 60;
  * POST /api/analyze
  *
  * Accepts imageUrl and mealTypeHint, streams AI analysis back to client.
+ * Only logs AI usage if at least one item is identified with confidence > 0.5.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -30,7 +33,7 @@ export async function POST(request: NextRequest) {
 
     const userId = session.user.id;
 
-    // Check AI scan rate limit
+    // Check AI scan rate limit BEFORE starting analysis
     const scanCount = await getUserDailyAiScanCount(userId);
     const dailyLimit = parseInt(process.env.AI_SCAN_LIMIT_FREE || '5', 10);
 
@@ -51,17 +54,54 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Log AI usage BEFORE starting analysis
-    await db.insert(aiUsage).values({ userId });
-
-    // Fetch recent foods for context (last 7 days, top 5 most frequent)
+    // Fetch recent foods for context (last 7 days, top 20 most frequent)
     const recentFoods = await fetchRecentFoods(userId);
 
     // Call GLM Vision API with streaming
     const result = await analyzeFoodImageStream(imageUrl, mealTypeHint, recentFoods);
 
-    // Return using AI SDK's native streaming response
-    return result.toTextStreamResponse();
+    // Create a custom stream that logs AI usage only on successful completion
+    let accumulatedResult = '';
+
+    // Transform the stream to capture the result and log usage on success
+    const loggedStream = result.toTextStreamResponse().body!.pipeThrough(
+      new TransformStream({
+        async transform(chunk, controller) {
+          const text = new TextDecoder().decode(chunk);
+          accumulatedResult += text;
+          controller.enqueue(chunk);
+        },
+        async flush() {
+          // Only log AI usage if we got a successful result with confidence > 0.5
+          if (accumulatedResult) {
+            try {
+              // Try to parse the streamed JSON to check for successful items
+              const jsonMatch = accumulatedResult.match(/\{[^{}]*"items"[^{}]*\}/);
+              if (jsonMatch) {
+                const parsed = JSON.parse(jsonMatch[0]);
+                if (parsed.items && Array.isArray(parsed.items)) {
+                  const hasHighConfidence = parsed.items.some(
+                    (item: { confidence?: number }) => (item.confidence || 0) > 0.5
+                  );
+                  if (hasHighConfidence) {
+                    await db.insert(aiUsage).values({ userId });
+                  }
+                }
+              }
+            } catch (parseError) {
+              // If parsing fails, don't log the scan (stream may have been incomplete)
+              console.warn('Failed to parse AI result for usage logging:', parseError);
+            }
+          }
+        },
+      })
+    );
+
+    return new Response(loggedStream, {
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+      },
+    });
   } catch (error) {
     console.error('Analysis error:', error);
     return NextResponse.json(
@@ -72,9 +112,16 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * Fetch user's most frequently eaten foods in the last 7 days
+ * Fetch user's most frequently eaten foods in the last 7 days with frequency data
  */
-async function fetchRecentFoods(userId: string): Promise<string[]> {
+async function fetchRecentFoods(
+  userId: string
+): Promise<
+  Array<{
+    name: string;
+    freq: number;
+  }>
+> {
   try {
     const { foodLogs, logItems } = await import('@/db/schema');
     const { eq, desc } = await import('drizzle-orm');
@@ -82,29 +129,36 @@ async function fetchRecentFoods(userId: string): Promise<string[]> {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
+    // Fetch food items from the last 7 days
     const items = await db
       .select({
         foodName: logItems.foodName,
       })
       .from(logItems)
       .innerJoin(foodLogs, eq(logItems.logId, foodLogs.id))
-      .where(
-        eq(foodLogs.userId, userId)
-      )
+      .where(eq(foodLogs.userId, userId))
       .orderBy(desc(foodLogs.timestamp))
-      .limit(20);
+      .limit(50);
 
-    // Get unique food names, filter out empty/null
-    const uniqueFoods = Array.from(
-      new Set(
-        items
-          .map((item) => item.foodName)
-          .filter((name): name is string => !!name && name.trim().length > 0)
-      )
-    );
+    // Aggregate by food name: calculate frequency
+    const foodMap = new Map<string, number>();
 
-    // Return top 5
-    return uniqueFoods.slice(0, 5);
+    for (const item of items) {
+      if (!item.foodName || item.foodName.trim().length === 0) continue;
+
+      const count = foodMap.get(item.foodName) || 0;
+      foodMap.set(item.foodName, count + 1);
+    }
+
+    // Convert to array with frequency
+    const foods = Array.from(foodMap.entries()).map(([name, freq]) => ({
+      name,
+      freq,
+    }));
+
+    // Sort by frequency and return top 5
+    foods.sort((a, b) => b.freq - a.freq);
+    return foods.slice(0, 5);
   } catch (error) {
     console.error('Failed to fetch recent foods:', error);
     return [];

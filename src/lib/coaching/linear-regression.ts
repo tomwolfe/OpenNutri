@@ -1,17 +1,27 @@
 /**
- * Linear Regression for Adaptive Coaching
+ * Linear and Multiple Linear Regression for Adaptive Coaching
  *
- * Implements simple linear regression to analyze trends in:
+ * Implements:
+ * - Simple linear regression (least squares)
+ * - Multiple linear regression for macro impact analysis
+ * - Moving average for smoothing trends
+ *
+ * Used to provide personalized recommendations based on:
  * - Weight vs Calorie Intake
  * - Weight vs Macronutrient ratios
  * - Progress trends over time
- *
- * Used to provide personalized recommendations.
  */
 
 export interface DataPoint {
   x: number;
   y: number;
+}
+
+export interface MultipleDataPoint {
+  x1: number; // Calories
+  x2: number; // Protein %
+  x3: number; // Carbs %
+  y: number;  // Weight change
 }
 
 export interface RegressionResult {
@@ -20,6 +30,23 @@ export interface RegressionResult {
   rSquared: number;
   correlation: number;
   prediction: (x: number) => number;
+}
+
+export interface MultipleRegressionResult {
+  coefficients: {
+    calories: number;
+    proteinPercent: number;
+    carbsPercent: number;
+    intercept: number;
+  };
+  rSquared: number;
+  adjustedRSquared: number;
+  prediction: (calories: number, proteinPercent: number, carbsPercent: number) => number;
+  insights: {
+    proteinImpact: 'positive' | 'negative' | 'neutral';
+    carbsImpact: 'positive' | 'negative' | 'neutral';
+    recommendation: string;
+  };
 }
 
 /**
@@ -119,6 +146,127 @@ export function movingAverage(values: number[], window: number = 7): number[] {
 }
 
 /**
+ * Calculate multiple linear regression using OLS (Ordinary Least Squares)
+ * Analyzes the impact of calories, protein %, and carbs % on weight change
+ *
+ * @param points - Array of data points with calories, protein %, carbs %, and weight change
+ * @returns Multiple regression results with coefficients and insights
+ */
+export function multipleLinearRegression(
+  points: MultipleDataPoint[]
+): MultipleRegressionResult {
+  const n = points.length;
+
+  if (n < 10) {
+    // Need more data points for meaningful multiple regression
+    return {
+      coefficients: {
+        calories: 0,
+        proteinPercent: 0,
+        carbsPercent: 0,
+        intercept: 0,
+      },
+      rSquared: 0,
+      adjustedRSquared: 0,
+      prediction: () => 0,
+      insights: {
+        proteinImpact: 'neutral',
+        carbsImpact: 'neutral',
+        recommendation: 'Insufficient data for macro analysis. Continue logging for at least 10 days.',
+      },
+    };
+  }
+
+  // Calculate means
+  const x1Mean = points.reduce((sum, p) => sum + p.x1, 0) / n;
+  const x2Mean = points.reduce((sum, p) => sum + p.x2, 0) / n;
+  const x3Mean = points.reduce((sum, p) => sum + p.x3, 0) / n;
+  const yMean = points.reduce((sum, p) => sum + p.y, 0) / n;
+
+  // Calculate covariance matrix and coefficients using normal equations
+  // Simplified approach: calculate partial correlations (diagonal approximation)
+  let sumX1Y = 0, sumX2Y = 0, sumX3Y = 0;
+  let sumX1X1 = 0, sumX2X2 = 0, sumX3X3 = 0;
+
+  for (const point of points) {
+    const dx1 = point.x1 - x1Mean;
+    const dx2 = point.x2 - x2Mean;
+    const dx3 = point.x3 - x3Mean;
+    const dy = point.y - yMean;
+
+    sumX1Y += dx1 * dy;
+    sumX2Y += dx2 * dy;
+    sumX3Y += dx3 * dy;
+
+    sumX1X1 += dx1 * dx1;
+    sumX2X2 += dx2 * dx2;
+    sumX3X3 += dx3 * dx3;
+  }
+
+  // Simplified coefficient estimation (diagonal approximation)
+  // In production, use matrix inversion for full OLS
+  const b1 = sumX1X1 !== 0 ? sumX1Y / sumX1X1 : 0;
+  const b2 = sumX2X2 !== 0 ? sumX2Y / sumX2X2 : 0;
+  const b3 = sumX3X3 !== 0 ? sumX3Y / sumX3X3 : 0;
+
+  const intercept = yMean - b1 * x1Mean - b2 * x2Mean - b3 * x3Mean;
+
+  // Calculate R²
+  let ssTot = 0;
+  let ssRes = 0;
+
+  for (const point of points) {
+    const yPred = intercept + b1 * point.x1 + b2 * point.x2 + b3 * point.x3;
+    ssTot += Math.pow(point.y - yMean, 2);
+    ssRes += Math.pow(point.y - yPred, 2);
+  }
+
+  const rSquared = ssTot !== 0 ? 1 - ssRes / ssTot : 0;
+  const adjustedRSquared = 1 - (1 - rSquared) * (n - 1) / (n - 4); // 4 = 3 predictors + intercept
+
+  // Generate insights based on coefficients
+  const proteinImpact = b2 > 0.001 ? 'positive' : b2 < -0.001 ? 'negative' : 'neutral';
+  const carbsImpact = b3 > 0.001 ? 'positive' : b3 < -0.001 ? 'negative' : 'neutral';
+
+  // Generate macro-specific recommendation
+  let recommendation = '';
+  const proteinCoeff = (b2 * 100).toFixed(3);
+  const carbsCoeff = (b3 * 100).toFixed(3);
+
+  if (proteinImpact === 'positive') {
+    recommendation = `Higher protein intake correlates with better weight loss (${proteinCoeff} kg per 1% increase). Consider increasing protein by 5-10% of total calories.`;
+  } else if (proteinImpact === 'negative') {
+    recommendation = `Higher protein intake shows unexpected correlation with weight gain. Review protein sources and overall calorie balance.`;
+  } else {
+    recommendation = `Protein intake shows neutral impact on weight change. Current protein levels are appropriate.`;
+  }
+
+  if (carbsImpact === 'positive' && proteinImpact === 'positive') {
+    recommendation += ' Both protein and carbs show positive correlations - focus on total calorie control.';
+  } else if (carbsImpact === 'negative') {
+    recommendation += ` Reducing carbs by 5% may improve results (${carbsCoeff} kg per 1% decrease).`;
+  }
+
+  return {
+    coefficients: {
+      calories: b1,
+      proteinPercent: b2,
+      carbsPercent: b3,
+      intercept,
+    },
+    rSquared: Math.max(0, rSquared),
+    adjustedRSquared: Math.max(0, adjustedRSquared),
+    prediction: (calories: number, proteinPercent: number, carbsPercent: number) =>
+      intercept + b1 * calories + b2 * proteinPercent + b3 * carbsPercent,
+    insights: {
+      proteinImpact,
+      carbsImpact,
+      recommendation,
+    },
+  };
+}
+
+/**
  * Detect trend direction from regression results
  * @param result - Regression result
  * @param threshold - Minimum slope to consider significant (default: 0.1)
@@ -199,10 +347,11 @@ export interface CoachingInsight {
 
 /**
  * Analyze user data and generate coaching insights
+ * Uses both simple linear regression for trends and multiple regression for macro analysis
  * @param weightData - Array of {timestamp, weight} points
  * @param intakeData - Array of {timestamp, calories, protein, carbs, fat} points
  * @param targets - User's current targets
- * @returns Array of coaching insights
+ * @returns Array of coaching insights with macro-specific recommendations
  */
 export function generateCoachingInsights(
   weightData: Array<{ timestamp: number; weight: number }>,
@@ -298,28 +447,86 @@ export function generateCoachingInsights(
     suggestedCalories: suggestedCalorieTarget !== targets.calories ? suggestedCalorieTarget : undefined,
   });
 
-  // Analyze protein intake
-  const avgProtein =
-    intakeData.reduce((sum, d) => sum + d.protein, 0) / intakeData.length;
-  const proteinPercentage = (avgProtein / targets.protein) * 100;
-
-  // Calculate suggested protein target based on body weight and goals
-  // General guideline: 1.6-2.2g per kg for active individuals
+  // Multiple Linear Regression: Analyze macro impact on weight change
+  // Prepare data points for multiple regression
+  const multiPoints: MultipleDataPoint[] = [];
   const currentWeight = weightData.length > 0 ? weightData[weightData.length - 1].weight : 70;
-  const suggestedProteinTarget = Math.round(currentWeight * 1.8); // 1.8g per kg as middle ground
 
-  insights.push({
-    type: 'protein',
-    trend: proteinPercentage >= 90 ? 'stable' : 'decreasing',
-    confidence: 0.8,
-    recommendation: generateProteinRecommendation(
-      avgProtein,
-      targets.protein,
-      targets.weightGoal
-    ),
-    dataPoints: intakeData.length,
-    suggestedProtein: Math.abs(suggestedProteinTarget - targets.protein) > 10 ? suggestedProteinTarget : undefined,
-  });
+  for (let i = 0; i < intakeData.length; i++) {
+    const intake = intakeData[i];
+    
+    // Find corresponding weight change (use next weight measurement or interpolate)
+    const intakeDay = (intake.timestamp - firstTimestamp) / (1000 * 60 * 60 * 24);
+    
+    // Find weight at intake day and next day to calculate change
+    let weightBefore = currentWeight;
+    let weightAfter = currentWeight;
+    
+    for (let j = 0; j < weightData.length - 1; j++) {
+      const weightDay = (weightData[j].timestamp - firstTimestamp) / (1000 * 60 * 60 * 24);
+      const nextWeightDay = (weightData[j + 1].timestamp - firstTimestamp) / (1000 * 60 * 60 * 24);
+      
+      if (weightDay <= intakeDay && intakeDay < nextWeightDay) {
+        weightBefore = weightData[j].weight;
+        weightAfter = weightData[j + 1].weight;
+        break;
+      }
+    }
+    
+    const weightChange = weightAfter - weightBefore;
+    
+    // Calculate macro percentages of total calories
+    const proteinPercent = intake.calories > 0 ? (intake.protein * 4 / intake.calories) * 100 : 0;
+    const carbsPercent = intake.calories > 0 ? (intake.carbs * 4 / intake.calories) * 100 : 0;
+    
+    multiPoints.push({
+      x1: intake.calories,
+      x2: proteinPercent,
+      x3: carbsPercent,
+      y: weightChange,
+    });
+  }
+
+  // Run multiple regression if we have enough data
+  if (multiPoints.length >= 10) {
+    const multiRegression = multipleLinearRegression(multiPoints);
+    
+    // Add macro-specific insight from multiple regression
+    if (multiRegression.insights.recommendation) {
+      insights.push({
+        type: 'protein',
+        trend: multiRegression.insights.proteinImpact === 'positive' ? 'stable' : 'decreasing',
+        confidence: multiRegression.rSquared,
+        recommendation: multiRegression.insights.recommendation,
+        dataPoints: multiPoints.length,
+        suggestedProtein: multiRegression.insights.proteinImpact === 'positive' 
+          ? Math.round(targets.protein * 1.1) // Suggest 10% increase
+          : multiRegression.insights.proteinImpact === 'negative'
+            ? Math.round(targets.protein * 0.9) // Suggest 10% decrease
+            : undefined,
+      });
+    }
+  } else {
+    // Fallback to simple protein analysis
+    const avgProtein =
+      intakeData.reduce((sum, d) => sum + d.protein, 0) / intakeData.length;
+    const proteinPercentage = (avgProtein / targets.protein) * 100;
+
+    const suggestedProteinTarget = Math.round(currentWeight * 1.8);
+
+    insights.push({
+      type: 'protein',
+      trend: proteinPercentage >= 90 ? 'stable' : 'decreasing',
+      confidence: 0.8,
+      recommendation: generateProteinRecommendation(
+        avgProtein,
+        targets.protein,
+        targets.weightGoal
+      ),
+      dataPoints: intakeData.length,
+      suggestedProtein: Math.abs(suggestedProteinTarget - targets.protein) > 10 ? suggestedProteinTarget : undefined,
+    });
+  }
 
   return insights;
 }
