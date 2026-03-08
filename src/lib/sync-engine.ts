@@ -2,7 +2,7 @@
  * Sync Engine for OpenNutri
  *
  * Handles bidirectional synchronization between Dexie (local) and Neon (cloud).
- * Uses a delta-sync strategy with timestamps and intelligent conflict resolution.
+ * Uses a delta-sync strategy with timestamps and Last-Write-Wins conflict resolution.
  */
 
 import { db, type LocalFoodLog, type DecryptedFoodLog, type LocalUserTarget } from '@/lib/db-local';
@@ -26,31 +26,14 @@ function itemsAreEqual(items1: any[], items2: any[]): boolean {
 
 /**
  * Merge items from two versions of a log
- * Prefers non-empty values and merges unique items
+ * Uses Last-Write-Wins strategy based on updatedAt timestamp
  */
-function mergeItems(localItems: any[], serverItems: any[]): any[] {
-  // If one is empty, use the other
-  if (localItems.length === 0) return serverItems;
-  if (serverItems.length === 0) return localItems;
-
-  // Create a map of items by food name for merging
-  const itemMap = new Map<string, any>();
-
-  // Add all server items first
-  for (const item of serverItems) {
-    const key = `${item.foodName}-${item.servingGrams}`.toLowerCase();
-    itemMap.set(key, item);
+function mergeItems(localItems: any[], serverItems: any[], localUpdatedAt: number, serverUpdatedAt: number): any[] {
+  // Last-Write-Wins: use the items from the most recently updated version
+  if (serverUpdatedAt > localUpdatedAt) {
+    return serverItems;
   }
-
-  // Merge local items that don't exist on server
-  for (const item of localItems) {
-    const key = `${item.foodName}-${item.servingGrams}`.toLowerCase();
-    if (!itemMap.has(key)) {
-      itemMap.set(key, item);
-    }
-  }
-
-  return Array.from(itemMap.values());
+  return localItems;
 }
 
 /**
@@ -174,40 +157,25 @@ export async function syncDelta(
     const logsToDecrypt: LocalFoodLog[] = [];
 
     await db.transaction('rw', db.foodLogs, db.decryptedLogs, db.userTargets, async () => {
-      // Merge logs
+      // Merge logs using Last-Write-Wins (LWW) strategy
       for (const sLog of serverLogs) {
         // Skip if this change originated from this device
         if (sLog.deviceId === deviceId) continue;
 
         const localLog = await db.foodLogs.get(sLog.id);
-        const serverVersion = sLog.version || 0;
-        const localVersion = localLog?.version || 0;
+        const serverUpdatedAt = new Date(sLog.updatedAt).getTime();
+        const localUpdatedAt = localLog?.updatedAt || 0;
 
-        // If server version is higher, update local
-        if (!localLog || serverVersion > localVersion) {
-          let newLocalLog: LocalFoodLog;
-
-          // Handle conflict: if both have different data, we need to be careful
-          // Since LocalFoodLog stores encrypted data, we can't merge items directly
-          // The server version takes precedence for encrypted logs
-          if (localLog && serverVersion > localVersion) {
-            // For encrypted logs, server version wins (can't merge encrypted data)
-            // For future: implement CRDT-based encrypted merging
-            newLocalLog = {
-              ...sLog,
-              timestamp: new Date(sLog.timestamp),
-              updatedAt: new Date(sLog.updatedAt).getTime(),
-              synced: true,
-              version: serverVersion,
-            };
-          } else {
-            newLocalLog = {
-              ...sLog,
-              timestamp: new Date(sLog.timestamp),
-              updatedAt: new Date(sLog.updatedAt).getTime(),
-              synced: true,
-            };
-          }
+        // Last-Write-Wins: use the most recently updated version
+        // This ensures the latest human action is preserved regardless of version numbers
+        if (!localLog || serverUpdatedAt > localUpdatedAt) {
+          const newLocalLog: LocalFoodLog = {
+            ...sLog,
+            timestamp: new Date(sLog.timestamp),
+            updatedAt: serverUpdatedAt,
+            synced: true,
+            version: sLog.version || 0,
+          };
 
           await db.foodLogs.put(newLocalLog);
 
@@ -333,33 +301,19 @@ export async function syncLogsForDate(
         if (sLog.deviceId === deviceId) continue;
 
         const localLog = await db.foodLogs.get(sLog.id);
-        const serverVersion = sLog.version || 0;
-        const localVersion = localLog?.version || 0;
+        const serverUpdatedAt = new Date(sLog.updatedAt).getTime();
+        const localUpdatedAt = localLog?.updatedAt || 0;
 
-        // If server version is higher, update local
-        if (!localLog || serverVersion > localVersion) {
-          let newLocalLog: LocalFoodLog;
-
-          // Handle conflict: encrypted logs use server version (can't merge ciphertext)
-          if (localLog && serverVersion > localVersion) {
-            // For encrypted logs, server version wins
-            // This is a limitation of E2E encryption - true CRDT merging would require
-            // client-side sync or operation-based CRDTs
-            newLocalLog = {
-              ...sLog,
-              timestamp: new Date(sLog.timestamp),
-              updatedAt: new Date(sLog.updatedAt).getTime(),
-              synced: true,
-              version: serverVersion,
-            };
-          } else {
-            newLocalLog = {
-              ...sLog,
-              timestamp: new Date(sLog.timestamp),
-              updatedAt: new Date(sLog.updatedAt).getTime(),
-              synced: true,
-            };
-          }
+        // Last-Write-Wins: use the most recently updated version
+        // This ensures the latest human action is preserved regardless of version numbers
+        if (!localLog || serverUpdatedAt > localUpdatedAt) {
+          const newLocalLog: LocalFoodLog = {
+            ...sLog,
+            timestamp: new Date(sLog.timestamp),
+            updatedAt: serverUpdatedAt,
+            synced: true,
+            version: sLog.version || 0,
+          };
 
           await db.foodLogs.put(newLocalLog);
 

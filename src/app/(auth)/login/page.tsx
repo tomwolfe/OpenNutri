@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useEncryption } from '@/hooks/useEncryption';
+import { hashForAuth } from '@/lib/encryption';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -34,9 +35,12 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
+      // Hash password client-side to prevent plaintext transmission
+      const authPasswordHash = await hashForAuth(password);
+
       const result = await signIn('credentials', {
         email,
-        password,
+        password: authPasswordHash, // Server only ever sees the hash
         redirect: false,
       });
 
@@ -49,7 +53,7 @@ export default function LoginPage() {
           if (keyResponse.ok) {
             const keyData = await keyResponse.json();
             await unlockVault(
-              password,
+              password, // Use plaintext password to derive encryption key
               keyData.salt,
               keyData.encryptedVaultKey,
               keyData.encryptionIv
@@ -98,13 +102,16 @@ export default function LoginPage() {
         return;
       }
 
+      // Hash password client-side to prevent plaintext transmission
+      const authPasswordHash = await hashForAuth(password);
+
       // Step 2: Send signup request with encryption metadata
       const response = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          email, 
-          password,
+        body: JSON.stringify({
+          email,
+          password: authPasswordHash, // Server only ever sees the hash
           keyMetadata, // Store this on the server
         }),
       });
@@ -120,7 +127,7 @@ export default function LoginPage() {
       // Step 3: Auto sign in after successful signup
       const result = await signIn('credentials', {
         email,
-        password,
+        password: authPasswordHash, // Use hashed password for consistency
         redirect: false,
       });
 

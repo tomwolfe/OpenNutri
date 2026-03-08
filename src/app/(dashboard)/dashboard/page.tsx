@@ -11,6 +11,7 @@ import { WeightTracker } from '@/components/weight-tracker';
 import { WeightChart } from '@/components/weight-chart';
 import { OnboardingWizard } from '@/components/onboarding-wizard';
 import { QuickWeightInput } from '@/components/quick-weight-input';
+import { UnlockVault } from '@/components/unlock-vault';
 import { useEncryption } from '@/hooks/useEncryption';
 import { useDailyLogs } from '@/hooks/use-daily-logs';
 import { Button } from '@/components/ui/button';
@@ -37,11 +38,13 @@ const MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'];
 
 export default function DashboardPage() {
   const { data: session, status } = useSession();
-  const { vaultKey } = useEncryption();
+  const { vaultKey, isReady } = useEncryption();
   const router = useRouter();
 
   // State for selected date
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [unlockError, setUnlockError] = useState<string | null>(null);
 
   // useDailyLogs Hook (reactive Dexie queries)
   const {
@@ -62,6 +65,15 @@ export default function DashboardPage() {
       triggerSync(session.user.id, vaultKey).catch(console.error);
     }
   }, [status, session?.user?.id, vaultKey, triggerSync]);
+
+  // Check if vault is unlocked (key loaded in memory)
+  useEffect(() => {
+    if (status === 'authenticated' && isReady) {
+      if (vaultKey) {
+        setIsUnlocked(true);
+      }
+    }
+  }, [status, isReady, vaultKey]);
 
   // Check if user needs onboarding
   useEffect(() => {
@@ -99,6 +111,11 @@ export default function DashboardPage() {
   if (status === 'unauthenticated') {
     router.push('/login');
     return null;
+  }
+
+  // Show unlock screen if authenticated but vault is locked
+  if (status === 'authenticated' && isReady && !isUnlocked) {
+    return <UnlockVault onUnlocked={() => setIsUnlocked(true)} onError={setUnlockError} />;
   }
 
   if (showOnboarding) {

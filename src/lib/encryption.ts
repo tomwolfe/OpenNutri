@@ -239,6 +239,24 @@ export function isCryptoAvailable(): boolean {
 }
 
 /**
+ * Hash password for authentication (client-side)
+ * This ensures the server never sees the plaintext password
+ * The hash is then bcrypt'd on the server for additional security
+ * @param password - User's plaintext password
+ * @returns Hex-encoded SHA-256 hash
+ */
+export async function hashForAuth(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  // Use a fixed salt to ensure consistent hashing for auth purposes
+  // This is NOT for encryption - just to prevent plaintext password transmission
+  const data = encoder.encode(password + 'OPENNUTRI_AUTH_SALT_v1');
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hash))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/**
  * Encrypt binary data (e.g. image)
  * @param data - ArrayBuffer or Uint8Array to encrypt
  * @param key - Encryption key

@@ -3,6 +3,10 @@
  *
  * Creates a new user account with hashed password.
  * Validates email format and password strength.
+ * 
+ * SECURITY: The password received here should already be hashed client-side
+ * using hashForAuth() to prevent plaintext password transmission.
+ * We then bcrypt this hash server-side for additional protection.
  */
 
 import { NextRequest, NextResponse } from 'next/server';

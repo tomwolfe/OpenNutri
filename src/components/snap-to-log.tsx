@@ -469,8 +469,12 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
         </div>
       )}
 
-      <div className="mt-4 pt-4 border-t text-[10px] text-gray-400 text-center">
-        Powered by Zhipu GLM-4V & Neon pgvector
+      <div className="mt-4 pt-4 border-t text-[10px] text-gray-400 text-center space-y-1">
+        <p>Powered by Zhipu GLM-4V & Neon pgvector</p>
+        <p className="text-gray-300">
+          <strong>Privacy Notice:</strong> Images are temporarily processed by AI and immediately destroyed. 
+          They are never stored unencrypted on the server.
+        </p>
       </div>
     </div>
   );
