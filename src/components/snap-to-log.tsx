@@ -145,24 +145,32 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
     schema: FoodAnalysisSchema,
     onFinish: async (event) => {
       if (event.object?.items) {
-        // Convert AI response to draft format with enhancement tracking
-        const convertedItems = event.object.items.map((item) => ({
+        // Convert AI response to draft format
+        // Server already performed USDA enrichment, so use the source from response
+        const convertedItems = event.object.items.map((item: {
+          name: string;
+          calories: number;
+          protein_g: number;
+          carbs_g: number;
+          fat_g: number;
+          source?: string;
+          notes?: string;
+          usdaMatch?: { fdcId: number; description: string };
+        }) => ({
           foodName: item.name,
           calories: item.calories || 0,
           protein: item.protein_g || 0,
           carbs: item.carbs_g || 0,
           fat: item.fat_g || 0,
-          source: 'AI_ESTIMATE',
+          source: item.source || 'AI_ESTIMATE',
           servingGrams: 100,
-          isEnhancing: true, // Mark as being enhanced
-          notes: item.notes, // Capture AI notes
+          isEnhancing: false, // No client-side enhancement needed
+          notes: item.notes,
+          usdaMatch: item.usdaMatch,
         }));
 
         setDraftItems(convertedItems);
         setUploadProgress('review');
-
-        // Enhance items individually for smoother UX
-        await enhanceItemsIndividually(convertedItems);
       }
     },
     onError: (err) => {
@@ -172,38 +180,6 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
       onError?.(errorMessage);
     },
   });
-
-  // Enhance all items in a single batch request for better performance
-  const enhanceItemsIndividually = useCallback(async (items: DraftItem[]) => {
-    try {
-      // Send all items in one batch request instead of sequential calls
-      const response = await fetch('/api/food/usda/batch', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ items }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.items) {
-          // Mark all items as no longer enhancing
-          const enhancedItems = data.items.map((item: DraftItem) => ({
-            ...item,
-            isEnhancing: false,
-          }));
-          setDraftItems(enhancedItems);
-        }
-      } else {
-        // Mark all items as complete even on error
-        setDraftItems(items.map((item) => ({ ...item, isEnhancing: false })));
-      }
-    } catch {
-      // Ignore errors, keep AI estimates
-      setDraftItems(items.map((item) => ({ ...item, isEnhancing: false })));
-    }
-  }, []);
 
   // Handle file selection
   const handleFileSelect = useCallback((file: File) => {
@@ -358,10 +334,19 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
     }
   }, [draftItems, selectedMealType, onComplete, onError, onDraftSaved, imageUrl]);
 
-  // Clear selection and reset
+  // Clear selection and reset with immediate blob deletion
   const handleClear = useCallback(async () => {
-    // Note: We no longer delete blobs immediately on cancel
-    // The weekly cron job handles orphaned blobs after 24h
+    // Delete blob immediately if image was uploaded but not saved
+    if (imageUrl) {
+      try {
+        await fetch(`/api/blob/delete?url=${encodeURIComponent(imageUrl)}`, {
+          method: 'DELETE',
+        });
+      } catch (err) {
+        console.warn('Failed to delete blob on cancel:', err);
+        // Don't show error to user - cleanup will happen via cron
+      }
+    }
 
     setSelectedFile(null);
     if (previewUrl) {
@@ -377,7 +362,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-  }, [previewUrl]);
+  }, [previewUrl, imageUrl]);
 
   // Update item field
   const updateItemField = useCallback((index: number, field: keyof DraftItem, value: number | string) => {

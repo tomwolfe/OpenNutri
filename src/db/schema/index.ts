@@ -28,7 +28,10 @@ export const aiUsage = pgTable('ai_usage', {
     .references(() => users.id, { onDelete: 'cascade' })
     .notNull(),
   timestamp: timestamp('timestamp', { withTimezone: true }).defaultNow(),
-});
+}, (table) => ({
+  timestampIdx: index('ai_usage_timestamp_idx').on(table.timestamp),
+  userIdTimestampIdx: index('ai_usage_user_id_timestamp_idx').on(table.userId, table.timestamp),
+}));
 
 // ============================================
 // Users Table
@@ -62,6 +65,7 @@ export const userTargets = pgTable('user_targets', {
   weightRecord: doublePrecision('weight_record'),
 }, (table) => ({
   pk: primaryKey({ columns: [table.userId, table.date] }),
+  dateIdx: index('user_targets_date_idx').on(table.date),
 }));
 
 // ============================================

@@ -1,10 +1,10 @@
 /**
  * Cron Job: Cleanup Orphaned Blobs
  *
- * Runs weekly to delete orphaned images from Vercel Blob.
+ * Runs daily to delete orphaned images from Vercel Blob.
  * Protected by CRON_SECRET.
  *
- * Schedule: Every Sunday at 3:00 AM UTC
+ * Schedule: Every day at 3:00 AM UTC
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -16,7 +16,7 @@ export const maxDuration = 300; // 5 minutes for cleanup
 /**
  * Configuration
  */
-const MAX_AGE_DAYS = 7;
+const MAX_AGE_DAYS = 1; // 24 hours - aggressive cleanup for privacy
 const BATCH_SIZE = 100;
 
 /**

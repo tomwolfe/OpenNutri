@@ -11,6 +11,7 @@ import { DataExport } from '@/components/data-export';
 import { WeightTracker } from '@/components/weight-tracker';
 import { WeightChart } from '@/components/weight-chart';
 import { OnboardingWizard } from '@/components/onboarding-wizard';
+import { QuickWeightInput } from '@/components/quick-weight-input';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -212,9 +213,15 @@ export default function DashboardPage() {
           {/* Daily Totals */}
           <Card className="lg:col-span-3">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">
-                Daily Summary - {selectedDate.toLocaleDateString()}
-              </CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">
+                  Daily Summary - {selectedDate.toLocaleDateString()}
+                </CardTitle>
+                {/* Quick Weight Input - only show for today */}
+                {selectedDate.toDateString() === new Date().toDateString() && (
+                  <QuickWeightInput />
+                )}
+              </div>
             </CardHeader>
             <CardContent>
               {loading ? (

@@ -4,12 +4,12 @@
  * Provides methods to:
  * - Queue images when offline
  * - Sync pending images when online
- * - Track sync progress
+ * - Track sync progress and pending count
  */
 
 'use client';
 
-import { useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   addToOfflineQueue,
   getPendingImages,
@@ -76,9 +76,9 @@ async function analyzeImage(imageUrl: string, mealType: string): Promise<void> {
 }
 
 export function useOfflineQueue(): UseOfflineQueueReturn {
-  const isAvailable = isIndexedDBAvailable();
-  const pendingCount = 0; // Will be updated by refreshCount
-  const isSyncing = false; // Will be tracked during sync
+  const [isAvailable] = useState(() => isIndexedDBAvailable());
+  const [pendingCount, setPendingCount] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   /**
    * Queue an image for later upload
@@ -110,6 +110,8 @@ export function useOfflineQueue(): UseOfflineQueueReturn {
     if (!isAvailable) {
       return { success: 0, failed: 0 };
     }
+
+    setIsSyncing(true);
 
     try {
       const pendingImages = await getPendingImages();
@@ -152,6 +154,10 @@ export function useOfflineQueue(): UseOfflineQueueReturn {
     } catch (error) {
       console.error('Sync queue error:', error);
       return { success: 0, failed: 0 };
+    } finally {
+      setIsSyncing(false);
+      // Refresh count after sync
+      refreshCount();
     }
   }, [isAvailable]);
 
@@ -163,8 +169,7 @@ export function useOfflineQueue(): UseOfflineQueueReturn {
 
     try {
       const count = await getPendingCount();
-      // Note: In a real implementation, this would update state
-      console.log(`Pending images: ${count}`);
+      setPendingCount(count);
     } catch (error) {
       console.error('Failed to refresh pending count:', error);
     }
@@ -198,7 +203,8 @@ export function useOfflineQueue(): UseOfflineQueueReturn {
       window.removeEventListener('online', handleOnline);
       clearInterval(cleanupInterval);
     };
-  }, [isAvailable, syncQueue, refreshCount]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAvailable, syncQueue]);
 
   return {
     isAvailable,

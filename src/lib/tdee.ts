@@ -180,3 +180,75 @@ export const GENDERS: { value: Gender; label: string }[] = [
   { value: 'female', label: 'Female' },
   { value: 'other', label: 'Other' },
 ];
+
+/**
+ * Calculate actual TDEE based on weight change over time
+ *
+ * Uses the formula: Real TDEE = Avg Calories - (Weight Change in kg * 7700 / days)
+ * Where 7700 kcal ≈ 1 kg of body fat
+ *
+ * @param avgCalories - Average daily calorie intake over the period
+ * @param weightChangeKg - Net weight change in kg (positive = gain, negative = loss)
+ * @param days - Number of days in the observation period
+ * @returns Estimated actual TDEE, or null if insufficient data
+ */
+export function calculateActualTDEE(
+  avgCalories: number,
+  weightChangeKg: number,
+  days: number
+): number | null {
+  if (days < 7 || avgCalories <= 0) {
+    return null; // Need at least 1 week of data
+  }
+
+  // Calculate the calorie equivalent of weight change
+  // Positive weight change = surplus, negative = deficit
+  const calorieWeightOfChange = (weightChangeKg * 7700) / days;
+
+  // Actual TDEE = Average calories - (weight change impact per day)
+  // If gaining weight: TDEE is lower than intake
+  // If losing weight: TDEE is higher than intake
+  const actualTdee = avgCalories - calorieWeightOfChange;
+
+  // Sanity check: TDEE should be between 800 and 5000 for most humans
+  if (actualTdee < 800 || actualTdee > 5000) {
+    return null; // Likely inaccurate data
+  }
+
+  return Math.round(actualTdee);
+}
+
+/**
+ * Compare calculated TDEE with profile TDEE and determine if adjustment is needed
+ *
+ * @param actualTdee - TDEE calculated from actual weight changes
+ * @param profileTdee - TDEE from user profile (Mifflin-St Jeor estimate)
+ * @returns Object with recommendation and adjustment details
+ */
+export function compareTDEEWithProfile(
+  actualTdee: number,
+  profileTdee: number
+): {
+  shouldAdjust: boolean;
+  difference: number;
+  percentageDifference: number;
+  recommendation: 'increase' | 'decrease' | 'maintain';
+} {
+  const difference = actualTdee - profileTdee;
+  const percentageDifference = (difference / profileTdee) * 100;
+
+  // Only recommend adjustment if difference is >10%
+  const shouldAdjust = Math.abs(percentageDifference) > 10;
+
+  let recommendation: 'increase' | 'decrease' | 'maintain' = 'maintain';
+  if (shouldAdjust) {
+    recommendation = difference > 0 ? 'increase' : 'decrease';
+  }
+
+  return {
+    shouldAdjust,
+    difference: Math.round(difference),
+    percentageDifference: Math.round(percentageDifference * 10) / 10,
+    recommendation,
+  };
+}

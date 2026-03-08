@@ -5,6 +5,7 @@
  * Expects image to be already uploaded to Vercel Blob.
  *
  * AI usage is logged atomically AFTER successful analysis (confidence > 0.5).
+ * Server-side USDA enrichment is performed on detected foods.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -13,6 +14,7 @@ import { getUserDailyAiScanCount } from '@/lib/ai-limits';
 import { analyzeFoodImageStream } from '@/lib/glm-vision-stream';
 import { db } from '@/lib/db';
 import { aiUsage } from '@/db/schema';
+import { enhanceWithUSDAData } from '@/lib/ai-usda-bridge';
 
 export const runtime = 'edge';
 export const maxDuration = 60;
@@ -21,6 +23,7 @@ export const maxDuration = 60;
  * POST /api/analyze
  *
  * Accepts imageUrl and mealTypeHint, streams AI analysis back to client.
+ * Buffers complete AI result, enriches with USDA data server-side, then streams response.
  * Only logs AI usage if at least one item is identified with confidence > 0.5.
  */
 export async function POST(request: NextRequest) {
@@ -57,51 +60,86 @@ export async function POST(request: NextRequest) {
     // Fetch recent foods for context (last 7 days, top 20 most frequent)
     const recentFoods = await fetchRecentFoods(userId);
 
-    // Call GLM Vision API with streaming
+    // Call GLM Vision API and get text stream
     const result = await analyzeFoodImageStream(imageUrl, mealTypeHint, recentFoods);
+    const textStream = await result.toTextStreamResponse();
+    const fullText = await new Response(textStream.body).text();
 
-    // Create a custom stream that logs AI usage only on successful completion
-    let accumulatedResult = '';
+    // Parse the AI result
+    let hasHighConfidence = false;
+    let enrichedResponse: string = fullText;
 
-    // Transform the stream to capture the result and log usage on success
-    const loggedStream = result.toTextStreamResponse().body!.pipeThrough(
-      new TransformStream({
-        async transform(chunk, controller) {
-          const text = new TextDecoder().decode(chunk);
-          accumulatedResult += text;
-          controller.enqueue(chunk);
+    const jsonMatch = fullText.match(/\{[^{}]*"items"[^{}]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed.items && Array.isArray(parsed.items)) {
+        // Check for high confidence items before enrichment
+        hasHighConfidence = parsed.items.some(
+          (item: { confidence?: number }) => (item.confidence || 0) > 0.5
+        );
+
+        // Perform USDA enrichment server-side
+        const usdaItems = parsed.items.map((item: {
+          name: string;
+          calories: number;
+          protein_g: number;
+          carbs_g: number;
+          fat_g: number;
+          confidence: number;
+          portion_guess: string;
+          notes?: string;
+        }) => ({
+          name: item.name,
+          calories: item.calories || 0,
+          protein_g: item.protein_g || 0,
+          carbs_g: item.carbs_g || 0,
+          fat_g: item.fat_g || 0,
+          confidence: item.confidence || 0,
+          portion_guess: item.portion_guess || '',
+          notes: item.notes,
+        }));
+
+        const enhancedItems = await enhanceWithUSDAData(usdaItems);
+
+        // Transform enhanced items back to the expected format
+        const transformedItems = enhancedItems.map((item, index) => ({
+          name: item.foodName,
+          calories: item.calories,
+          protein_g: item.protein,
+          carbs_g: item.carbs,
+          fat_g: item.fat,
+          confidence: usdaItems[index]?.confidence || 0.7,
+          portion_guess: usdaItems[index]?.portion_guess || '',
+          notes: usdaItems[index]?.notes,
+          source: item.source,
+          usdaMatch: item.usdaMatch,
+        }));
+
+        enrichedResponse = JSON.stringify({
+          items: transformedItems,
+        });
+      }
+    }
+
+    // Log AI usage if high confidence items were found
+    if (hasHighConfidence) {
+      await db.insert(aiUsage).values({ userId });
+    }
+
+    // Stream the enriched response back to client
+    return new Response(
+      new ReadableStream({
+        async start(controller) {
+          controller.enqueue(new TextEncoder().encode(enrichedResponse));
+          controller.close();
         },
-        async flush() {
-          // Only log AI usage if we got a successful result with confidence > 0.5
-          if (accumulatedResult) {
-            try {
-              // Try to parse the streamed JSON to check for successful items
-              const jsonMatch = accumulatedResult.match(/\{[^{}]*"items"[^{}]*\}/);
-              if (jsonMatch) {
-                const parsed = JSON.parse(jsonMatch[0]);
-                if (parsed.items && Array.isArray(parsed.items)) {
-                  const hasHighConfidence = parsed.items.some(
-                    (item: { confidence?: number }) => (item.confidence || 0) > 0.5
-                  );
-                  if (hasHighConfidence) {
-                    await db.insert(aiUsage).values({ userId });
-                  }
-                }
-              }
-            } catch (parseError) {
-              // If parsing fails, don't log the scan (stream may have been incomplete)
-              console.warn('Failed to parse AI result for usage logging:', parseError);
-            }
-          }
+      }),
+      {
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
         },
-      })
+      }
     );
-
-    return new Response(loggedStream, {
-      headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-      },
-    });
   } catch (error) {
     console.error('Analysis error:', error);
     return NextResponse.json(
