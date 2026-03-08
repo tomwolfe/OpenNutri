@@ -2,6 +2,12 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { SessionProvider } from "next-auth/react";
+import { validateEnv } from "@/lib/env";
+
+// Validate environment variables at startup
+if (process.env.NODE_ENV === 'development') {
+  validateEnv();
+}
 
 const inter = Inter({
   subsets: ["latin"],

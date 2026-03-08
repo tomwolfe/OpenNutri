@@ -6,7 +6,7 @@
  */
 
 import { db } from '@/lib/db';
-import { logItems, aiJobs } from '@/db/schema';
+import { aiJobs } from '@/db/schema';
 import { eq, and, sql } from 'drizzle-orm';
 
 /**
@@ -44,57 +44,12 @@ interface VisionAnalysisResult {
 }
 
 /**
- * Create a semantic hash of food description for caching
- * @param description - Food description to hash
- * @returns SHA256 hash string
- */
-export async function createFoodHash(description: string): Promise<string> {
-  // Normalize: lowercase, remove extra spaces, strip common modifiers
-  const normalized = description
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  return await hashString(normalized);
-}
-
-/**
  * Create hash of image URL for cache lookup
  * @param imageUrl - Image URL to hash
  * @returns SHA256 hash string
  */
 export async function createImageHash(imageUrl: string): Promise<string> {
   return await hashString(imageUrl);
-}
-
-/**
- * Check if food item exists in cache (previous AI analyses)
- * @param foodHash - Hash of food description
- * @returns Cached item or null
- */
-export async function getCachedFoodItem(
-  foodHash: string
-): Promise<Omit<typeof logItems.$inferSelect, 'id' | 'logId'> | null> {
-  // Search for previously analyzed items with same hash
-  // This is a simplified cache - in production, use Redis
-  const [cached] = await db
-    .select()
-    .from(logItems)
-    .where(eq(logItems.foodName, foodHash))
-    .limit(1);
-
-  if (cached) {
-    return {
-      foodName: cached.foodName,
-      calories: cached.calories,
-      protein: cached.protein,
-      carbs: cached.carbs,
-      fat: cached.fat,
-      source: 'USER_CACHE',
-    };
-  }
-
-  return null;
 }
 
 /**

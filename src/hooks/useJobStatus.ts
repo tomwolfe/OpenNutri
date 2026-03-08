@@ -69,6 +69,14 @@ export function useJobStatus(
   const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = useRef<number>(0);
 
+  // Stop polling function (defined early to avoid hoisting issues)
+  const stopPolling = useCallback(() => {
+    if (pollTimeoutRef.current) {
+      clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
+    }
+  }, []);
+
   const fetchStatus = useCallback(async () => {
     if (!jobId) return;
 
@@ -111,14 +119,7 @@ export function useJobStatus(
     } finally {
       setIsLoading(false);
     }
-  }, [jobId, pollInterval, timeout, onComplete, onError]);
-
-  const stopPolling = useCallback(() => {
-    if (pollTimeoutRef.current) {
-      clearTimeout(pollTimeoutRef.current);
-      pollTimeoutRef.current = null;
-    }
-  }, []);
+  }, [jobId, pollInterval, timeout, onComplete, onError, stopPolling]);
 
   // Start polling when jobId changes
   useEffect(() => {

@@ -14,6 +14,7 @@ import {
   uuid,
   date,
   boolean,
+  index,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
@@ -96,7 +97,12 @@ export const aiJobs = pgTable('ai_jobs', {
   errorMessage: text('error_message'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   completedAt: timestamp('completed_at', { withTimezone: true }),
-});
+}, (table) => ({
+  userIdIdx: index('ai_jobs_user_id_idx').on(table.userId),
+  statusIdx: index('ai_jobs_status_idx').on(table.status),
+  imageHashIdx: index('ai_jobs_image_hash_idx').on(table.imageHash),
+  createdAtIdx: index('ai_jobs_created_at_idx').on(table.createdAt),
+}));
 
 // ============================================
 // Food Logs Table (daily meal entries)
@@ -112,7 +118,11 @@ export const foodLogs = pgTable('food_logs', {
   totalCalories: integer('total_calories'),
   aiConfidenceScore: doublePrecision('ai_confidence_score'),
   isVerified: boolean('is_verified').default(false),
-});
+}, (table) => ({
+  userIdIdx: index('food_logs_user_id_idx').on(table.userId),
+  timestampIdx: index('food_logs_timestamp_idx').on(table.timestamp),
+  jobIdIdx: index('food_logs_job_id_idx').on(table.jobId),
+}));
 
 // ============================================
 // Log Items Table (individual food items)
@@ -128,7 +138,10 @@ export const logItems = pgTable('log_items', {
   carbs: doublePrecision('carbs'),
   fat: doublePrecision('fat'),
   source: text('source'), // USDA, AI_ESTIMATE, OPEN_FACTS, USER_CACHE
-});
+}, (table) => ({
+  logIdIdx: index('log_items_log_id_idx').on(table.logId),
+  foodNameIdx: index('log_items_food_name_idx').on(table.foodName),
+}));
 
 // ============================================
 // Table Relations (for Drizzle queries)
