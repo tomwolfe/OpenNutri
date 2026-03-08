@@ -73,6 +73,10 @@ src/
    - `NEXTAUTH_SECRET`: Generate with `openssl rand -base64 32`
    - `NEXTAUTH_URL`: Your app URL (http://localhost:3000 for dev)
    - `USDA_API_KEY`: USDA FoodData Central API key (optional)
+   - `BLOB_READ_WRITE_TOKEN`: Vercel Blob token (Phase 2)
+   - `GLM_API_KEY`: Zhipu GLM Vision API key (Phase 2)
+   - `CRON_SECRET`: Cron worker secret (optional, Phase 2)
+   - `AI_SCAN_LIMIT_FREE`: Daily AI scan limit (default: 5)
 
 3. **Set up the database:**
    ```bash
@@ -104,22 +108,40 @@ npm run db:studio     # Open Drizzle Studio
 - ✅ Date-based food log viewing
 - ✅ Macronutrient totals (calories, protein, carbs, fat)
 
-## Phase 2 Features (Planned)
+## Phase 2 Features (Complete ✅)
 
-- Vision AI integration (Zhipu GLM-4.6V-Flash)
-- Async job processing with Vercel Cron
-- Image upload with Vercel Blob
-- Client-side job status polling
-- AI scan rate limiting (5/day for free users)
-- Semantic caching for food descriptions
+- ✅ Vision AI integration (Zhipu GLM-4.6V-Flash)
+- ✅ Async job processing with Vercel Cron
+- ✅ Image upload with Vercel Blob
+- ✅ Client-side job status polling (`useJobStatus` hook)
+- ✅ AI scan rate limiting (5/day for free users)
+- ✅ Semantic caching for food descriptions
+- ✅ Snap-to-Log UI component (camera + upload)
+- ✅ AI usage tracker with daily progress
 
 ## Architecture Notes
+
+### Async Job Pattern (Phase 2)
+
+```
+Upload → Create Pending Job → Return Job ID → Client Polls → Cron Worker → AI → DB Update
+```
+
+**Why?** Vercel Hobby functions timeout at 10s. AI vision takes 30-60s.
+
+**Solution:**
+1. Upload creates `pending` job in DB
+2. Client polls `/api/jobs/[id]/status` every 2s
+3. Vercel Cron triggers worker every minute
+4. Worker calls GLM Vision API
+5. Worker updates job to `completed` with results
 
 ### Serverless Considerations
 
 - **Vercel Timeout:** AI processing uses async job pattern (DB polling + Cron)
-- **Database Size:** Images stored in Vercel Blob, not database
+- **Database Size:** Images stored in Vercel Blob, only URLs in database
 - **Connection Pooling:** Neon serverless driver handles pooling automatically
+- **Cron Schedule:** `* * * * *` (every minute) via `vercel.json`
 
 ### Privacy
 

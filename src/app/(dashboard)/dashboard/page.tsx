@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { ManualFoodEntryForm } from '@/components/forms/manual-food-entry';
+import { SnapToLog } from '@/components/snap-to-log';
+import { AiUsageTracker } from '@/components/ai-usage-tracker';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -27,7 +29,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Calendar } from '@/components/ui/calendar';
-import { Loader2, LogOut, Plus, Utensils } from 'lucide-react';
+import { Loader2, LogOut, Plus, Utensils, Camera } from 'lucide-react';
 
 interface LogItem {
   id: string;
@@ -70,6 +72,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [selectedMealType, setSelectedMealType] = useState<string>('breakfast');
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [snapDialogOpen, setSnapDialogOpen] = useState(false);
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
@@ -113,6 +116,13 @@ export default function DashboardPage() {
       hour: '2-digit',
       minute: '2-digit',
     });
+  };
+
+  const handleSnapComplete = () => {
+    // Refresh logs to show new entry
+    fetchLogs();
+    // Close dialog after short delay
+    setTimeout(() => setSnapDialogOpen(false), 2000);
   };
 
   return (
@@ -201,17 +211,42 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
 
-          {/* Add Food */}
+          {/* Quick Actions */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Quick Actions</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
+              {/* AI Usage Tracker */}
+              <div className="pb-2 border-b">
+                <AiUsageTracker />
+              </div>
+
+              {/* Snap to Log */}
+              <Dialog open={snapDialogOpen} onOpenChange={setSnapDialogOpen}>
+                <DialogTrigger>
+                  <Button className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700">
+                    <Camera className="mr-2 h-4 w-4" />
+                    Snap to Log
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>Snap to Log</DialogTitle>
+                  </DialogHeader>
+                  <SnapToLog
+                    onComplete={handleSnapComplete}
+                    onError={(error) => console.error('Snap error:', error)}
+                  />
+                </DialogContent>
+              </Dialog>
+
+              {/* Manual Entry */}
               <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
                 <DialogTrigger>
-                  <Button className="w-full">
+                  <Button className="w-full" variant="outline">
                     <Plus className="mr-2 h-4 w-4" />
-                    Add Food
+                    Add Food Manually
                   </Button>
                 </DialogTrigger>
                 <DialogContent className="max-w-2xl">
