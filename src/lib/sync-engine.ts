@@ -9,6 +9,30 @@ import { db, type LocalFoodLog, type DecryptedFoodLog, type LocalUserTarget } fr
 import { decryptBatchInWorker } from '@/lib/worker-client';
 
 /**
+ * Sync conflict representation
+ */
+export interface SyncConflict {
+  type: 'log' | 'target';
+  id: string;
+  localVersion: number;
+  serverVersion: number;
+  localData?: {
+    foodName?: string;
+    calories?: number;
+    timestamp?: string;
+    mealType?: string;
+    updatedAt?: number;
+  };
+  serverData?: {
+    foodName?: string;
+    calories?: number;
+    timestamp?: string;
+    mealType?: string;
+    updatedAt?: number;
+  };
+}
+
+/**
  * Deep equality check for food log items
  */
 function itemsAreEqual(items1: any[], items2: any[]): boolean {
@@ -70,11 +94,13 @@ function setLastSyncTimestamp(timestamp: number): void {
  * Global Delta Sync
  * Pulls all changes since last sync and pushes local changes.
  * This is more efficient than date-based sync for multi-device scenarios.
+ * 
+ * @returns Object with success status, pulled/pushed counts, and any conflicts detected
  */
 export async function syncDelta(
   userId: string,
   vaultKey: CryptoKey | null
-): Promise<{ success: boolean; pulled: number; pushed: number }> {
+): Promise<{ success: boolean; pulled: number; pushed: number; conflicts?: SyncConflict[] }> {
   try {
     const deviceId = getDeviceId();
     const since = getLastSyncTimestamp();
@@ -89,6 +115,7 @@ export async function syncDelta(
       .toArray();
 
     let pushed = 0;
+    const conflicts: SyncConflict[] = [];
 
     if (unsyncedLogs.length > 0 || unsyncedTargets.length > 0) {
       console.log(`SyncEngine: Pushing ${unsyncedLogs.length} logs and ${unsyncedTargets.length} targets...`);
@@ -115,29 +142,41 @@ export async function syncDelta(
 
       if (response.ok) {
         const result = await response.json();
+        
+        // Collect conflicts from server response
+        if (result.conflicts && Array.isArray(result.conflicts)) {
+          conflicts.push(...result.conflicts);
+        }
 
-        // Mark pushed items as synced
+        // Mark pushed items as synced (excluding conflicts)
+        const conflictedIds = new Set(result.conflicts?.map((c: SyncConflict) => c.id) || []);
+        
         if (unsyncedLogs.length > 0) {
           for (const log of unsyncedLogs) {
-            await db.foodLogs.update(log.id, {
-              synced: true,
-              version: (log.version || 0) + 1,
-              deviceId,
-            });
+            if (!conflictedIds.has(log.id)) {
+              await db.foodLogs.update(log.id, {
+                synced: true,
+                version: (log.version || 0) + 1,
+                deviceId,
+              });
+            }
           }
         }
 
         if (unsyncedTargets.length > 0) {
           for (const target of unsyncedTargets) {
-            await db.userTargets.update([target.userId, target.date], {
-              synced: true,
-              version: (target.version || 0) + 1,
-              deviceId,
-            });
+            const targetId = `${target.userId}-${target.date}`;
+            if (!conflictedIds.has(targetId)) {
+              await db.userTargets.update([target.userId, target.date], {
+                synced: true,
+                version: (target.version || 0) + 1,
+                deviceId,
+              });
+            }
           }
         }
 
-        pushed = unsyncedLogs.length + unsyncedTargets.length;
+        pushed = unsyncedLogs.length + unsyncedTargets.length - conflicts.length;
       }
     }
 
@@ -217,7 +256,12 @@ export async function syncDelta(
     // 5. Update last sync timestamp
     setLastSyncTimestamp(data.serverTime || Date.now());
 
-    return { success: true, pulled, pushed };
+    return { 
+      success: conflicts.length === 0, 
+      pulled, 
+      pushed,
+      conflicts: conflicts.length > 0 ? conflicts : undefined,
+    };
   } catch (error) {
     console.error('SyncEngine: Delta sync error', error);
     return { success: false, pulled: 0, pushed: 0 };

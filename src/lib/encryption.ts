@@ -240,8 +240,22 @@ export function isCryptoAvailable(): boolean {
 
 /**
  * Hash password for authentication (client-side)
- * This ensures the server never sees the plaintext password
- * The hash is then bcrypt'd on the server for additional security
+ * 
+ * ⚠️ SECURITY NOTE: This uses SHA-256 client-side hashing before transmission,
+ * then bcrypt on the server. This creates a vulnerability where the SHA-256 hash
+ * itself becomes the effective password - an attacker with DB access could replay
+ * the hash directly without cracking bcrypt.
+ * 
+ * Current implementation is a trade-off between:
+ * - ✅ Preventing plaintext password transmission over the wire
+ * - ✅ Client-side privacy (server never sees raw password)
+ * - ❌ Vulnerable to hash replay attacks if DB is compromised
+ * 
+ * TODO: Migrate to secure auth flow where:
+ * 1. Password is sent over HTTPS only (TLS 1.3)
+ * 2. Server performs bcrypt/Argon2id hashing exclusively
+ * 3. Client-side hashing is used ONLY for vault key derivation (PBKDF2)
+ * 
  * @param password - User's plaintext password
  * @returns Hex-encoded SHA-256 hash
  */

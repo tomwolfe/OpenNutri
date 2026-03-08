@@ -8,7 +8,7 @@
 import { useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type DecryptedFoodLog } from '@/lib/db-local';
-import { syncDelta } from '@/lib/sync-engine';
+import { syncDelta, type SyncConflict } from '@/lib/sync-engine';
 
 export interface LogItem {
   foodName: string;
@@ -44,13 +44,14 @@ export interface DailyTotals {
   fat: number;
 }
 
-interface UseDailyLogsReturn {
+export interface UseDailyLogsReturn {
   logs: FoodLog[];
   dailyTotals: DailyTotals;
   isLoading: boolean;
   error: string | null;
-  triggerSync: (userId: string, vaultKey: CryptoKey | null) => Promise<void>;
+  triggerSync: (userId: string, vaultKey: CryptoKey | null) => Promise<{ conflicts?: SyncConflict[] }>;
   removeLog: (logId: string) => Promise<boolean>;
+  resolveConflicts: (conflicts: SyncConflict[], resolution: 'keep-local' | 'keep-server' | 'keep-newest') => Promise<void>;
 }
 
 /**
@@ -129,11 +130,75 @@ export function useDailyLogs(
   );
 
   // Trigger background sync
-  const triggerSync = async (syncUserId: string, syncVaultKey: CryptoKey | null) => {
+  const triggerSync = async (syncUserId: string, syncVaultKey: CryptoKey | null): Promise<{ conflicts?: SyncConflict[] }> => {
     try {
-      await syncDelta(syncUserId, syncVaultKey);
+      const result = await syncDelta(syncUserId, syncVaultKey);
+      return { conflicts: result.conflicts };
     } catch (err) {
       console.error('Sync error:', err);
+      return {};
+    }
+  };
+
+  // Resolve conflicts based on user's choice
+  const resolveConflicts = async (
+    conflicts: SyncConflict[],
+    resolution: 'keep-local' | 'keep-server' | 'keep-newest'
+  ) => {
+    for (const conflict of conflicts) {
+      if (conflict.type === 'log') {
+        if (resolution === 'keep-server') {
+          // Fetch server version and overwrite local
+          const response = await fetch(`/api/log/daily?id=${conflict.id}`);
+          if (response.ok) {
+            const serverData = await response.json();
+            await db.foodLogs.update(conflict.id, {
+              ...serverData,
+              synced: true,
+              version: serverData.version,
+            });
+          }
+        } else if (resolution === 'keep-local') {
+          // Re-push local version with incremented version number
+          const localLog = await db.foodLogs.get(conflict.id);
+          if (localLog) {
+            await fetch('/api/log/food', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                ...localLog,
+                version: conflict.localVersion + 1,
+              }),
+            });
+            await db.foodLogs.update(conflict.id, {
+              version: conflict.localVersion + 1,
+              synced: true,
+            });
+          }
+        } else if (resolution === 'keep-newest') {
+          // Use the version with the most recent updatedAt timestamp
+          const localLog = await db.foodLogs.get(conflict.id);
+          const localUpdatedAt = localLog?.updatedAt || 0;
+          const serverUpdatedAt = conflict.serverData?.updatedAt || 0;
+          
+          if (serverUpdatedAt > localUpdatedAt) {
+            const response = await fetch(`/api/log/daily?id=${conflict.id}`);
+            if (response.ok) {
+              const serverData = await response.json();
+              await db.foodLogs.update(conflict.id, {
+                ...serverData,
+                synced: true,
+                version: serverData.version,
+              });
+            }
+          } else {
+            await db.foodLogs.update(conflict.id, {
+              version: conflict.localVersion + 1,
+              synced: true,
+            });
+          }
+        }
+      }
     }
   };
 
@@ -159,5 +224,6 @@ export function useDailyLogs(
     error: null,
     triggerSync,
     removeLog,
+    resolveConflicts,
   };
 }
