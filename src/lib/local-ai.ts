@@ -8,6 +8,12 @@
 export interface ImageClassificationResult {
   label: string;
   score: number;
+  macros?: {
+    calories: number;
+    protein: number;
+    carbs: number;
+    fat: number;
+  };
 }
 
 let worker: Worker | null = null;

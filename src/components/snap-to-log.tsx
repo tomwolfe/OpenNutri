@@ -17,6 +17,7 @@ import { BarcodeScanner } from './barcode-scanner';
 import { CameraOverlay } from './dashboard/camera-overlay';
 import { MacroEditor } from './dashboard/macro-editor';
 import { VoiceCapture } from './dashboard/voice-capture';
+import { classifyFoodLocally, needsCloudAnalysis, ImageClassificationResult } from '@/lib/local-ai';
 import { FoodAnalysisSchema, DraftItem } from '@/types/food';
 import { compressImage, formatBytes } from '@/lib/image-utils';
 import { cn } from '@/lib/utils';
@@ -53,6 +54,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
   const [imageUrl, setImageUrl] = useState<string | null>(null); // Permanent URL (encrypted if possible)
   const [imageIv, setImageIv] = useState<string | null>(null);
   const [compressionStats, setCompressionStats] = useState<{ original: number; compressed: number } | null>(null);
+  const [localAiResults, setLocalAiResults] = useState<ImageClassificationResult[] | null>(null);
   
   const { encryptLog, encryptBinary, generateSessionKey, exportKeyToBase64, isReady, vaultKey } = useEncryption();
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -236,20 +238,77 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
     setPreviewUrl(url);
   }, [onError]);
 
+  const enrichItemsWithUsda = useCallback(async (items: DraftItem[]) => {
+    try {
+      const res = await fetch('/api/food/usda/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items }),
+      });
+      
+      if (res.ok) {
+        const enrichedData = await res.json();
+        setDraftItems(enrichedData.items.map((item: DraftItem) => ({
+          ...item,
+          isEnhancing: false,
+        })));
+      } else {
+        setDraftItems(items.map(item => ({ ...item, isEnhancing: false })));
+      }
+    } catch (err) {
+      console.error('USDA enrichment failed:', err);
+      setDraftItems(items.map(item => ({ ...item, isEnhancing: false })));
+    }
+  }, []);
+
   const onFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) handleFileSelect(file);
   }, [handleFileSelect]);
 
   const handleUpload = useCallback(async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || !previewUrl) return;
     setUploadProgress('uploading');
     setUploadError(null);
 
     try {
+      // 1. Try Local AI First (Privacy-First)
+      const localResults = await classifyFoodLocally(previewUrl);
+      setLocalAiResults(localResults);
+
       const compressedBlob = await compressImage(selectedFile);
       const arrayBuffer = await compressedBlob.arrayBuffer();
       setCompressionStats({ original: selectedFile.size, compressed: compressedBlob.size });
+
+      // Check if local AI is confident enough to skip cloud AI
+      const shouldSkipCloud = localResults && !needsCloudAnalysis(localResults);
+
+      if (shouldSkipCloud) {
+        const topResult = localResults![0];
+        
+        // Tier 2: Cached Knowledge (Check user favorites)
+        const favoriteId = topResult.label.toLowerCase().trim();
+        const favorite = await db.userFavorites.get(favoriteId);
+
+        const localItem: DraftItem = {
+          foodName: favorite?.foodName || topResult.label,
+          calories: favorite?.calories || topResult.macros?.calories || 0,
+          protein: favorite?.protein || topResult.macros?.protein || 0,
+          carbs: favorite?.carbs || topResult.macros?.carbs || 0,
+          fat: favorite?.fat || topResult.macros?.fat || 0,
+          source: favorite ? 'USER_HISTORY' : 'LOCAL_AI',
+          servingGrams: 100,
+          isEnhancing: isOnline,
+        };
+
+        setDraftItems([localItem]);
+        setUploadProgress('review');
+        
+        if (isOnline) {
+          enrichItemsWithUsda([localItem]);
+        }
+        return;
+      }
 
       if (!isOnline) {
         const compressedFile = new File([compressedBlob], 'food-analysis.webp', { type: 'image/webp' });
@@ -262,7 +321,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
         throw new Error('Failed to queue image');
       }
 
-      // 1. Generate a one-time session key for Zero-Knowledge analysis
+      // 2. Fallback to Cloud AI if local is not confident
       const sessionKey = await generateSessionKey();
       const { ciphertext, iv } = await encryptBinary(arrayBuffer, sessionKey);
       
@@ -332,6 +391,30 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
     if (draftItems.length === 0) return;
     setSaveInProgress(true);
     try {
+      // 1. Update local favorites for all items
+      for (const item of draftItems) {
+        if (!item.foodName) continue;
+        const favoriteId = item.foodName.toLowerCase().trim();
+        const existing = await db.userFavorites.get(favoriteId);
+        if (existing) {
+          await db.userFavorites.update(favoriteId, {
+            frequency: (existing.frequency || 1) + 1,
+            lastUsed: new Date()
+          });
+        } else {
+          await db.userFavorites.add({
+            id: favoriteId,
+            foodName: item.foodName,
+            calories: item.calories,
+            protein: item.protein,
+            carbs: item.carbs,
+            fat: item.fat,
+            frequency: 1,
+            lastUsed: new Date()
+          });
+        }
+      }
+
       const totalCalories = draftItems.reduce((sum, item) => sum + item.calories, 0);
       const notes = draftItems.map(i => i.notes).filter(Boolean).join(' ') || null;
       
@@ -507,7 +590,15 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
               )}
 
               {(uploadProgress === 'uploading' || uploadProgress === 'streaming') && (
-                <div className="p-3 bg-gray-50 rounded-lg">{renderStatus()}</div>
+                <div className="p-3 bg-gray-50 rounded-lg">
+                  {renderStatus()}
+                  {uploadProgress === 'uploading' && localAiResults && !needsCloudAnalysis(localAiResults) && (
+                    <div className="mt-2 flex items-center gap-1.5 text-[10px] text-green-600 font-medium bg-green-50 px-2 py-1 rounded-full w-fit">
+                      <CheckCircle className="w-3 h-3" />
+                      Privacy-First: Analyzed on device
+                    </div>
+                  )}
+                </div>
               )}
 
               {uploadError && (
@@ -526,6 +617,12 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
                   "transition-all duration-500 ease-in-out",
                   uploadProgress === 'streaming' ? "opacity-60 grayscale-[0.5]" : "opacity-100"
                 )}>
+                  {uploadProgress === 'review' && draftItems.some(i => i.source === 'LOCAL_AI' || i.source === 'USER_HISTORY') && (
+                    <div className="mb-2 flex items-center gap-1.5 text-[10px] text-green-600 font-medium bg-green-50 px-2 py-1 rounded-full w-fit">
+                      <CheckCircle className="w-3 h-3" />
+                      Privacy-First: Analyzed on device
+                    </div>
+                  )}
                   <MacroEditor
                     items={displayItems as DraftItem[]}
                     selectedMealType={selectedMealType}

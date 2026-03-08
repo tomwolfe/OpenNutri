@@ -30,6 +30,13 @@ const FOOD_MACROS: Record<string, { calories: number; protein: number; carbs: nu
   'avocado': { calories: 160, protein: 2, carbs: 9, fat: 15 }, // 100g
   'rice, white, cooked': { calories: 130, protein: 2.7, carbs: 28, fat: 0.3 }, // 100g
   'yogurt, plain': { calories: 59, protein: 10, carbs: 3.6, fat: 0.4 }, // 100g
+  'almonds': { calories: 579, protein: 21, carbs: 22, fat: 49 }, // 100g
+  'salmon': { calories: 208, protein: 20, carbs: 0, fat: 13 }, // 100g
+  'sweet potato': { calories: 86, protein: 1.6, carbs: 20, fat: 0.1 }, // 100g
+  'blueberries': { calories: 57, protein: 0.7, carbs: 14, fat: 0.3 }, // 100g
+  'steak': { calories: 252, protein: 27, carbs: 0, fat: 15 }, // 100g
+  'bread, white': { calories: 265, protein: 9, carbs: 49, fat: 3.2 }, // 100g
+  'pasta, cooked': { calories: 131, protein: 5, carbs: 25, fat: 1.1 }, // 100g
 };
 
 // Initialize the model
