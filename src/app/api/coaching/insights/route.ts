@@ -9,7 +9,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
-import { userTargets, foodLogs, logItems } from '@/db/schema';
+import { userTargets, foodLogs, logItems, users } from '@/db/schema';
 import { eq, and, gte, lte, sql } from 'drizzle-orm';
 import {
   generateCoachingInsights,
@@ -85,6 +85,16 @@ async function getHistoricalData(userId: string) {
 async function getCurrentTargets(userId: string) {
   const today = new Date().toISOString().split('T')[0];
 
+  // Fetch user's weight goal from users table
+  const [user] = await db
+    .select({
+      weightGoal: users.weightGoal,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  // Fetch today's targets
   const [targets] = await db
     .select({
       calorieTarget: userTargets.calorieTarget,
@@ -102,7 +112,7 @@ async function getCurrentTargets(userId: string) {
     protein: targets?.proteinTarget || 150,
     carbs: targets?.carbTarget || 250,
     fat: targets?.fatTarget || 65,
-    weightGoal: 'maintain' as 'lose' | 'maintain' | 'gain',
+    weightGoal: (user?.weightGoal || 'maintain') as 'lose' | 'maintain' | 'gain',
   };
 }
 

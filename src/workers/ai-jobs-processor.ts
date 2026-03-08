@@ -14,16 +14,16 @@
  */
 
 import { db } from '@/lib/db';
-import { aiJobs, foodLogs, logItems } from '@/db/schema';
+import { aiJobs } from '@/db/schema';
 import { eq, and, lte } from 'drizzle-orm';
 import {
   analyzeFoodImage,
   calculateAverageConfidence,
-  convertToLogItems,
   createImageHash,
   getCachedImageAnalysis,
   saveAnalysisToCache,
 } from '@/lib/glm-vision';
+import { enhanceWithUSDAData } from '@/lib/ai-usda-bridge';
 
 /**
  * Configuration
@@ -134,6 +134,19 @@ export async function processAiJob(job: typeof aiJobs.$inferSelect): Promise<boo
   const imageUrl = job.imageUrl;
   const currentRetryCount = job.retryCount ?? 0;
 
+  // Extract meal type hint from cachedAnalysis if present
+  let mealTypeHint: string | null = null;
+  if (job.cachedAnalysis) {
+    try {
+      const tempData = JSON.parse(job.cachedAnalysis);
+      if (tempData.mealTypeHint) {
+        mealTypeHint = tempData.mealTypeHint;
+      }
+    } catch {
+      // Ignore parse errors for temporary data
+    }
+  }
+
   if (!imageUrl) {
     await markJobFailed(jobId, 'No image URL', currentRetryCount);
     return false;
@@ -159,9 +172,9 @@ export async function processAiJob(job: typeof aiJobs.$inferSelect): Promise<boo
       console.log(`Job ${jobId}: Cache hit for image hash ${imageHash.substring(0, 8)}...`);
       cacheHit = true;
     } else {
-      // Cache miss - call GLM Vision API
-      console.log(`Job ${jobId}: Cache miss, calling GLM API...`);
-      analysisResult = await analyzeFoodImage(imageUrl);
+      // Cache miss - call GLM Vision API with meal type hint
+      console.log(`Job ${jobId}: Cache miss, calling GLM API...${mealTypeHint ? ` (meal type: ${mealTypeHint})` : ''}`);
+      analysisResult = await analyzeFoodImage(imageUrl, mealTypeHint);
 
       if (!analysisResult || analysisResult.items.length === 0) {
         const shouldRetry = await markJobFailed(jobId, 'AI analysis returned no results', currentRetryCount);
@@ -176,64 +189,54 @@ export async function processAiJob(job: typeof aiJobs.$inferSelect): Promise<boo
       console.log(`Job ${jobId}: Analysis saved to cache`);
     }
 
+    // Enhance AI results with USDA data where possible
+    console.log(`Job ${jobId}: Enhancing with USDA data...`);
+    const enhancedItems = await enhanceWithUSDAData(analysisResult.items);
+    const usdaMatchCount = enhancedItems.filter(item => item.source === 'USDA').length;
+    if (usdaMatchCount > 0) {
+      console.log(`Job ${jobId}: Matched ${usdaMatchCount}/${enhancedItems.length} items to USDA database`);
+    }
+
     // Calculate confidence score
     const avgConfidence = calculateAverageConfidence(analysisResult.items);
 
-    // Create food log entry
-    const totalCalories = analysisResult.items.reduce(
+    // Calculate total calories from enhanced items
+    const totalCalories = enhancedItems.reduce(
       (sum, item) => sum + item.calories,
       0
     );
 
-    const [foodLog] = await db
-      .insert(foodLogs)
-      .values({
-        userId,
-        jobId,
-        mealType: 'unclassified', // Can be updated by user later
-        totalCalories,
-        aiConfidenceScore: avgConfidence,
-        isVerified: false,
+    // Convert enhanced items to draft format
+    const draftItems = enhancedItems.map((item) => ({
+      foodName: item.foodName,
+      calories: item.calories,
+      protein: item.protein,
+      carbs: item.carbs,
+      fat: item.fat,
+      source: item.source,
+      servingGrams: 0, // Will be set by user during review
+      usdaMatch: 'usdaMatch' in item ? item.usdaMatch : undefined,
+    }));
+
+    // Save analysis as draft in cachedAnalysis
+    const draftAnalysis = {
+      items: draftItems,
+      totalCalories,
+      aiConfidenceScore: avgConfidence,
+      analyzedAt: new Date().toISOString(),
+    };
+
+    await db
+      .update(aiJobs)
+      .set({
+        cachedAnalysis: JSON.stringify(draftAnalysis),
+        status: 'completed',
+        completedAt: new Date(),
       })
-      .returning();
-
-    if (!foodLog) {
-      const shouldRetry = await markJobFailed(jobId, 'Failed to create food log', currentRetryCount);
-      if (shouldRetry) {
-        console.log(`Job ${jobId} will be retried (attempt ${currentRetryCount + 1}/${MAX_RETRIES})`);
-      }
-      return false;
-    }
-
-    // Convert and insert log items
-    const logItemsData = convertToLogItems(analysisResult.items);
-
-    // Insert all items
-    const insertedItems = await Promise.all(
-      logItemsData.map((item) =>
-        db
-          .insert(logItems)
-          .values({
-            logId: foodLog.id,
-            ...item,
-          })
-          .returning()
-      )
-    );
-
-    if (insertedItems.length === 0) {
-      const shouldRetry = await markJobFailed(jobId, 'Failed to insert log items', currentRetryCount);
-      if (shouldRetry) {
-        console.log(`Job ${jobId} will be retried (attempt ${currentRetryCount + 1}/${MAX_RETRIES})`);
-      }
-      return false;
-    }
-
-    // Mark job as completed
-    await markJobCompleted(jobId);
+      .where(eq(aiJobs.id, jobId));
 
     console.log(
-      `Job ${jobId} ${cacheHit ? '(cache hit)' : ''} completed: ${insertedItems.length} items, ${totalCalories} calories`
+      `Job ${jobId} ${cacheHit ? '(cache hit)' : ''} completed: ${draftItems.length} items saved as draft, ${totalCalories} calories`
     );
 
     return true;

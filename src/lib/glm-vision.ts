@@ -120,10 +120,12 @@ export async function saveAnalysisToCache(
 /**
  * Call GLM Vision API to analyze food image
  * @param imageUrl - Public URL of the food image
+ * @param mealTypeHint - Optional meal type hint (breakfast, lunch, dinner, snack)
  * @returns Analysis result or null on error
  */
 export async function analyzeFoodImage(
-  imageUrl: string
+  imageUrl: string,
+  mealTypeHint?: string | null
 ): Promise<VisionAnalysisResult | null> {
   const apiKey = process.env.GLM_API_KEY;
 
@@ -131,6 +133,11 @@ export async function analyzeFoodImage(
     console.error('GLM_API_KEY not configured');
     return null;
   }
+
+  // Build meal type context
+  const mealTypeContext = mealTypeHint && mealTypeHint !== 'unclassified'
+    ? `The user is currently eating ${mealTypeHint}. Focus on foods typical for this meal (e.g., eggs, toast, cereal for breakfast; sandwich, salad for lunch; pasta, rice, meat for dinner).`
+    : '';
 
   try {
     const response = await fetch(GLM_API_URL, {
@@ -145,14 +152,14 @@ export async function analyzeFoodImage(
           {
             role: 'system',
             content:
-              'You are a nutritionist AI. Analyze the food image. Return ONLY valid JSON. No markdown. No explanations. Schema: { "items": [{ "name": "string", "calories": int, "protein_g": float, "carbs_g": float, "fat_g": float, "confidence": float, "portion_guess": "string" }] } If unsure, estimate conservatively. Set confidence < 0.5 if unclear.',
+              `You are a nutritionist AI. Analyze the food image. Return ONLY valid JSON. No markdown. No explanations. Schema: { "items": [{ "name": "string", "calories": int, "protein_g": float, "carbs_g": float, "fat_g": float, "confidence": float, "portion_guess": "string" }] } If unsure, estimate conservatively. Set confidence < 0.5 if unclear. ${mealTypeContext}`,
           },
           {
             role: 'user',
             content: [
               {
                 type: 'text',
-                text: 'Analyze this food image and provide nutritional information for each visible food item.',
+                text: `Analyze this food image and provide nutritional information for each visible food item. ${mealTypeContext ? 'Consider the meal type context when identifying foods.' : ''}`,
               },
               {
                 type: 'image_url',

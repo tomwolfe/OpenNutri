@@ -82,6 +82,7 @@ export async function POST(request: NextRequest) {
     // Parse multipart form data
     const formData = await request.formData();
     const file = formData.get('image') as File | null;
+    const mealTypeHint = formData.get('mealType') as string | null;
 
     if (!file) {
       return NextResponse.json({ error: 'No image provided' }, { status: 400 });
@@ -114,7 +115,7 @@ export async function POST(request: NextRequest) {
     // Create image hash for caching
     const imageHash = await createImageHash(imageUrl);
 
-    // Create pending AI job
+    // Create pending AI job with optional meal type hint
     const [job] = await db
       .insert(aiJobs)
       .values({
@@ -122,6 +123,7 @@ export async function POST(request: NextRequest) {
         imageUrl,
         imageHash,
         status: 'pending',
+        cachedAnalysis: mealTypeHint ? JSON.stringify({ mealTypeHint }) : null,
       })
       .returning();
 

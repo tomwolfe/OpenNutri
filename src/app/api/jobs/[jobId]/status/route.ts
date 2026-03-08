@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
-import { aiJobs, foodLogs, logItems } from '@/db/schema';
+import { aiJobs } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 
 export const runtime = 'edge';
@@ -77,41 +77,39 @@ export async function GET(
       response.completedAt = job.completedAt.toISOString();
     }
 
-    // If completed, fetch results
-    if (job.status === 'completed') {
-      const [foodLog] = await db
-        .select()
-        .from(foodLogs)
-        .where(eq(foodLogs.jobId, job.id))
-        .limit(1);
-
-      if (foodLog) {
-        const items = await db
-          .select()
-          .from(logItems)
-          .where(eq(logItems.logId, foodLog.id));
+    // If completed, check for draft analysis in cachedAnalysis
+    if (job.status === 'completed' && job.cachedAnalysis) {
+      try {
+        const draftAnalysis = JSON.parse(job.cachedAnalysis) as {
+          items: Array<{
+            foodName: string;
+            calories: number;
+            protein: number;
+            carbs: number;
+            fat: number;
+            source: string;
+          }>;
+          totalCalories: number;
+          aiConfidenceScore: number;
+          analyzedAt: string;
+        };
 
         response.foodLog = {
-          id: foodLog.id,
-          totalCalories: foodLog.totalCalories || 0,
-          aiConfidenceScore: foodLog.aiConfidenceScore || 0,
-          mealType: foodLog.mealType || 'unclassified',
-          isVerified: foodLog.isVerified || false,
-          items: items.map((item) => ({
-            foodName: item.foodName || 'Unknown',
-            calories: item.calories || 0,
-            protein: item.protein || 0,
-            carbs: item.carbs || 0,
-            fat: item.fat || 0,
-            source: item.source || 'AI_ESTIMATE',
-          })),
+          id: job.id, // Use job ID as draft ID
+          totalCalories: draftAnalysis.totalCalories || 0,
+          aiConfidenceScore: draftAnalysis.aiConfidenceScore || 0,
+          mealType: 'unclassified', // Will be set by user
+          isVerified: false, // Draft needs confirmation
+          items: draftAnalysis.items || [],
         };
+      } catch (e) {
+        console.error('Failed to parse cachedAnalysis:', e);
       }
     }
 
     // If failed, include error info
     if (job.status === 'failed') {
-      response.error = 'AI processing failed. Please try again.';
+      response.error = job.errorMessage || 'AI processing failed. Please try again.';
     }
 
     return NextResponse.json(response);

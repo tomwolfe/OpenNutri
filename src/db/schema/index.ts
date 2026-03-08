@@ -64,6 +64,7 @@ export const users = pgTable('users', {
   passwordHash: text('password_hash'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   subscriptionTier: text('subscription_tier').default('free'),
+  weightGoal: text('weight_goal').default('maintain'), // lose, maintain, gain
 });
 
 // ============================================
