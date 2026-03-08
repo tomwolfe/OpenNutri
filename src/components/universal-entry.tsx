@@ -19,6 +19,7 @@ import { MacroEditor } from '@/components/dashboard/macro-editor';
 import { experimental_useObject as useObject } from '@ai-sdk/react';
 import { FoodAnalysisSchema, DraftItem } from '@/types/food';
 import { db } from '@/lib/db-local';
+import { compressImage, formatBytes } from '@/lib/image-utils';
 
 interface UniversalEntryProps {
   onComplete?: () => void;
@@ -54,6 +55,7 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
   const [items, setItems] = useState<DraftItem[]>([]);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress>('idle');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [compressionStats, setCompressionStats] = useState<{ original: number; compressed: number } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -157,8 +159,13 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
     setUploadProgress('uploading');
 
     try {
+      // Compress and strip EXIF
+      const compressedBlob = await compressImage(file);
+      const compressedFile = new File([compressedBlob], 'food-analysis.webp', { type: 'image/webp' });
+      setCompressionStats({ original: file.size, compressed: compressedBlob.size });
+
       const formData = new FormData();
-      formData.append('image', file);
+      formData.append('image', compressedFile);
       const res = await fetch('/api/blob/upload', { method: 'POST', body: formData });
       if (!res.ok) throw new Error('Upload failed');
       const { imageUrl } = await res.json();
@@ -344,14 +351,23 @@ export function UniversalEntry({ onComplete }: UniversalEntryProps) {
           <CardContent className="p-4 space-y-4">
             {/* Vision Preview */}
             {previewUrl && (
-              <div className="relative aspect-video rounded-lg overflow-hidden bg-gray-100 border">
-                <Image src={previewUrl} alt="Meal" fill className="object-cover" />
-                {(isStreaming || uploadProgress === 'uploading') && (
-                  <div className="absolute inset-0 bg-black/20 flex items-center justify-center backdrop-blur-sm">
-                    <div className="bg-white/90 px-4 py-2 rounded-full flex items-center gap-2 shadow-lg">
-                      <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
-                      <span className="text-xs font-medium">AI Analysis...</span>
+              <div className="space-y-2">
+                <div className="relative aspect-video rounded-lg overflow-hidden bg-gray-100 border">
+                  <Image src={previewUrl} alt="Meal" fill className="object-cover" />
+                  {(isStreaming || uploadProgress === 'uploading') && (
+                    <div className="absolute inset-0 bg-black/20 flex items-center justify-center backdrop-blur-sm">
+                      <div className="bg-white/90 px-4 py-2 rounded-full flex items-center gap-2 shadow-lg">
+                        <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                        <span className="text-xs font-medium">
+                          {uploadProgress === 'uploading' ? 'Optimizing...' : 'AI Analysis...'}
+                        </span>
+                      </div>
                     </div>
+                  )}
+                </div>
+                {compressionStats && (
+                  <div className="text-[10px] text-gray-400 text-right px-1">
+                    Privacy-filtered & optimized: {formatBytes(compressionStats.original)} → {formatBytes(compressionStats.compressed)}
                   </div>
                 )}
               </div>

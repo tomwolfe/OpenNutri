@@ -19,6 +19,7 @@ export async function GET(request: NextRequest) {
 
     const searchParams = request.nextUrl.searchParams;
     const dateParam = searchParams.get('date');
+    const sinceParam = searchParams.get('since');
 
     // Default to today if no date provided
     const targetDate = dateParam ? new Date(dateParam) : new Date();
@@ -28,18 +29,26 @@ export async function GET(request: NextRequest) {
     const endDate = new Date(targetDate);
     endDate.setDate(endDate.getDate() + 1);
 
+    // Build filters
+    const filters = [
+      eq(foodLogs.userId, session.user.id),
+      gte(foodLogs.timestamp, startDate),
+      lt(foodLogs.timestamp, endDate),
+    ];
+
+    if (sinceParam) {
+      filters.push(gte(foodLogs.updatedAt, new Date(parseInt(sinceParam))));
+    }
+
     // Fetch food logs with items in a single query using Drizzle Relational API
     const logsWithItems = await db.query.foodLogs.findMany({
-      where: and(
-        eq(foodLogs.userId, session.user.id),
-        gte(foodLogs.timestamp, startDate),
-        lt(foodLogs.timestamp, endDate)
-      ),
+      where: and(...filters),
       with: {
         logItems: true,
       },
       columns: {
         id: true,
+        userId: true,
         mealType: true,
         totalCalories: true,
         aiConfidenceScore: true,
@@ -49,6 +58,8 @@ export async function GET(request: NextRequest) {
         notes: true,
         encryptedData: true,
         encryptionIv: true,
+        encryptionSalt: true,
+        updatedAt: true,
       },
       orderBy: [desc(foodLogs.timestamp)],
     });

@@ -64,9 +64,11 @@ export const userTargets = pgTable('user_targets', {
   carbTarget: integer('carb_target'),
   fatTarget: integer('fat_target'),
   weightRecord: doublePrecision('weight_record'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({
   pk: primaryKey({ columns: [table.userId, table.date] }),
   dateIdx: index('user_targets_date_idx').on(table.date),
+  updatedAtIdx: index('user_targets_updated_at_idx').on(table.updatedAt),
 }));
 
 // ============================================
@@ -88,9 +90,11 @@ export const foodLogs = pgTable('food_logs', {
   encryptedData: text('encrypted_data').notNull(), // Encrypted log items (AES-GCM)
   encryptionIv: text('encryption_iv').notNull(), // IV for decryption
   encryptionSalt: text('encryption_salt'), // Salt for key derivation (optional if using user-level salt)
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({
   userIdIdx: index('food_logs_user_id_idx').on(table.userId),
   timestampIdx: index('food_logs_timestamp_idx').on(table.timestamp),
+  updatedAtIdx: index('food_logs_updated_at_idx').on(table.updatedAt),
 }));
 
 // ============================================

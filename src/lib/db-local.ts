@@ -32,6 +32,7 @@ export interface LocalFoodLog {
   encryptionIv: string;
   encryptionSalt: string | null;
   synced: boolean;
+  updatedAt: number; // Unix timestamp for sync delta
 }
 
 export interface DecryptedFoodLog {
@@ -54,6 +55,7 @@ export interface LocalUserTarget {
   fatTarget: number | null;
   weightRecord: number | null;
   synced: boolean;
+  updatedAt: number;
 }
 
 export interface UserFavorite {
@@ -76,11 +78,11 @@ export class OpenNutriDB extends Dexie {
 
   constructor() {
     super('OpenNutriDB');
-    this.version(1).stores({
+    this.version(2).stores({
       pendingImages: 'id, timestamp',
-      foodLogs: 'id, userId, timestamp, synced',
+      foodLogs: 'id, userId, timestamp, synced, updatedAt',
       decryptedLogs: 'id, userId, timestamp',
-      userTargets: '[userId+date], userId, date, synced',
+      userTargets: '[userId+date], userId, date, synced, updatedAt',
       userFavorites: 'id, foodName, frequency, lastUsed',
     });
   }
