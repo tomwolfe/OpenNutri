@@ -13,11 +13,12 @@
 
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import Image from 'next/image';
-import { Camera, Upload, X, CheckCircle, AlertCircle, Loader2, Edit2, Save } from 'lucide-react';
+import { Camera, Upload, X, CheckCircle, AlertCircle, Loader2, Edit2, Save, WifiOff, Cloud } from 'lucide-react';
 import { experimental_useObject as useObject } from '@ai-sdk/react';
 import { z } from 'zod';
+import { useOfflineQueue } from '@/hooks/use-offline-queue';
 
 // Schema matching the GLM vision response
 const FoodAnalysisSchema = z.object({
@@ -67,6 +68,8 @@ interface SnapToLogProps {
   onError?: (error: string) => void;
   /** Callback when draft is saved to log */
   onDraftSaved?: () => void;
+  /** Callback when offline queue sync completes */
+  onSyncComplete?: (syncedCount: number) => void;
 }
 
 const MEAL_TYPES = [
@@ -77,7 +80,7 @@ const MEAL_TYPES = [
   { value: 'unclassified', label: 'Other' },
 ] as const;
 
-export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps) {
+export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }: SnapToLogProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<'idle' | 'uploading' | 'streaming' | 'review' | 'complete'>('idle');
@@ -87,8 +90,54 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
   const [isEditingItems, setIsEditingItems] = useState(false);
   const [saveInProgress, setSaveInProgress] = useState(false);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  
+  // Offline state
+  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const { queueImage, syncQueue, isAvailable: isIndexedDBAvailable } = useOfflineQueue();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Sync queued images when online
+  const handleSyncAndUpload = useCallback(async () => {
+    if (!isOnline || isSyncing) return;
+    
+    setIsSyncing(true);
+    try {
+      const result = await syncQueue();
+      if (result.success > 0) {
+        console.log(`Synced ${result.success} image(s) from offline queue`);
+        onSyncComplete?.(result.success);
+      }
+      if (result.failed > 0) {
+        console.warn(`Failed to sync ${result.failed} image(s)`);
+      }
+    } catch (err) {
+      console.error('Sync failed:', err);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [isOnline, isSyncing, syncQueue, onSyncComplete]);
+
+  // Track online/offline status
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      // Auto-sync when coming back online
+      if (selectedFile) {
+        handleSyncAndUpload();
+      }
+    };
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [selectedFile, handleSyncAndUpload]);
 
   // Vercel AI SDK useObject hook for native streaming
   const { submit, object } = useObject({
@@ -194,6 +243,32 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
   const handleUpload = useCallback(async () => {
     if (!selectedFile) return;
 
+    // If offline, queue the image for later upload
+    if (!isOnline) {
+      setUploadProgress('uploading');
+      setUploadError(null);
+      
+      try {
+        const queueId = await queueImage(selectedFile, selectedMealType);
+        
+        if (queueId) {
+          setUploadError('You are offline. Image queued for upload when connection is restored.');
+          setUploadProgress('idle');
+          // Don't clear the preview - let user know it's queued
+          return;
+        } else {
+          throw new Error('Failed to queue image (IndexedDB unavailable)');
+        }
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to queue image';
+        setUploadError(errorMessage);
+        setUploadProgress('idle');
+        onError?.(errorMessage);
+        return;
+      }
+    }
+
+    // Online flow - proceed with normal upload
     setUploadProgress('uploading');
     setUploadError(null);
 
@@ -227,7 +302,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
       setUploadProgress('idle');
       onError?.(errorMessage);
     }
-  }, [selectedFile, selectedMealType, onError, submit]);
+  }, [selectedFile, selectedMealType, isOnline, queueImage, onError, submit]);
 
   // Save draft as verified food log
   const handleSaveDraft = useCallback(async () => {
@@ -437,6 +512,22 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
 
   return (
     <div className="w-full max-w-md mx-auto p-4 bg-white rounded-lg shadow-sm border">
+      {/* Offline indicator banner */}
+      {!isOnline && (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2 text-amber-800">
+          <WifiOff className="w-4 h-4" />
+          <span className="text-sm font-medium">You are offline. Images will be uploaded when connection is restored.</span>
+        </div>
+      )}
+      
+      {/* Syncing indicator */}
+      {isSyncing && (
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-2 text-blue-800">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span className="text-sm font-medium">Syncing queued images...</span>
+        </div>
+      )}
+
       <div className="mb-4">
         <h3 className="text-lg font-semibold text-gray-900">Snap to Log</h3>
         <p className="text-sm text-gray-500">
@@ -519,10 +610,43 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
               <button
                 type="button"
                 onClick={handleUpload}
-                className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                disabled={!isOnline && !isIndexedDBAvailable}
+                className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                Analyze Food
+                {!isOnline ? (
+                  <>
+                    <Cloud className="w-5 h-5" />
+                    Queue for Later
+                  </>
+                ) : (
+                  <>
+                    <Camera className="w-5 h-5" />
+                    Analyze Food
+                  </>
+                )}
               </button>
+              
+              {/* Manual sync button - shown when online and IndexedDB available */}
+              {isOnline && isIndexedDBAvailable && (
+                <button
+                  type="button"
+                  onClick={handleSyncAndUpload}
+                  disabled={isSyncing}
+                  className="w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isSyncing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Syncing...
+                    </>
+                  ) : (
+                    <>
+                      <Cloud className="w-4 h-4" />
+                      Sync Queued Images
+                    </>
+                  )}
+                </button>
+              )}
             </div>
           )}
 
@@ -533,33 +657,57 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
 
           {/* Error display */}
           {uploadError && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 text-red-600 mt-0.5" />
+            <div className={`p-3 border rounded-lg flex items-start gap-2 ${
+              uploadError.includes('offline') || uploadError.includes('queued')
+                ? 'bg-amber-50 border-amber-200'
+                : 'bg-red-50 border-red-200'
+            }`}>
+              {uploadError.includes('offline') || uploadError.includes('queued') ? (
+                <Cloud className="w-4 h-4 text-amber-600 mt-0.5" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-red-600 mt-0.5" />
+              )}
               <div className="flex-1">
-                <p className="text-sm font-medium text-red-900">Analysis failed</p>
-                <p className="text-xs text-red-700">{uploadError}</p>
+                <p className={`text-sm font-medium ${
+                  uploadError.includes('offline') || uploadError.includes('queued')
+                    ? 'text-amber-900'
+                    : 'text-red-900'
+                }`}>
+                  {uploadError.includes('offline') || uploadError.includes('queued')
+                    ? 'Image queued for later upload'
+                    : 'Analysis failed'}
+                </p>
+                <p className={`text-xs ${
+                  uploadError.includes('offline') || uploadError.includes('queued')
+                    ? 'text-amber-700'
+                    : 'text-red-700'
+                }`}>{uploadError}</p>
                 <div className="flex gap-2 mt-3">
-                  <button
-                    type="button"
-                    onClick={handleConvertToManual}
-                    className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-                  >
-                    Convert to Manual Entry
-                  </button>
-                  {imageUrl && (
-                    <button
-                      type="button"
-                      onClick={handleRetryAnalysis}
-                      className="text-xs px-3 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700 transition-colors flex items-center gap-1"
-                    >
-                      <Loader2 className="w-3 h-3" />
-                      Retry Analysis
-                    </button>
+                  {!uploadError.includes('offline') && !uploadError.includes('queued') && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleConvertToManual}
+                        className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                      >
+                        Convert to Manual Entry
+                      </button>
+                      {imageUrl && (
+                        <button
+                          type="button"
+                          onClick={handleRetryAnalysis}
+                          className="text-xs px-3 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700 transition-colors flex items-center gap-1"
+                        >
+                          <Loader2 className="w-3 h-3" />
+                          Retry Analysis
+                        </button>
+                      )}
+                    </>
                   )}
                   <button
                     type="button"
                     onClick={handleClear}
-                    className="text-xs px-3 py-1.5 text-red-700 underline hover:text-red-900"
+                    className="text-xs px-3 py-1.5 underline hover:text-red-900"
                   >
                     Clear
                   </button>
