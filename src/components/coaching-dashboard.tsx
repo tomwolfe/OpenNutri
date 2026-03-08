@@ -4,18 +4,21 @@ import { useCoaching } from '@/hooks/useCoaching';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { 
-  TrendingUp, 
-  TrendingDown, 
-  Minus, 
-  AlertCircle, 
+import { Button } from '@/components/ui/button';
+import {
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  AlertCircle,
   CheckCircle,
   Target,
   Scale,
   Utensils,
-  Dumbbell
+  Dumbbell,
+  Check
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useState } from 'react';
 
 interface CoachingCardProps {
   title: React.ReactNode;
@@ -98,6 +101,42 @@ function InsightIcon({ type }: InsightIconProps) {
 
 export function CoachingDashboard() {
   const { data, loading, error, refresh } = useCoaching();
+  const [applyingTarget, setApplyingTarget] = useState<string | null>(null);
+
+  const applyTarget = async (
+    type: 'calories' | 'protein',
+    value: number
+  ) => {
+    try {
+      setApplyingTarget(`${type}-${value}`);
+
+      const body: Record<string, number> = {};
+      if (type === 'calories') {
+        body.calorieTarget = value;
+      } else if (type === 'protein') {
+        body.proteinTarget = value;
+      }
+
+      const response = await fetch('/api/targets/apply-recommendation', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to apply recommendation');
+      }
+
+      refresh();
+    } catch (err) {
+      console.error('Failed to apply recommendation:', err);
+    } finally {
+      setApplyingTarget(null);
+    }
+  };
 
   if (loading) {
     return (
@@ -229,28 +268,88 @@ export function CoachingDashboard() {
             confidence={insight.confidence}
           >
             {insight.type === 'calorie' && data.targets && (
-              <div className="mt-2">
-                <div className="flex justify-between text-xs mb-1">
-                  <span>Avg: {Math.round(data.trendSummary.currentStatus.avgCalories)} cal</span>
-                  <span>Target: {data.targets.calories} cal</span>
+              <div className="mt-2 space-y-3">
+                <div>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span>Avg: {Math.round(data.trendSummary.currentStatus.avgCalories)} cal</span>
+                    <span>Target: {data.targets.calories} cal</span>
+                  </div>
+                  <Progress
+                    value={(data.trendSummary.currentStatus.avgCalories / data.targets.calories) * 100}
+                    className="h-2"
+                  />
                 </div>
-                <Progress
-                  value={(data.trendSummary.currentStatus.avgCalories / data.targets.calories) * 100}
-                  className="h-2"
-                />
+                
+                {/* Apply Recommendation Button */}
+                {insight.suggestedCalories && insight.suggestedCalories !== data.targets.calories && (
+                  <div className="flex items-center justify-between gap-2 mt-3">
+                    <span className="text-xs text-muted-foreground">
+                      Suggested: {insight.suggestedCalories} cal/day
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => applyTarget('calories', insight.suggestedCalories!)}
+                      disabled={applyingTarget !== null}
+                      className="h-7 text-xs"
+                    >
+                      {applyingTarget === 'calories-' + insight.suggestedCalories ? (
+                        <>
+                          <span className="animate-spin mr-1">⏳</span>
+                          Applying...
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-3 h-3 mr-1" />
+                          Apply
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
 
             {insight.type === 'protein' && data.targets && (
-              <div className="mt-2">
-                <div className="flex justify-between text-xs mb-1">
-                  <span>Avg: {Math.round(data.trendSummary.currentStatus.avgProtein)}g</span>
-                  <span>Target: {data.targets.protein}g</span>
+              <div className="mt-2 space-y-3">
+                <div>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span>Avg: {Math.round(data.trendSummary.currentStatus.avgProtein)}g</span>
+                    <span>Target: {data.targets.protein}g</span>
+                  </div>
+                  <Progress
+                    value={(data.trendSummary.currentStatus.avgProtein / data.targets.protein) * 100}
+                    className="h-2"
+                  />
                 </div>
-                <Progress
-                  value={(data.trendSummary.currentStatus.avgProtein / data.targets.protein) * 100}
-                  className="h-2"
-                />
+                
+                {/* Apply Recommendation Button */}
+                {insight.suggestedProtein && insight.suggestedProtein !== data.targets.protein && (
+                  <div className="flex items-center justify-between gap-2 mt-3">
+                    <span className="text-xs text-muted-foreground">
+                      Suggested: {insight.suggestedProtein}g/day
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => applyTarget('protein', insight.suggestedProtein!)}
+                      disabled={applyingTarget !== null}
+                      className="h-7 text-xs"
+                    >
+                      {applyingTarget === 'protein-' + insight.suggestedProtein ? (
+                        <>
+                          <span className="animate-spin mr-1">⏳</span>
+                          Applying...
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-3 h-3 mr-1" />
+                          Apply
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </CoachingCard>

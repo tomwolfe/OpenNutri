@@ -8,6 +8,55 @@
 import { searchFoods, extractMacros, type USDAFoodItem } from '@/lib/usda';
 
 /**
+ * Calculate Levenshtein distance between two strings
+ * Returns the minimum number of single-character edits needed to change one word into the other
+ */
+function levenshteinDistance(str1: string, str2: string): number {
+  const m = str1.length;
+  const n = str2.length;
+  
+  // Create a matrix
+  const dp: number[][] = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
+  
+  // Initialize first column and row
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  
+  // Fill the matrix
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,      // deletion
+        dp[i][j - 1] + 1,      // insertion
+        dp[i - 1][j - 1] + cost // substitution
+      );
+      
+      // Bonus for transposition (Damerau-Levenshtein)
+      if (i > 1 && j > 1 && 
+          str1[i - 1] === str2[j - 2] && 
+          str1[i - 2] === str2[j - 1]) {
+        dp[i][j] = Math.min(dp[i][j], dp[i - 2][j - 2] + cost);
+      }
+    }
+  }
+  
+  return dp[m][n];
+}
+
+/**
+ * Calculate similarity score between two strings (0-1)
+ * 1 = identical, 0 = completely different
+ */
+function stringSimilarity(str1: string, str2: string): number {
+  const maxLen = Math.max(str1.length, str2.length);
+  if (maxLen === 0) return 1;
+  
+  const distance = levenshteinDistance(str1, str2);
+  return 1 - (distance / maxLen);
+}
+
+/**
  * Match a food name to USDA entry
  * @param foodName - AI-detected food name
  * @returns Best match USDA food item or null
@@ -25,14 +74,14 @@ export async function matchFoodToUSDA(foodName: string): Promise<USDAFoodItem | 
       return null;
     }
 
-    // Search USDA database
-    const results = await searchFoods(cleanName, 5, 1);
+    // Search USDA database with more results for better matching
+    const results = await searchFoods(cleanName, 10, 1);
 
     if (!results.foods || results.foods.length === 0) {
       return null;
     }
 
-    // Find best match using simple string similarity
+    // Find best match using Levenshtein distance and word overlap
     const bestMatch = findBestMatch(cleanName, results.foods);
 
     return bestMatch || null;
@@ -44,13 +93,14 @@ export async function matchFoodToUSDA(foodName: string): Promise<USDAFoodItem | 
 
 /**
  * Find best matching USDA food item from search results
- * Uses word overlap scoring
+ * Uses Levenshtein distance and word overlap scoring
  */
 function findBestMatch(
   query: string,
   foods: USDAFoodItem[]
 ): USDAFoodItem | null {
   const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+  const queryLower = query.toLowerCase();
 
   if (queryWords.length === 0) {
     return foods[0] || null;
@@ -63,21 +113,42 @@ function findBestMatch(
     const description = food.description.toLowerCase();
     let score = 0;
 
-    // Check for exact substring match
-    if (description.includes(query.toLowerCase())) {
-      score += 10;
+    // Check for exact substring match (highest priority)
+    if (description.includes(queryLower)) {
+      score += 20;
     }
 
-    // Check word overlap
+    // Check for reverse: query contains description
+    if (queryLower.includes(description)) {
+      score += 15;
+    }
+
+    // Calculate string similarity using Levenshtein distance
+    const similarity = stringSimilarity(queryLower, description);
+    score += similarity * 15;
+
+    // Check word overlap with weighted scoring
     for (const word of queryWords) {
       if (description.includes(word)) {
-        score += 2;
+        // Longer words get higher weight (more specific)
+        const wordWeight = word.length >= 5 ? 3 : 2;
+        score += wordWeight;
       }
     }
 
     // Bonus for Foundation data (more reliable)
     if (food.dataType === 'Foundation') {
+      score += 5;
+    }
+
+    // Bonus for Survey FNDDS (US national data)
+    if (food.dataType === 'Survey FNDDS') {
       score += 3;
+    }
+
+    // Penalty for very long descriptions (likely less specific match)
+    if (description.length > 100) {
+      score -= 2;
     }
 
     if (score > bestScore) {
@@ -86,8 +157,8 @@ function findBestMatch(
     }
   }
 
-  // Only return if we have a reasonable match
-  return bestScore >= 2 ? bestMatch : null;
+  // Only return if we have a reasonable match (lowered threshold from 2 to 5)
+  return bestScore >= 5 ? bestMatch : null;
 }
 
 /**

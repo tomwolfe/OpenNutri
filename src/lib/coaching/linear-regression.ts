@@ -191,6 +191,10 @@ export interface CoachingInsight {
   confidence: number;
   recommendation: string;
   dataPoints: number;
+  /** Suggested new target values (optional, for actionable recommendations) */
+  suggestedCalories?: number;
+  /** Suggested new protein target in grams */
+  suggestedProtein?: number;
 }
 
 /**
@@ -277,6 +281,8 @@ export function generateCoachingInsights(
     weeklyWeightChange
   );
 
+  const suggestedCalorieTarget = Math.round(avgCalories + calorieAdjustment);
+
   insights.push({
     type: 'calorie',
     trend: calorieTrend,
@@ -289,12 +295,18 @@ export function generateCoachingInsights(
       targets.weightGoal
     ),
     dataPoints: intakeData.length,
+    suggestedCalories: suggestedCalorieTarget !== targets.calories ? suggestedCalorieTarget : undefined,
   });
 
   // Analyze protein intake
   const avgProtein =
     intakeData.reduce((sum, d) => sum + d.protein, 0) / intakeData.length;
   const proteinPercentage = (avgProtein / targets.protein) * 100;
+
+  // Calculate suggested protein target based on body weight and goals
+  // General guideline: 1.6-2.2g per kg for active individuals
+  const currentWeight = weightData.length > 0 ? weightData[weightData.length - 1].weight : 70;
+  const suggestedProteinTarget = Math.round(currentWeight * 1.8); // 1.8g per kg as middle ground
 
   insights.push({
     type: 'protein',
@@ -306,6 +318,7 @@ export function generateCoachingInsights(
       targets.weightGoal
     ),
     dataPoints: intakeData.length,
+    suggestedProtein: Math.abs(suggestedProteinTarget - targets.protein) > 10 ? suggestedProteinTarget : undefined,
   });
 
   return insights;

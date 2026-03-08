@@ -101,6 +101,20 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
     };
   }, [imageUrl, uploadProgress]);
 
+  // Proactive cleanup using sendBeacon for reliable "cleanup on close"
+  useEffect(() => {
+    const handleUnload = () => {
+      // Use navigator.sendBeacon for reliable cleanup when user closes/refreshes page
+      if (imageUrl && uploadProgress !== 'complete' && uploadProgress !== 'idle') {
+        const blob = new Blob([JSON.stringify({ imageUrl })], { type: 'application/json' });
+        navigator.sendBeacon('/api/blob/delete', blob);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleUnload);
+    return () => window.removeEventListener('beforeunload', handleUnload);
+  }, [imageUrl, uploadProgress]);
+
   // Vercel AI SDK useObject hook for native streaming
   const { submit, object } = useObject({
     api: '/api/analyze',
