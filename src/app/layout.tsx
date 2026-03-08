@@ -4,10 +4,8 @@ import "./globals.css";
 import { SessionProvider } from "next-auth/react";
 import { validateEnv } from "@/lib/env";
 
-// Validate environment variables at startup
-if (process.env.NODE_ENV === 'development') {
-  validateEnv();
-}
+// Validate environment variables at startup (all environments)
+validateEnv();
 
 const inter = Inter({
   subsets: ["latin"],
