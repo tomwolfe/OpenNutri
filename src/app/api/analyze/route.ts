@@ -122,12 +122,8 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Convert File to Buffer for Vercel Blob
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    // Upload to Vercel Blob
-    const imageUrl = await uploadFoodImage(buffer, userId);
+    // Upload to Vercel Blob (File is natively supported)
+    const imageUrl = await uploadFoodImage(file, userId);
 
     // Send initial status
     write({
@@ -162,6 +158,12 @@ export async function POST(request: NextRequest) {
             const obj = chunk.object as Partial<AnalysisResult>;
             if (obj.items && obj.items.length > 0) {
               analysisResult = obj as AnalysisResult;
+              
+              // Stream partial items to the client in real-time
+              write({
+                type: 'partial',
+                items: obj.items
+              });
             }
           }
         }

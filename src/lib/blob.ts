@@ -10,12 +10,12 @@ import { nanoid } from 'nanoid';
 
 /**
  * Upload a food image to Vercel Blob
- * @param file - The image file (Buffer or Blob)
+ * @param file - The image file (File or Blob)
  * @param userId - User ID for folder organization
  * @returns The public URL of the uploaded image
  */
 export async function uploadFoodImage(
-  file: Buffer | Blob,
+  file: File | Blob,
   userId: string
 ): Promise<string> {
   const timestamp = Date.now();

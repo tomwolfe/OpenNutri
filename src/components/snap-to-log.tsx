@@ -66,7 +66,20 @@ interface StreamError {
   error: string;
 }
 
-type StreamMessage = StreamStatus | StreamResult | StreamError;
+interface StreamPartial {
+  type: 'partial';
+  items: Array<{
+    name: string;
+    calories?: number;
+    protein_g?: number;
+    carbs_g?: number;
+    fat_g?: number;
+    confidence?: number;
+    portion_guess?: string;
+  }>;
+}
+
+type StreamMessage = StreamStatus | StreamResult | StreamError | StreamPartial;
 
 const MEAL_TYPES = [
   { value: 'breakfast', label: 'Breakfast' },
@@ -159,14 +172,16 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
 
       const reader = stream.getReader();
       const decoder = new TextDecoder();
+      let buffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        // Parse stream data (Vercel AI SDK format: "0:{...}\n")
-        const lines = chunk.split('\n').filter(line => line.trim());
+        // Buffer incomplete chunks to handle JSON split across boundaries
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
 
         for (const line of lines) {
           if (line.startsWith('0:')) {
@@ -176,6 +191,19 @@ export function SnapToLog({ onComplete, onError, onDraftSaved }: SnapToLogProps)
 
               if (message.type === 'status') {
                 setCurrentStatus(message.message);
+                setUploadProgress('streaming');
+              } else if (message.type === 'partial') {
+                // Update UI instantly as AI streams partial results
+                const convertedItems = message.items.map(item => ({
+                  foodName: item.name,
+                  calories: item.calories || 0,
+                  protein: item.protein_g || 0,
+                  carbs: item.carbs_g || 0,
+                  fat: item.fat_g || 0,
+                  source: 'AI',
+                  servingGrams: 100,
+                }));
+                setDraftItems(convertedItems);
                 setUploadProgress('streaming');
               } else if (message.type === 'result') {
                 // Analysis complete
