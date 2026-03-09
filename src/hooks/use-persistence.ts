@@ -6,6 +6,7 @@ import { useEncryption } from '@/hooks/useEncryption';
 import { useDailyLogs } from '@/hooks/use-daily-logs';
 import { db } from '@/lib/db-local';
 import { DraftItem } from '@/types/food';
+import { addToLocalCache } from '@/lib/ai-local-semantic';
 
 interface UsePersistenceOptions {
   onSuccess?: () => void;
@@ -98,7 +99,7 @@ export function usePersistence({ onSuccess, onError }: UsePersistenceOptions = {
         status: 'pending'
       });
 
-      // 4. Update local favorites (background)
+      // 4. Update local favorites and portion memory (background)
       for (const item of items) {
         const favoriteId = item.foodName.toLowerCase().trim();
         const existing = await db.foodFavorites.get(favoriteId);
@@ -119,6 +120,22 @@ export function usePersistence({ onSuccess, onError }: UsePersistenceOptions = {
             frequency: 1,
             lastUsed: new Date()
           });
+        }
+        
+        // Task 1.3: Store portion memory in semantic cache
+        if (item.numericQuantity && item.unit) {
+          await addToLocalCache({
+            id: item.usdaMatch?.fdcId || item.foodName,
+            description: item.foodName,
+            calories: item.calories,
+            protein: item.protein,
+            carbs: item.carbs,
+            fat: item.fat,
+            sodium: item.sodium,
+            numericQuantity: item.numericQuantity,
+            unit: item.unit,
+            servingGrams: item.servingGrams,
+          }, true); // Mark as user portion
         }
       }
 

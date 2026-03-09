@@ -76,7 +76,7 @@ export function useAiAnalysis({
           const enrichedItems = [...aiItems];
           const itemsToFetch: number[] = [];
 
-          // 1. Try local semantic match first
+          // 1. Try local semantic match first with portion memory
           for (let i = 0; i < enrichedItems.length; i++) {
             const item = enrichedItems[i];
             const localMatch = await searchLocalHistory(item.foodName);
@@ -88,8 +88,13 @@ export function useAiAnalysis({
                 protein: localMatch.protein,
                 carbs: localMatch.carbs,
                 fat: localMatch.fat,
+                sodium: localMatch.sodium,
                 source: 'LOCAL_CACHE',
                 isEnhancing: false,
+                // Task 1.3: Apply user's typical portion
+                numericQuantity: localMatch.typicalQuantity || item.numericQuantity,
+                unit: localMatch.typicalUnit || item.unit,
+                servingGrams: localMatch.typicalServingGrams || item.servingGrams,
               };
             } else {
               itemsToFetch.push(i);
@@ -117,7 +122,7 @@ export function useAiAnalysis({
                   isEnhancing: false,
                 };
 
-                // 3. Add to local cache for future use
+                // 3. Add to local cache for future use with portion memory
                 if (item.foodName && item.calories) {
                   addToLocalCache({
                     id: item.usdaMatch?.fdcId || item.foodName,
@@ -126,6 +131,10 @@ export function useAiAnalysis({
                     protein: item.protein || 0,
                     carbs: item.carbs || 0,
                     fat: item.fat || 0,
+                    sodium: item.sodium,
+                    numericQuantity: item.numericQuantity,
+                    unit: item.unit,
+                    servingGrams: item.servingGrams,
                   });
                 }
               });

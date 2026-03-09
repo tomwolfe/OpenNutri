@@ -137,7 +137,13 @@ export interface LocalSemanticMatch {
   protein: number;
   carbs: number;
   fat: number;
+  sodium?: number;
   lastUsed: number;
+  // Task 1.3: Portion Memory - Store user's typical portion habits
+  typicalQuantity?: number; // e.g., 12
+  typicalUnit?: string; // e.g., "oz", "cup", "piece"
+  typicalServingGrams?: number; // e.g., 340
+  portionFrequency?: number; // How often this portion was used
 }
 
 export class OpenNutriDB extends Dexie {

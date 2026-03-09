@@ -22,6 +22,7 @@ import { classifyFoodLocally, needsCloudAnalysis, ImageClassificationResult } fr
 import { FoodAnalysisSchema, DraftItem } from '@/types/food';
 import { compressImage, formatBytes } from '@/lib/image-utils';
 import { cn } from '@/lib/utils';
+import { addToLocalCache } from '@/lib/ai-local-semantic';
 
 interface SnapToLogProps {
   onComplete?: (foodLog: {
@@ -618,7 +619,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
     if (items.length === 0 || !autoSaveEnabled) return;
     
     try {
-      // Quick save without user review - update favorites
+      // Quick save without user review - update favorites and portion memory
       for (const item of items) {
         if (!item.foodName) continue;
         const favoriteId = item.foodName.toLowerCase().trim();
@@ -640,6 +641,22 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
             frequency: 1,
             lastUsed: new Date()
           });
+        }
+        
+        // Task 1.3: Store portion memory
+        if (item.numericQuantity && item.unit) {
+          await addToLocalCache({
+            id: item.usdaMatch?.fdcId || item.foodName,
+            description: item.foodName,
+            calories: item.calories,
+            protein: item.protein,
+            carbs: item.carbs,
+            fat: item.fat,
+            sodium: item.sodium,
+            numericQuantity: item.numericQuantity,
+            unit: item.unit,
+            servingGrams: item.servingGrams,
+          }, true);
         }
       }
 

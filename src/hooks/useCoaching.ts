@@ -202,28 +202,33 @@ export function useCoaching(options: UseCoachingOptions = {}) {
   const applyAction = useCallback(async (action: CoachingAction) => {
     if (!userId) return;
     setIsApplyingAction(true);
-    
+
     try {
       switch (action.type) {
         case 'UPDATE_TARGET':
-          // Call API to update user targets
+          // Call API to update user targets with today's date
+          const today = new Date().toISOString().split('T')[0];
+          const payload = action.payload as { calorieTarget?: number; proteinTarget?: number };
           const response = await fetch('/api/targets', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(action.payload),
+            body: JSON.stringify({
+              date: today,
+              ...payload,
+            }),
           });
-          
+
           if (!response.ok) throw new Error('Failed to update target');
-          
+
           // Refresh coaching data
           await fetchInsights();
           break;
-          
+
         case 'LOG_WEIGHT':
           // Redirect or open weight logger
           console.log('Action: LOG_WEIGHT requested');
           break;
-          
+
         default:
           console.log('Action not implemented:', action.type);
       }

@@ -23,6 +23,7 @@ export interface SearchResult {
   isFavorite: boolean;
   dataType?: string;
   servingSize?: number;
+  _frequency?: number; // Internal field for sorting (Task 1.2)
 }
 
 interface DiscoveryModeProps {
@@ -61,18 +62,21 @@ export function DiscoveryMode({
 
   useEffect(() => {
     if (searchQuery.length < 2) {
-      // Show favorites when search is empty
+      // Show favorites when search is empty - sorted by frequency
       const fetchFavorites = async () => {
         const localFavorites = await db.foodFavorites.toArray();
-        const favoriteResults: SearchResult[] = localFavorites.map(f => ({
-          fdcId: f.fdcId,
-          description: f.description,
-          calories: f.calories,
-          protein: f.protein,
-          carbs: f.carbs,
-          fat: f.fat,
-          isFavorite: true
-        }));
+        const favoriteResults: SearchResult[] = localFavorites
+          .sort((a, b) => (b.frequency || 0) - (a.frequency || 0)) // Sort by frequency
+          .slice(0, 10) // Show top 10 favorites
+          .map(f => ({
+            fdcId: f.fdcId,
+            description: f.description,
+            calories: f.calories,
+            protein: f.protein,
+            carbs: f.carbs,
+            fat: f.fat,
+            isFavorite: true
+          }));
         setSearchResults(favoriteResults);
       };
       fetchFavorites();
@@ -86,16 +90,36 @@ export function DiscoveryMode({
         const res = await fetch(`/api/food/usda?query=${encodeURIComponent(searchQuery)}`);
         if (res.ok) {
           const data = await res.json();
-          const usdaResults: SearchResult[] = data.foods.slice(0, 5).map((f: SearchResult) => ({ ...f, isFavorite: false }));
           
-          // Merge with favorites to mark already favorited items
+          // Get local favorites for boosting
           const localFavorites = await db.foodFavorites.toArray();
-          const merged = usdaResults.map(r => ({
-            ...r,
-            isFavorite: localFavorites.some(f => f.fdcId.toString() === r.fdcId.toString())
-          }));
-          
-          setSearchResults(merged);
+          const favoriteMap = new Map(localFavorites.map(f => [f.fdcId.toString(), f.frequency || 0]));
+
+          const usdaResults: SearchResult[] = data.foods.slice(0, 10).map((f: SearchResult) => {
+            const fdcIdStr = f.fdcId.toString();
+            return {
+              ...f,
+              isFavorite: favoriteMap.has(fdcIdStr),
+              _frequency: favoriteMap.get(fdcIdStr) || 0 // Internal field for sorting
+            };
+          });
+
+          // Task 1.2: Sort by frequency boost - favorites appear first
+          usdaResults.sort((a, b) => {
+            // Favorites always come first
+            if (a.isFavorite && !b.isFavorite) return -1;
+            if (!a.isFavorite && b.isFavorite) return 1;
+            // Among favorites, sort by frequency
+            if (a.isFavorite && b.isFavorite) {
+              return (b._frequency || 0) - (a._frequency || 0);
+            }
+            // Non-favorites keep USDA order
+            return 0;
+          });
+
+          // Remove internal frequency field
+          const cleanedResults = usdaResults.map(({ _frequency, ...rest }) => rest);
+          setSearchResults(cleanedResults);
         }
       } catch (err) {
         console.error('Search error', err);

@@ -76,21 +76,28 @@ export async function syncSmallCoreIndex(): Promise<void> {
 
 /**
  * Search local history for a semantic match
+ * Task 1.3: Portion Memory - Returns typical portion if available
  */
 export async function searchLocalHistory(
   foodName: string
-): Promise<LocalSemanticMatch | null> {
+): Promise<(LocalSemanticMatch & { typicalQuantity?: number; typicalUnit?: string; typicalServingGrams?: number }) | null> {
   if (typeof window === 'undefined') return null;
 
   try {
     const queryEmbedding = await generateEmbedding(foodName);
     const allItems = await db.localSemanticCache.toArray();
-    
+
     let bestMatch: LocalSemanticMatch | null = null;
     let highestSimilarity = -1;
 
     for (const item of allItems) {
-      const similarity = cosineSimilarity(queryEmbedding, item.embedding);
+      let similarity = cosineSimilarity(queryEmbedding, item.embedding);
+      
+      // Boost similarity for items with portion memory (user's habitual portions)
+      if (item.typicalQuantity && item.typicalUnit && item.portionFrequency && item.portionFrequency > 2) {
+        similarity *= 1.1; // 10% boost for well-established portion habits
+      }
+      
       if (similarity > highestSimilarity) {
         highestSimilarity = similarity;
         bestMatch = item;
@@ -100,7 +107,12 @@ export async function searchLocalHistory(
     if (bestMatch && highestSimilarity >= SIMILARITY_THRESHOLD) {
       // Update last used timestamp
       await db.localSemanticCache.update(bestMatch.id, { lastUsed: Date.now() });
-      return bestMatch;
+      return {
+        ...bestMatch,
+        typicalQuantity: bestMatch.typicalQuantity,
+        typicalUnit: bestMatch.typicalUnit,
+        typicalServingGrams: bestMatch.typicalServingGrams,
+      };
     }
 
     return null;
@@ -112,6 +124,7 @@ export async function searchLocalHistory(
 
 /**
  * Add a food item to the local semantic cache
+ * Task 1.3: Portion Memory - Store user's typical portion habits
  */
 export async function addToLocalCache(
   item: {
@@ -121,23 +134,68 @@ export async function addToLocalCache(
     protein: number;
     carbs: number;
     fat: number;
-  }
+    sodium?: number;
+    numericQuantity?: number;
+    unit?: string;
+    servingGrams?: number;
+  },
+  isUserPortion: boolean = true
 ): Promise<void> {
   if (typeof window === 'undefined') return;
 
   try {
     const embedding = await generateEmbedding(item.description);
-    
-    await db.localSemanticCache.put({
-      id: String(item.id),
-      description: item.description,
-      embedding,
-      calories: item.calories,
-      protein: item.protein,
-      carbs: item.carbs,
-      fat: item.fat,
-      lastUsed: Date.now(),
-    });
+    const existing = await db.localSemanticCache.get(String(item.id));
+
+    // If this is a user portion and we have existing data, update portion frequency
+    if (isUserPortion && existing && item.numericQuantity && item.unit) {
+      const samePortion = existing.typicalQuantity === item.numericQuantity && 
+                          existing.typicalUnit === item.unit;
+      
+      await db.localSemanticCache.put({
+        id: String(item.id),
+        description: item.description,
+        embedding,
+        calories: item.calories,
+        protein: item.protein,
+        carbs: item.carbs,
+        fat: item.fat,
+        sodium: item.sodium,
+        lastUsed: Date.now(),
+        typicalQuantity: item.numericQuantity,
+        typicalUnit: item.unit,
+        typicalServingGrams: item.servingGrams,
+        portionFrequency: samePortion ? (existing.portionFrequency || 0) + 1 : existing.portionFrequency || 0,
+      });
+    } else if (!existing) {
+      // New item - add with portion data if available
+      await db.localSemanticCache.put({
+        id: String(item.id),
+        description: item.description,
+        embedding,
+        calories: item.calories,
+        protein: item.protein,
+        carbs: item.carbs,
+        fat: item.fat,
+        sodium: item.sodium,
+        lastUsed: Date.now(),
+        typicalQuantity: item.numericQuantity,
+        typicalUnit: item.unit,
+        typicalServingGrams: item.servingGrams,
+        portionFrequency: item.numericQuantity && item.unit ? 1 : 0,
+      });
+    } else {
+      // Update existing without changing portion data
+      await db.localSemanticCache.put({
+        ...existing,
+        lastUsed: Date.now(),
+        calories: item.calories,
+        protein: item.protein,
+        carbs: item.carbs,
+        fat: item.fat,
+        sodium: item.sodium ?? existing.sodium,
+      });
+    }
   } catch (error) {
     console.error('Failed to add to local semantic cache:', error);
   }
