@@ -13,7 +13,10 @@ interface UseAiAnalysisOptions {
   onPreviewGenerated?: (url: string | null) => void;
   onCompressionStats?: (stats: { original: number; compressed: number } | null) => void;
   onUploadProgress?: (progress: 'idle' | 'uploading' | 'streaming' | 'review' | 'complete') => void;
+  onAutoSave?: (items: DraftItem[], totalCalories: number) => void;
   mealType: string;
+  autoSaveHighConfidence?: boolean;
+  confidenceThreshold?: number;
 }
 
 export function useAiAnalysis({
@@ -21,7 +24,10 @@ export function useAiAnalysis({
   onPreviewGenerated,
   onCompressionStats,
   onUploadProgress,
-  mealType
+  onAutoSave,
+  mealType,
+  autoSaveHighConfidence = false,
+  confidenceThreshold = 0.9
 }: UseAiAnalysisOptions) {
   const { encryptBinary, generateSessionKey, exportKeyToBase64, isReady, vaultKey } = useEncryption();
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -51,8 +57,19 @@ export function useAiAnalysis({
           usdaMatch: item?.usdaMatch,
         }));
 
-        onItemsIdentified(aiItems);
-        onUploadProgress?.('review');
+        // Calculate average confidence for auto-save decision
+        const avgConfidence = event.object.items.reduce((sum, item) => sum + (item.confidence || 0), 0) / event.object.items.length;
+        const totalCalories = aiItems.reduce((sum, item) => sum + item.calories, 0);
+
+        // Task 1.1: Automatic Affirmation - Auto-save if confidence is high enough
+        if (autoSaveHighConfidence && avgConfidence >= confidenceThreshold && onAutoSave) {
+          // Trigger auto-save immediately
+          onAutoSave(aiItems, totalCalories);
+          onUploadProgress?.('complete');
+        } else {
+          onItemsIdentified(aiItems);
+          onUploadProgress?.('review');
+        }
 
         // USDA Enrichment with Local Cache Fallback
         try {
@@ -63,7 +80,7 @@ export function useAiAnalysis({
           for (let i = 0; i < enrichedItems.length; i++) {
             const item = enrichedItems[i];
             const localMatch = await searchLocalHistory(item.foodName);
-            
+
             if (localMatch) {
               enrichedItems[i] = {
                 ...item,
@@ -87,11 +104,11 @@ export function useAiAnalysis({
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ items: fetchItems }),
             });
-            
+
             if (res.ok) {
               const enrichedData = await res.json();
               const serverItems = enrichedData.items as DraftItem[];
-              
+
               serverItems.forEach((item, idx) => {
                 const originalIdx = itemsToFetch[idx];
                 enrichedItems[originalIdx] = {
@@ -115,10 +132,15 @@ export function useAiAnalysis({
             }
           }
 
-          onItemsIdentified(enrichedItems);
+          // Only show items for review if not auto-saved
+          if (!autoSaveHighConfidence || avgConfidence < confidenceThreshold) {
+            onItemsIdentified(enrichedItems);
+          }
         } catch (err) {
           console.error('USDA enrichment failed:', err);
-          onItemsIdentified(aiItems.map(item => ({ ...item, isEnhancing: false })));
+          if (!autoSaveHighConfidence || avgConfidence < confidenceThreshold) {
+            onItemsIdentified(aiItems.map(item => ({ ...item, isEnhancing: false })));
+          }
         }
       }
     },

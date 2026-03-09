@@ -118,6 +118,7 @@ export const logItems = pgTable('log_items', {
   protein: doublePrecision('protein'),
   carbs: doublePrecision('carbs'),
   fat: doublePrecision('fat'),
+  sodium: doublePrecision('sodium'), // mg per serving
   source: text('source'), // USDA, AI_ESTIMATE, OPEN_FACTS, USER_CACHE
 }, (table) => ({
   logIdIdx: index('log_items_log_id_idx').on(table.logId),

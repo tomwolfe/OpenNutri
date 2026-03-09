@@ -91,12 +91,12 @@ export function useCoaching(options: UseCoachingOptions = {}) {
         // Fetch and decrypt shared logs for the recipient
         const sharedLogsRes = await fetch(`/api/share/logs?userId=${userId}`);
         const { logs } = await sharedLogsRes.json();
-        
+
         const intakeByDay = new Map<string, IntakePoint>();
         for (const log of logs) {
           // Decrypt shared log using the shared vault key
           const decrypted = await decryptFoodLog(log.encryptedData, log.encryptionIv, sharedVaultKey);
-          
+
           const dateKey = new Date(decrypted.timestamp).toISOString().split('T')[0];
           const existing = intakeByDay.get(dateKey) || {
             timestamp: new Date(dateKey).getTime(),
@@ -104,14 +104,16 @@ export function useCoaching(options: UseCoachingOptions = {}) {
             protein: 0,
             carbs: 0,
             fat: 0,
+            sodium: 0,
           };
 
           existing.calories += decrypted.totalCalories || 0;
           if (decrypted.items) {
-            (decrypted.items as Array<{ protein?: number; carbs?: number; fat?: number }>).forEach((item) => {
+            (decrypted.items as Array<{ protein?: number; carbs?: number; fat?: number; sodium?: number }>).forEach((item) => {
               existing.protein += item.protein || 0;
               existing.carbs += item.carbs || 0;
               existing.fat += item.fat || 0;
+              existing.sodium = (existing.sodium || 0) + (item.sodium || 0);
             });
           }
           intakeByDay.set(dateKey, existing);
@@ -121,7 +123,7 @@ export function useCoaching(options: UseCoachingOptions = {}) {
         // Standard flow from local Dexie
         const ninetyDaysAgo = new Date();
         ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-        
+
         const localDecryptedLogs = await db.decryptedLogs
           .where('timestamp')
           .above(ninetyDaysAgo)
@@ -140,18 +142,20 @@ export function useCoaching(options: UseCoachingOptions = {}) {
             protein: 0,
             carbs: 0,
             fat: 0,
+            sodium: 0,
           };
 
           existing.calories += log.totalCalories || 0;
-          
+
           if (log.items) {
-            (log.items as Array<{ protein?: number; carbs?: number; fat?: number }>).forEach((item) => {
+            (log.items as Array<{ protein?: number; carbs?: number; fat?: number; sodium?: number }>).forEach((item) => {
               existing.protein += item.protein || 0;
               existing.carbs += item.carbs || 0;
               existing.fat += item.fat || 0;
+              existing.sodium = (existing.sodium || 0) + (item.sodium || 0);
             });
           }
-          
+
           intakeByDay.set(dateKey, existing);
         }
         intakeDataPoints = Array.from(intakeByDay.values());

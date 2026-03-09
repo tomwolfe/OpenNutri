@@ -165,19 +165,34 @@ export function calculateCalorieAdjustment(currentCalories: number, weightTrend:
   return Math.round(adj - (weightChangePerWeek * 110));
 }
 
-export interface IntakePoint { timestamp: number; calories: number; protein: number; carbs: number; fat: number; }
+export interface IntakePoint { 
+  timestamp: number; 
+  calories: number; 
+  protein: number; 
+  carbs: number; 
+  fat: number;
+  sodium?: number; // mg
+}
 export interface MacroTargets { calories: number; protein: number; carbs: number; fat: number; weightGoal: 'lose' | 'maintain' | 'gain'; }
 export interface CoachingAction { type: string; label: string; description: string; payload: unknown; }
 export interface CoachingInsight { 
   id: string; 
-  type: string; 
-  trend: 'increasing' | 'decreasing' | 'stable'; 
-  confidence: number; 
-  recommendation: string; 
-  dataPoints: number; 
-  action?: CoachingAction; 
-  suggestedCalories?: number; 
-  suggestedProtein?: number; 
+  type: string;
+  trend: 'increasing' | 'decreasing' | 'stable';
+  confidence: number;
+  recommendation: string;
+  dataPoints: number;
+  action?: CoachingAction;
+  suggestedCalories?: number;
+  suggestedProtein?: number;
+  explanation?: string; // For water retention explanations
+  metabolicContext?: { // Task 3.1: Metabolic context
+    highSodiumDay?: boolean;
+    highCarbDay?: boolean;
+    waterRetentionLikely?: boolean;
+    sodiumIntakeMg?: number;
+    carbIntakeG?: number;
+  };
 }
 
 export function generateCoachingInsights(weightData: Array<{ timestamp: number; weight: number }>, intakeData: IntakePoint[], targets: MacroTargets): CoachingInsight[] {
@@ -200,6 +215,9 @@ export function generateCoachingInsights(weightData: Array<{ timestamp: number; 
   const calAdj = calculateCalorieAdjustment(avgCal, wTrend, targets.weightGoal, weeklyChange);
   const suggCal = Math.round(avgCal + calAdj);
 
+  // Task 3.1: Sodium/Carb Correlation Analysis
+  const sodiumInsights = analyzeSodiumCarbCorrelation(weightData, smoothedWeights, intakeData, start);
+
   const insights: CoachingInsight[] = [
     {
       id: `weight-${Date.now()}`,
@@ -207,7 +225,8 @@ export function generateCoachingInsights(weightData: Array<{ timestamp: number; 
       trend: wTrend,
       confidence: Math.abs(wReg.rSquared),
       recommendation: `Weight is ${wTrend}. Change rate: ${weeklyChange.toFixed(2)} kg/week.`,
-      dataPoints: weightData.length
+      dataPoints: weightData.length,
+      ...sodiumInsights, // Add sodium/carb correlation context
     },
     {
       id: `calorie-${Date.now()}`,
@@ -222,4 +241,94 @@ export function generateCoachingInsights(weightData: Array<{ timestamp: number; 
   ];
 
   return insights;
+}
+
+/**
+ * Task 3.1: Analyze Sodium and Carb Correlation with Weight Spikes
+ * 
+ * Detects if weight increases are likely due to water retention from:
+ * - High sodium intake (causes water retention for 24-48 hours)
+ * - High carb intake (glycogen stores water at 3-4g per 1g carb)
+ */
+export function analyzeSodiumCarbCorrelation(
+  weightData: Array<{ timestamp: number; weight: number }>,
+  smoothedWeights: number[],
+  intakeData: IntakePoint[],
+  startTime: number
+): { explanation?: string; metabolicContext?: CoachingInsight['metabolicContext'] } {
+  if (weightData.length < 5 || intakeData.length < 3) return {};
+
+  // Thresholds for "high" intake
+  const HIGH_SODIUM_MG = 2300; // FDA daily limit
+  const HIGH_CARB_G = 300; // ~60% of 2000 cal diet
+
+  // Find the most recent weight spike (weight increase > 0.5kg in 1-2 days)
+  let recentSpikeIndex = -1;
+  let spikeWeightChange = 0;
+  
+  for (let i = 1; i < weightData.length; i++) {
+    const weightChange = smoothedWeights[i] - smoothedWeights[i - 1];
+    if (weightChange > 0.5) { // 0.5kg spike
+      recentSpikeIndex = i;
+      spikeWeightChange = weightChange;
+      break;
+    }
+  }
+
+  if (recentSpikeIndex === -1) return {};
+
+  const spikeDay = weightData[recentSpikeIndex];
+  const spikeDayNum = (spikeDay.timestamp - startTime) / 86400000;
+  
+  // Look for high sodium/carb intake 1-2 days before the spike
+  const lookbackDays = 2;
+  const highSodiumDays: number[] = [];
+  const highCarbDays: number[] = [];
+
+  for (const intake of intakeData) {
+    const dayNum = (intake.timestamp - startTime) / 86400000;
+    const daysBeforeSpike = spikeDayNum - dayNum;
+    
+    if (daysBeforeSpike >= 0 && daysBeforeSpike <= lookbackDays) {
+      if (intake.sodium && intake.sodium > HIGH_SODIUM_MG) {
+        highSodiumDays.push(daysBeforeSpike);
+      }
+      if (intake.carbs > HIGH_CARB_G) {
+        highCarbDays.push(daysBeforeSpike);
+      }
+    }
+  }
+
+  const hasHighSodium = highSodiumDays.length > 0;
+  const hasHighCarbs = highCarbDays.length > 0;
+  const waterRetentionLikely = hasHighSodium || hasHighCarbs;
+
+  // Get the most recent sodium/carb values for context
+  const latestIntake = intakeData[intakeData.length - 1];
+  const sodiumIntakeMg = latestIntake.sodium;
+  const carbIntakeG = latestIntake.carbs;
+
+  let explanation: string | undefined;
+  const metabolicContext: CoachingInsight['metabolicContext'] = {
+    highSodiumDay: hasHighSodium,
+    highCarbDay: hasHighCarbs,
+    waterRetentionLikely,
+    sodiumIntakeMg,
+    carbIntakeG,
+  };
+
+  if (waterRetentionLikely) {
+    const reasons: string[] = [];
+    if (hasHighSodium) {
+      reasons.push(`high sodium (${Math.round(sodiumIntakeMg || 0)}mg)`);
+    }
+    if (hasHighCarbs) {
+      reasons.push(`high carbs (${Math.round(carbIntakeG || 0)}g)`);
+    }
+    
+    explanation = `Don't worry! This ${spikeWeightChange.toFixed(1)}kg increase looks like temporary water retention from ${reasons.join(' and ')}. ` +
+      `Water weight typically resolves in 24-48 hours. Your true weight trend is still on track.`;
+  }
+
+  return { explanation, metabolicContext };
 }

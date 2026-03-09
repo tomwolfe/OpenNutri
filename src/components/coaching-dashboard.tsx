@@ -18,10 +18,11 @@ interface CoachingCardProps {
   description: string;
   trend?: 'increasing' | 'decreasing' | 'stable';
   confidence?: number;
+  explanation?: string;
   children?: React.ReactNode;
 }
 
-function CoachingCard({ title, description, trend, confidence = 0, children }: CoachingCardProps) {
+function CoachingCard({ title, description, trend, confidence = 0, explanation, children }: CoachingCardProps) {
   const TrendIcon = {
     increasing: TrendingUp,
     decreasing: TrendingDown,
@@ -62,6 +63,14 @@ function CoachingCard({ title, description, trend, confidence = 0, children }: C
       </CardHeader>
       <CardContent>
         <p className="text-sm text-muted-foreground mb-4 leading-relaxed">{description}</p>
+        {explanation && (
+          <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <p className="text-xs text-blue-800 font-medium flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              {explanation}
+            </p>
+          </div>
+        )}
         {children}
       </CardContent>
     </Card>
@@ -177,6 +186,7 @@ export function CoachingDashboard({ userId, sharedVaultKey, isSharedView: _isSha
             description={insight.recommendation}
             trend={insight.trend}
             confidence={insight.confidence}
+            explanation={insight.explanation}
           >
             {/* Visual Progress for Macros */}
             {(insight.type === 'calorie' || insight.type === 'protein') && data.targets && (

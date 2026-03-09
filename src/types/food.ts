@@ -9,6 +9,7 @@ export const FoodAnalysisSchema = z.object({
       protein_g: z.number().describe('Protein in grams'),
       carbs_g: z.number().describe('Carbohydrates in grams'),
       fat_g: z.number().describe('Fat in grams'),
+      sodium_mg: z.number().optional().describe('Sodium in milligrams'),
       confidence: z.number().describe('Confidence score 0-1'),
       portion_guess: z.string().describe('Estimated portion size string (e.g., "2 large slices")'),
       numeric_quantity: z.number().describe('Structured numeric quantity (e.g., 2)'),
@@ -34,14 +35,15 @@ export interface DraftItem {
   protein: number;
   carbs: number;
   fat: number;
+  sodium?: number; // mg
   source: string;
   servingGrams: number;
   numericQuantity?: number;
   unit?: string;
   isEnhancing?: boolean;
   notes?: string;
-  usdaMatch?: { 
-    fdcId: number; 
+  usdaMatch?: {
+    fdcId: number;
     description: string;
     similarity?: number;
   };
@@ -52,6 +54,7 @@ export interface DraftItem {
     protein: number;
     carbs: number;
     fat: number;
+    sodium?: number;
     similarity: number;
   }>;
 }

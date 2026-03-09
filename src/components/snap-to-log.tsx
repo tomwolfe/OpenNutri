@@ -9,7 +9,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import Image from 'next/image';
-import { X, CheckCircle, AlertCircle, Loader2, Edit2, WifiOff } from 'lucide-react';
+import { X, CheckCircle, AlertCircle, Loader2, Edit2, WifiOff, Zap } from 'lucide-react';
 import { experimental_useObject as useObject } from '@ai-sdk/react';
 import { useOfflineQueue } from '@/hooks/use-offline-queue';
 import { useEncryption } from '@/hooks/useEncryption';
@@ -61,6 +61,8 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [isSyncing, setIsSyncing] = useState(false);
   const { queueImage, syncQueue, isAvailable: isIndexedDBAvailable } = useOfflineQueue();
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
+  const [lastAutoSavedId, setLastAutoSavedId] = useState<string | null>(null);
 
   const { submit, object } = useObject({
     api: '/api/analyze',
@@ -79,6 +81,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
           usdaMatch?: { fdcId: number; description: string };
           numeric_quantity?: number;
           unit?: string;
+          confidence?: number;
         }) => ({
           foodName: item.name,
           calories: item.calories || 0,
@@ -92,10 +95,19 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
           isEnhancing: true, // Mark as enhancing while waiting for USDA
           notes: item.notes,
           usdaMatch: item.usdaMatch,
+          confidence: item.confidence,
         }));
 
-        setDraftItems(aiItems);
-        setUploadProgress('review');
+        // Task 1.1: Automatic Affirmation - Check if we should auto-save
+        const avgConfidence = event.object.items.reduce((sum, item) => sum + (item.confidence || 0), 0) / event.object.items.length;
+        
+        if (autoSaveEnabled && avgConfidence >= 0.9) {
+          // Auto-save high confidence results
+          await handleAutoSave(aiItems, aiItems.reduce((sum, item) => sum + item.calories, 0));
+        } else {
+          setDraftItems(aiItems);
+          setUploadProgress('review');
+        }
 
         // 2. Call the batch enrichment endpoint in the background
         try {
@@ -104,10 +116,10 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ items: aiItems }),
           });
-          
+
           if (res.ok) {
             const enrichedData = await res.json();
-            
+
             // 3. Update the UI with official USDA data and remove loading spinners
             setDraftItems(enrichedData.items.map((item: DraftItem) => ({
               foodName: item.foodName,
@@ -555,7 +567,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
 
       const totalCalories = draftItems.reduce((sum, item) => sum + item.calories, 0);
       const notes = draftItems.map(i => i.notes).filter(Boolean).join(' ') || null;
-      
+
       let encryptedData = null, encryptionIv = null;
       if (isReady) {
         try {
@@ -602,6 +614,80 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
     }
   }, [draftItems, selectedMealType, onComplete, onError, onDraftSaved, imageUrl, isReady, encryptLog, imageIv]);
 
+  const handleAutoSave = useCallback(async (items: DraftItem[], totalCalories: number) => {
+    if (items.length === 0 || !autoSaveEnabled) return;
+    
+    try {
+      // Quick save without user review - update favorites
+      for (const item of items) {
+        if (!item.foodName) continue;
+        const favoriteId = item.foodName.toLowerCase().trim();
+        const existing = await db.foodFavorites.get(favoriteId);
+        if (existing) {
+          await db.foodFavorites.update(favoriteId, {
+            frequency: (existing.frequency || 1) + 1,
+            lastUsed: new Date()
+          });
+        } else {
+          await db.foodFavorites.add({
+            id: favoriteId,
+            fdcId: item.foodName,
+            description: item.foodName,
+            calories: item.calories,
+            protein: item.protein,
+            carbs: item.carbs,
+            fat: item.fat,
+            frequency: 1,
+            lastUsed: new Date()
+          });
+        }
+      }
+
+      const notes = items.map(i => i.notes).filter(Boolean).join(' ') || null;
+      let encryptedData = null, encryptionIv = null;
+      if (isReady) {
+        const result = await encryptLog({
+          mealType: selectedMealType,
+          items,
+          notes,
+          imageUrl,
+          imageIv,
+          timestamp: Date.now()
+        });
+        encryptedData = result.encryptedData;
+        encryptionIv = result.iv;
+      }
+
+      const response = await fetch('/api/log/food', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mealType: encryptedData ? 'encrypted' : selectedMealType,
+          items: encryptedData ? [] : items,
+          totalCalories: encryptedData ? 0 : totalCalories,
+          notes: encryptedData ? 'encrypted' : notes,
+          imageUrl: encryptedData ? null : imageUrl,
+          aiConfidenceScore: 0.95, // High confidence auto-save
+          encryptedData,
+          encryptionIv,
+        }),
+      });
+      
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to auto-save');
+      
+      setLastAutoSavedId(data.logId);
+      setUploadProgress('complete');
+      onDraftSaved?.();
+      onComplete?.({ id: data.logId, totalCalories, items });
+    } catch (err) {
+      console.error('Auto-save failed, falling back to review mode:', err);
+      // If auto-save fails, fall back to review mode
+      setUploadProgress('review');
+      onError?.((err as Error).message);
+    }
+  }, [autoSaveEnabled, selectedMealType, onComplete, onError, onDraftSaved, imageUrl, isReady, encryptLog, imageIv]);
+
   const handleClear = useCallback(async () => {
     // Only delete if it's a permanent vault URL (not a Base64 data URI)
     if (imageUrl && !imageUrl.startsWith('data:')) {
@@ -647,7 +733,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
       uploading: { color: 'text-blue-600', text: 'Uploading image...', icon: <Loader2 className="w-4 h-4 animate-spin" /> },
       streaming: { color: 'text-blue-600', text: 'AI is analyzing...', icon: <Loader2 className="w-4 h-4 animate-spin" /> },
       review: { color: 'text-amber-600', text: 'Review your meal', icon: <Edit2 className="w-4 h-4" /> },
-      complete: { color: 'text-green-600', text: 'Meal logged!', icon: <CheckCircle className="w-4 h-4" /> },
+      complete: { color: 'text-green-600', text: lastAutoSavedId ? 'Auto-saved!' : 'Meal logged!', icon: <CheckCircle className="w-4 h-4" /> },
     };
     const status = statusMap[uploadProgress as keyof typeof statusMap];
     if (!status) return null;
@@ -655,6 +741,11 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
       <div className={`flex items-center gap-2 ${status.color}`}>
         {status.icon}
         <span>{status.text}</span>
+        {lastAutoSavedId && uploadProgress === 'complete' && (
+          <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
+            High confidence
+          </span>
+        )}
       </div>
     );
   };
@@ -676,8 +767,24 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
       )}
 
       <div className="mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">Snap to Log</h3>
-        <p className="text-sm text-gray-500">Fast nutrition analysis via AI, Barcode, or Voice</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">Snap to Log</h3>
+            <p className="text-sm text-gray-500">Fast nutrition analysis via AI, Barcode, or Voice</p>
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoSaveEnabled}
+              onChange={(e) => setAutoSaveEnabled(e.target.checked)}
+              className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+            />
+            <div className="flex items-center gap-1 text-xs text-gray-600">
+              <Zap className="w-3 h-3" />
+              <span>Auto-save</span>
+            </div>
+          </label>
+        </div>
       </div>
 
       {uploadProgress === 'idle' && mode === 'barcode' ? (
