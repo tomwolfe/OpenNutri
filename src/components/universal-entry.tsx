@@ -35,7 +35,13 @@ export function UniversalEntry({ onComplete, onError }: UniversalEntryProps) {
       setUploadProgress('complete');
       setTimeout(() => onComplete?.(), 1000);
     },
-    onError
+    onError: (error) => {
+      console.error('Food logging failed:', error);
+      // Show error to user via alert (simple approach)
+      // In production, you might want to use a toast notification system
+      alert(`Failed to log meal: ${error}. Please try again.`);
+      setUploadProgress('review'); // Allow retry
+    }
   });
 
   const {

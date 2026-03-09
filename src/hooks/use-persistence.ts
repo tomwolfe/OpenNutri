@@ -20,12 +20,16 @@ export function usePersistence({ onSuccess, onError }: UsePersistenceOptions = {
   const [isSaving, setIsSaving] = useState(false);
 
   const saveLog = useCallback(async (
-    items: DraftItem[], 
-    mealType: string, 
-    imageUrl: string | null, 
+    items: DraftItem[],
+    mealType: string,
+    imageUrl: string | null,
     imageIv: string | null
   ) => {
-    if (!session?.user?.id || items.length === 0) return;
+    console.log('[usePersistence] saveLog called:', { itemsCount: items.length, mealType, hasImageUrl: !!imageUrl, hasVaultKey: !!vaultKey });
+    if (!session?.user?.id || items.length === 0) {
+      console.warn('[usePersistence] Aborting save: no user or empty items', { hasUser: !!session?.user?.id, itemsCount: items.length });
+      return;
+    }
     setIsSaving(true);
     const userId = session.user.id;
 
@@ -38,6 +42,7 @@ export function usePersistence({ onSuccess, onError }: UsePersistenceOptions = {
       // 1. Prepare Encrypted Data
       let encryptedData = '', encryptionIv = '';
       if (vaultKey) {
+        console.log('[usePersistence] Encrypting food log...');
         const result = await encryptLog({
           mealType,
           items,
@@ -49,6 +54,7 @@ export function usePersistence({ onSuccess, onError }: UsePersistenceOptions = {
         encryptedData = result.encryptedData;
         encryptionIv = result.iv;
       } else {
+        console.error('[usePersistence] Vault key missing!');
         throw new Error('Vault is locked. Cannot save encrypted data.');
       }
 
