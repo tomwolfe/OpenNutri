@@ -28,6 +28,9 @@ export const metadata: Metadata = {
   icons: {
     apple: "/icon-192x192.svg",
   },
+  other: {
+    "mobile-web-app-capable": "yes",
+  },
 };
 
 export const viewport: Viewport = {

@@ -201,8 +201,8 @@ export async function getVaultKey(
     'raw',
     decryptedMasterKey,
     { name: ENCRYPTION_ALGORITHM, length: KEY_LENGTH },
-    false,
-    ['encrypt', 'decrypt']
+    true,
+    ['encrypt', 'decrypt', 'wrapKey']
   );
 }
 

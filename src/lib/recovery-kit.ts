@@ -230,8 +230,8 @@ export async function unlockVaultWithMnemonic(
     'raw',
     keyBuffer,
     { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
+    true,
+    ['encrypt', 'decrypt', 'wrapKey']
   );
 
   return {
