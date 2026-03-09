@@ -15,6 +15,13 @@
       "when": 1772992379801,
       "tag": "0001_condemned_jack_flag",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1773030618597,
+      "tag": "0002_chilly_zzzax",
+      "breakpoints": true
     }
   ]
 }
