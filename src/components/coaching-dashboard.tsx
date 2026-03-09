@@ -85,6 +85,7 @@ function InsightIcon({ type }: { type: string }) {
     fat: Scale,
     weight: Scale,
     consistency: Zap,
+    adaptive_tdee: Zap, // Task 3.2: Adaptive TDEE uses Zap icon
   };
   const Icon = icons[type] || Target;
   return <Icon className="h-5 w-5" />;

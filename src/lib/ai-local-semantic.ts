@@ -36,38 +36,89 @@ function cosineSimilarity(vecA: number[], vecB: number[]): number {
 
 /**
  * Pre-populate the local index with common foods
+ * Task 2.3: Offline USDA Cache - Cache top 500 common items
  */
 export async function syncSmallCoreIndex(): Promise<void> {
   if (typeof window === 'undefined') return;
 
   try {
-    const response = await fetch('/data/small-core-index.json');
-    const commonFoods = await response.json();
-    
+    // Try to fetch from our new API endpoint first
+    let commonFoods: Array<{
+      id: string;
+      description: string;
+      calories: number;
+      protein: number;
+      carbs: number;
+      fat: number;
+      sodium?: number;
+    }> = [];
+
+    try {
+      const response = await fetch('/api/food/usda/common');
+      const data = await response.json();
+      commonFoods = data.foods.map((f: any) => ({
+        id: String(f.fdcId),
+        description: f.description,
+        calories: f.calories,
+        protein: f.protein,
+        carbs: f.carbs,
+        fat: f.fat,
+        sodium: f.sodium,
+      }));
+    } catch (err) {
+      console.warn('Failed to fetch common foods from API, falling back to local file:', err);
+      // Fallback to static file
+      const response = await fetch('/data/small-core-index.json');
+      const staticFoods = await response.json();
+      commonFoods = staticFoods;
+    }
+
     const count = await db.localSemanticCache.count();
-    // If we have less than the "core" items, seed it
-    if (count < commonFoods.length) {
-      console.log('Seeding local semantic index with common foods...');
-      
+    
+    // Only seed if we have less than 100 items (avoid re-seeding on every load)
+    if (count < 100) {
+      console.log(`Seeding local semantic index with ${commonFoods.length} common foods...`);
+
       // Process in batches to avoid locking the UI/Worker too long
-      for (const food of commonFoods) {
-        const existing = await db.localSemanticCache.get(food.id);
-        if (!existing) {
-          // generateEmbedding uses the worker internally
-          const embedding = await generateEmbedding(food.description);
-          await db.localSemanticCache.put({
-            id: food.id,
-            description: food.description,
-            embedding,
-            calories: food.calories,
-            protein: food.protein,
-            carbs: food.carbs,
-            fat: food.fat,
-            lastUsed: Date.now(),
-          });
-        }
+      const BATCH_SIZE = 50;
+      for (let i = 0; i < commonFoods.length; i += BATCH_SIZE) {
+        const batch = commonFoods.slice(i, i + BATCH_SIZE);
+        
+        // Use Promise.all for parallel embedding generation within batch
+        await Promise.all(batch.map(async (food) => {
+          try {
+            const existing = await db.localSemanticCache.get(food.id);
+            if (!existing) {
+              // generateEmbedding uses the worker internally
+              const embedding = await generateEmbedding(food.description);
+              await db.localSemanticCache.put({
+                id: food.id,
+                description: food.description,
+                embedding,
+                calories: food.calories,
+                protein: food.protein,
+                carbs: food.carbs,
+                fat: food.fat,
+                sodium: food.sodium,
+                lastUsed: Date.now(),
+                // Initialize with default portion (100g)
+                typicalQuantity: 1,
+                typicalUnit: 'serving',
+                typicalServingGrams: 100,
+                portionFrequency: 0,
+              });
+            }
+          } catch (err) {
+            console.error(`Failed to seed food "${food.description}":`, err);
+          }
+        }));
+
+        // Yield to main thread between batches
+        await new Promise(resolve => setTimeout(resolve, 0));
       }
-      console.log('Local semantic index seeded successfully.');
+      
+      const finalCount = await db.localSemanticCache.count();
+      console.log(`Local semantic index seeded successfully with ${finalCount} items.`);
     }
   } catch (error) {
     console.error('Failed to sync small-core index:', error);

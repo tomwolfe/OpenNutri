@@ -187,6 +187,89 @@ export const GENDERS: { value: Gender; label: string }[] = [
 ];
 
 /**
+ * Task 3.2: Adaptive TDEE - Dynamic calorie adjustment based on activity
+ * 
+ * Adjusts daily calorie target based on:
+ * - Previous day's step count (increases target on active days)
+ * - Kalman weight trend (adjusts baseline if trend differs from expected)
+ * 
+ * @param baseTdee - Base TDEE from calculateTDEE()
+ * @param stepsYesterday - Steps from previous day (from Health API)
+ * @param kalmanTrendSlope - Weight trend slope from Kalman filter (kg/day)
+ * @param weightGoal - User's weight goal
+ * @returns Adjusted daily calorie target
+ */
+export function calculateAdaptiveTDEE(
+  baseTdee: number,
+  stepsYesterday: number | null,
+  kalmanTrendSlope: number | null,
+  weightGoal: 'lose' | 'maintain' | 'gain'
+): {
+  adjustedTdee: number;
+  stepAdjustment: number;
+  trendAdjustment: number;
+  explanation: string;
+} {
+  const STEP_BASELINE = 8000; // Baseline steps for average day
+  const STEP_MULTIPLIER = 0.04; // ~4 kcal per 1000 steps above baseline
+  
+  // Step-based adjustment
+  let stepAdjustment = 0;
+  if (stepsYesterday !== null && stepsYesterday > STEP_BASELINE) {
+    const extraSteps = stepsYesterday - STEP_BASELINE;
+    stepAdjustment = Math.round(extraSteps / 1000 * STEP_MULTIPLIER * 100); // kcal per 1000 steps
+  }
+  
+  // Kalman trend-based adjustment
+  let trendAdjustment = 0;
+  if (kalmanTrendSlope !== null) {
+    // Convert kg/day to weekly change
+    const weeklyChange = kalmanTrendSlope * 7;
+    
+    // If losing/gaining faster than expected, adjust
+    const expectedWeeklyChange = {
+      lose: -0.5,    // Target 0.5kg loss/week
+      maintain: 0,   // Target stable weight
+      gain: 0.25,    // Target 0.25kg gain/week
+    }[weightGoal];
+    
+    const deviation = weeklyChange - expectedWeeklyChange;
+    
+    // 7700 kcal ≈ 1kg body fat
+    // Adjust by 200 kcal if deviation > 0.2kg/week
+    if (Math.abs(deviation) > 0.2) {
+      trendAdjustment = Math.round(deviation * 7700 / 7 * 0.3); // 30% correction factor
+    }
+  }
+  
+  const adjustedTdee = baseTdee + stepAdjustment + trendAdjustment;
+  
+  // Build explanation
+  const explanations: string[] = [];
+  if (stepAdjustment > 50) {
+    explanations.push(`+${stepAdjustment} kcal for ${stepsYesterday} steps yesterday`);
+  } else if (stepAdjustment < -50) {
+    explanations.push(`${stepAdjustment} kcal for low activity`);
+  }
+  
+  if (trendAdjustment !== 0) {
+    const sign = trendAdjustment > 0 ? '+' : '';
+    explanations.push(`${sign}${trendAdjustment} kcal based on weight trend`);
+  }
+  
+  const explanation = explanations.length > 0 
+    ? `Adjusted: ${explanations.join(', ')}`
+    : 'No adjustment needed';
+  
+  return {
+    adjustedTdee: Math.round(adjustedTdee),
+    stepAdjustment,
+    trendAdjustment,
+    explanation,
+  };
+}
+
+/**
  * Calculate actual TDEE based on weight change over time
  *
  * Uses the formula: Real TDEE = Avg Calories - (Weight Change in kg * 7700 / days)

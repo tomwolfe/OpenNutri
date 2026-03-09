@@ -54,7 +54,6 @@ export async function searchFoods(
   }
 
   const response = await fetch(`${USDA_BASE_URL}/foods/search?${params}`, {
-    cache: 'force-cache',
     next: { revalidate: 86400 }, // Cache for 24 hours
   });
 
@@ -80,7 +79,6 @@ export async function getFoodDetails(fdcId: number): Promise<USDAFoodItem> {
   }
 
   const response = await fetch(`${USDA_BASE_URL}/food/${fdcId}?${params}`, {
-    cache: 'force-cache',
     next: { revalidate: 86400 },
   });
 

@@ -205,11 +205,14 @@ export async function encryptLogInWorker(data: unknown, key: CryptoKey): Promise
 
 /**
  * Generate coaching insights using the web worker
+ * Task 3.2: Added stepsYesterday and userProfile for adaptive TDEE
  */
 export async function generateInsightsInWorker(
   weightData: Array<{ timestamp: number; weight: number }>,
   intakeData: IntakePoint[],
-  targets: MacroTargets
+  targets: MacroTargets,
+  stepsYesterday: number | null = null,
+  userProfile: { birthDate: string | null; gender: string | null; heightCm: number | null; activityLevel: string | null } | null = null
 ): Promise<CoachingInsight[]> {
   const w = getCoachingWorker();
 
@@ -229,7 +232,7 @@ export async function generateInsightsInWorker(
     w.addEventListener('message', handler);
     w.postMessage({
       type: 'GENERATE_INSIGHTS',
-      payload: { weightData, intakeData, targets }
+      payload: { weightData, intakeData, targets, stepsYesterday, userProfile }
     });
   });
 }

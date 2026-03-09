@@ -22,6 +22,7 @@ import { Loader2, Save, User, Activity, Ruler, Scale, Calendar, Key, Shield, Fin
 import { ACTIVITY_LEVELS, GENDERS } from '@/lib/tdee';
 import { RecoveryKitDialog } from '@/components/recovery-kit-dialog';
 import { SyncStatusCard } from '@/components/sync-status-card';
+import { HouseholdSharing } from '@/components/household-sharing';
 import { useEncryption } from '@/hooks/useEncryption';
 
 interface UserProfile {
@@ -490,7 +491,6 @@ export default function SettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Biometric Unlock Section */}
           <div className="space-y-4">
             <h4 className="font-semibold flex items-center gap-2">
               <Fingerprint className="h-5 w-5 text-primary" />
@@ -632,6 +632,8 @@ export default function SettingsPage() {
           setMessage({ type: 'success', text: 'Recovery key generated successfully!' });
         }}
       />
+
+      <HouseholdSharing />
     </div>
   );
 }

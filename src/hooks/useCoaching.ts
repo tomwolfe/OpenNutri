@@ -87,6 +87,31 @@ export function useCoaching(options: UseCoachingOptions = {}) {
       // 2. Get intake data from Local Dexie (already decrypted) OR from Shared Logs
       let intakeDataPoints: IntakePoint[] = [];
 
+      // Task 3.2: Get steps data from Health API
+      let stepsYesterday: number | null = null;
+      let userProfile: { birthDate: string | null; gender: string | null; heightCm: number | null; activityLevel: string | null } | null = null;
+
+      try {
+        // Fetch user profile for TDEE calculation
+        const profileRes = await fetch('/api/profile');
+        if (profileRes.ok) {
+          const profileData = await profileRes.json();
+          userProfile = profileData.user || null;
+        }
+
+        // Fetch yesterday's steps from Health API cache
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        const yesterdayStr = yesterday.toISOString().split('T')[0];
+        
+        const healthData = await db.healthData.get([userId, yesterdayStr]);
+        if (healthData?.steps) {
+          stepsYesterday = healthData.steps;
+        }
+      } catch (err) {
+        console.warn('Failed to fetch health data or profile:', err);
+      }
+
       if (sharedVaultKey) {
         // Fetch and decrypt shared logs for the recipient
         const sharedLogsRes = await fetch(`/api/share/logs?userId=${userId}`);
@@ -163,11 +188,13 @@ export function useCoaching(options: UseCoachingOptions = {}) {
 
       const targets: MacroTargets = raw.targets;
 
-      // 3. Run coaching analysis in Web Worker
+      // 3. Run coaching analysis in Web Worker with adaptive TDEE
       const insights = await generateInsightsInWorker(
         weightData,
         intakeDataPoints,
-        targets
+        targets,
+        stepsYesterday,
+        userProfile
       );
 
       // Calculate trend summary
