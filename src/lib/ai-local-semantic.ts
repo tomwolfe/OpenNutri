@@ -219,7 +219,7 @@ export async function addToLocalCache(
         typicalQuantity: item.numericQuantity,
         typicalUnit: item.unit,
         typicalServingGrams: item.servingGrams,
-        portionFrequency: samePortion ? (existing.portionFrequency || 0) + 1 : existing.portionFrequency || 0,
+        portionFrequency: samePortion ? (existing.portionFrequency || 0) + 1 : 1,
       });
     } else if (!existing) {
       // New item - add with portion data if available

@@ -202,7 +202,33 @@ export function generateCoachingInsights(weightData: Array<{ timestamp: number; 
   intakeData.sort((a, b) => a.timestamp - b.timestamp);
   const start = Math.min(weightData[0].timestamp, intakeData[0].timestamp);
 
-  const smoothedResults = WeightKalmanFilter.filter(weightData.map(d => d.weight), 0.015, 1.2);
+  // Prepare entries with metabolic context for the Kalman Filter
+  const HIGH_SODIUM_THRESHOLD = targets.calories > 0 ? (targets.calories / 2000) * 2300 : 2300;
+  const HIGH_CARB_THRESHOLD = targets.carbs > 0 ? targets.carbs * 1.25 : 300;
+
+  const kfEntries = weightData.map((d) => {
+    const dayNum = Math.floor((d.timestamp - start) / 86400000);
+    
+    // Check for high intake on this day or previous day (causes retention lag)
+    let highSodium = false;
+    let highCarbs = false;
+
+    for (const intake of intakeData) {
+      const intakeDayNum = Math.floor((intake.timestamp - start) / 86400000);
+      if (intakeDayNum === dayNum || intakeDayNum === dayNum - 1) {
+        if (intake.sodium && intake.sodium > HIGH_SODIUM_THRESHOLD) highSodium = true;
+        if (intake.carbs > HIGH_CARB_THRESHOLD) highCarbs = true;
+      }
+    }
+
+    return {
+      weight: d.weight,
+      highSodium,
+      highCarbs
+    };
+  });
+
+  const smoothedResults = WeightKalmanFilter.filter(kfEntries, 0.015, 1.2);
   const smoothedWeights = smoothedResults.map(r => r.weight);
   const weightPoints = weightData.map((d, i) => ({ x: (d.timestamp - start) / 86400000, y: smoothedWeights[i] }));
   const caloriePoints = intakeData.map(d => ({ x: (d.timestamp - start) / 86400000, y: d.calories }));
@@ -216,7 +242,7 @@ export function generateCoachingInsights(weightData: Array<{ timestamp: number; 
   const suggCal = Math.round(avgCal + calAdj);
 
   // Task 3.1: Sodium/Carb Correlation Analysis
-  const sodiumInsights = analyzeSodiumCarbCorrelation(weightData, smoothedWeights, intakeData, start);
+  const sodiumInsights = analyzeSodiumCarbCorrelation(weightData, smoothedWeights, intakeData, start, targets);
 
   const insights: CoachingInsight[] = [
     {
@@ -254,21 +280,22 @@ export function analyzeSodiumCarbCorrelation(
   weightData: Array<{ timestamp: number; weight: number }>,
   smoothedWeights: number[],
   intakeData: IntakePoint[],
-  startTime: number
+  startTime: number,
+  targets: MacroTargets
 ): { explanation?: string; metabolicContext?: CoachingInsight['metabolicContext'] } {
   if (weightData.length < 5 || intakeData.length < 3) return {};
 
-  // Thresholds for "high" intake
-  const HIGH_SODIUM_MG = 2300; // FDA daily limit
-  const HIGH_CARB_G = 300; // ~60% of 2000 cal diet
+  // Thresholds for "high" intake relative to targets
+  const HIGH_SODIUM_THRESHOLD = targets.calories > 0 ? (targets.calories / 2000) * 2300 : 2300;
+  const HIGH_CARB_THRESHOLD = targets.carbs > 0 ? targets.carbs * 1.25 : 300;
 
-  // Find the most recent weight spike (weight increase > 0.5kg in 1-2 days)
+  // Find the most recent weight spike (loop backwards)
   let recentSpikeIndex = -1;
   let spikeWeightChange = 0;
   
-  for (let i = 1; i < weightData.length; i++) {
+  for (let i = weightData.length - 1; i > 0; i--) {
     const weightChange = smoothedWeights[i] - smoothedWeights[i - 1];
-    if (weightChange > 0.5) { // 0.5kg spike
+    if (weightChange > 0.2) { // 0.2kg spike in smoothed weight is significant
       recentSpikeIndex = i;
       spikeWeightChange = weightChange;
       break;
@@ -278,29 +305,31 @@ export function analyzeSodiumCarbCorrelation(
   if (recentSpikeIndex === -1) return {};
 
   const spikeDay = weightData[recentSpikeIndex];
-  const spikeDayNum = (spikeDay.timestamp - startTime) / 86400000;
+  const spikeDayNum = Math.floor((spikeDay.timestamp - startTime) / 86400000);
   
   // Look for high sodium/carb intake 1-2 days before the spike
   const lookbackDays = 2;
-  const highSodiumDays: number[] = [];
-  const highCarbDays: number[] = [];
+  let maxSodium = 0;
+  let maxCarbs = 0;
+  let hasHighSodium = false;
+  let hasHighCarbs = false;
 
   for (const intake of intakeData) {
-    const dayNum = (intake.timestamp - startTime) / 86400000;
+    const dayNum = Math.floor((intake.timestamp - startTime) / 86400000);
     const daysBeforeSpike = spikeDayNum - dayNum;
     
     if (daysBeforeSpike >= 0 && daysBeforeSpike <= lookbackDays) {
-      if (intake.sodium && intake.sodium > HIGH_SODIUM_MG) {
-        highSodiumDays.push(daysBeforeSpike);
+      if (intake.sodium && intake.sodium > HIGH_SODIUM_THRESHOLD) {
+        hasHighSodium = true;
+        maxSodium = Math.max(maxSodium, intake.sodium);
       }
-      if (intake.carbs > HIGH_CARB_G) {
-        highCarbDays.push(daysBeforeSpike);
+      if (intake.carbs > HIGH_CARB_THRESHOLD) {
+        hasHighCarbs = true;
+        maxCarbs = Math.max(maxCarbs, intake.carbs);
       }
     }
   }
 
-  const hasHighSodium = highSodiumDays.length > 0;
-  const hasHighCarbs = highCarbDays.length > 0;
   const waterRetentionLikely = hasHighSodium || hasHighCarbs;
 
   // Get the most recent sodium/carb values for context
@@ -320,14 +349,14 @@ export function analyzeSodiumCarbCorrelation(
   if (waterRetentionLikely) {
     const reasons: string[] = [];
     if (hasHighSodium) {
-      reasons.push(`high sodium (${Math.round(sodiumIntakeMg || 0)}mg)`);
+      reasons.push(`high sodium (${Math.round(maxSodium)}mg)`);
     }
     if (hasHighCarbs) {
-      reasons.push(`high carbs (${Math.round(carbIntakeG || 0)}g)`);
+      reasons.push(`high carbs (${Math.round(maxCarbs)}g)`);
     }
     
-    explanation = `Don't worry! This ${spikeWeightChange.toFixed(1)}kg increase looks like temporary water retention from ${reasons.join(' and ')}. ` +
-      `Water weight typically resolves in 24-48 hours. Your true weight trend is still on track.`;
+    explanation = `Stay the course! This ${spikeWeightChange.toFixed(1)}kg spike is likely water retention from ${reasons.join(' and ')} ${spikeDayNum === Math.floor((Date.now() - startTime) / 86400000) ? 'recently' : 'around that time'}. ` +
+      `Your body holds extra water to process sodium and store glycogen. This usually clears in 1-2 days.`;
   }
 
   return { explanation, metabolicContext };
