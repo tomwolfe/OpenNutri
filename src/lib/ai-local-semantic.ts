@@ -1,8 +1,11 @@
 /**
  * Persistent Local Semantic Cache
- * 
+ *
  * Stores user-specific food mappings and their embeddings in IndexedDB.
  * Allows for instant, offline food matching for frequent items.
+ * 
+ * Task 1.6: Pre-compute embeddings for top 500 foods
+ * Task 1.5: Use worker-based embedding generation
  */
 
 import { db, type LocalSemanticMatch } from './db-local';

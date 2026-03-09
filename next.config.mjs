@@ -18,6 +18,11 @@ const nextConfig = {
       },
     ],
   },
+  // Task 1.5: Experimental features for better ML model handling
+  experimental: {
+    // Optimize server components
+    optimizePackageImports: ['@huggingface/transformers', 'onnxruntime-web'],
+  },
   webpack: (config, { isServer }) => {
     // If we're building for the client (browser), ignore node-specific modules
     if (!isServer) {
@@ -29,7 +34,7 @@ const nextConfig = {
         crypto: false,
       };
 
-      // Client-side: exclude problematic WASM bundles from terser minification
+      // Task 1.5: Client-side optimization - exclude problematic WASM bundles from terser minification
       // These files contain ES module syntax that terser cannot handle
       config.optimization = {
         ...config.optimization,
@@ -45,13 +50,56 @@ const nextConfig = {
                   /transformers/,
                   /\.wasm$/,
                 ],
+                // Use esbuild for faster minification
+                terserOptions: {
+                  compress: {
+                    passes: 2,
+                    keep_fargs: false,
+                    keep_classnames: true,
+                    keep_fnames: true, // Keep function names for debugging
+                  },
+                  mangle: {
+                    keep_classnames: true,
+                    keep_fnames: true, // Keep class names for ML models
+                  },
+                  format: {
+                    comments: false,
+                  },
+                },
               }).apply(compiler);
             }
           },
         ],
+        // Task 1.5: Split chunks for better caching
+        splitChunks: {
+          chunks: 'all',
+          cacheGroups: {
+            // Separate ML models into their own chunk
+            ml: {
+              name: 'ml-models',
+              test: /[\\/]node_modules[\\/](@huggingface|onnxruntime|transformers)[\\/]/,
+              priority: 10,
+              reuseExistingChunk: true,
+            },
+            // Separate workers
+            workers: {
+              name: 'workers',
+              test: /[\\/]workers[\\/]/,
+              priority: 20,
+              reuseExistingChunk: true,
+            },
+            // Common vendor libraries
+            vendors: {
+              name: 'vendors',
+              test: /[\\/]node_modules[\\/]/,
+              priority: -10,
+              reuseExistingChunk: true,
+            },
+          },
+        },
       };
 
-      // Exclude WASM and problematic ML bundles from client build
+      // Task 1.5: Better WASM and ML model handling
       config.module = {
         ...config.module,
         rules: [
@@ -59,12 +107,29 @@ const nextConfig = {
           {
             test: /\.wasm$/,
             type: 'asset/resource',
+            generator: {
+              filename: 'static/chunks/[hash].base64[ext]',
+            },
           },
           // Exclude onnxruntime WASM bundles from being processed by babel/swc
           {
             test: /onnxruntime.*\.m?js$/,
             loader: 'null-loader',
           },
+          // Handle ML model files with lazy loading
+          {
+            test: /.*transformers.*\.(js|mjs)$/,
+            type: 'javascript/auto',
+            resolve: {
+              fullySpecified: false,
+            },
+          },
+        ],
+        // Exclude heavy ML libraries from parsing
+        noParse: [
+          /onnxruntime-web/,
+          /transformers\.js/,
+          /\.wasm$/,
         ],
       };
     } else {

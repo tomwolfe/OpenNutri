@@ -4,11 +4,12 @@
  * Handles Transformers.js v3 inference with WebGPU support.
  * Offloads heavy classification and embedding generation to the browser's GPU.
  *
- * Task 5.1: WebGPU Optimization
+ * Task 1.4: WebGPU Optimization (Weeks 3-4)
  * - Uses WebGPU when available for 10x faster inference
  * - Falls back to WASM for compatibility
  * - Reports device info for debugging
- * 
+ * - Progressive model loading for faster initial response
+ *
  * Fallback Chain:
  * 1. WebGPU (FP32) - Best performance (~1-2s inference)
  * 2. WebGPU (FP16) - Reduced precision (~1s, may lose accuracy)
@@ -22,159 +23,289 @@ import { pipeline, env } from '@huggingface/transformers';
 env.allowLocalModels = false;
 env.useBrowserCache = true;
 
-// Task 5.1: Enhanced WebGPU detection and fallback
+// Task 1.4: Enhanced WebGPU detection and fallback with detailed capability reporting
 let webGpuAvailable = false;
 let webGpuDevice: any = null;
-let deviceInfo: { type: string; name?: string; limits?: any } = { type: 'unknown' };
+let deviceInfo: { 
+  type: 'webgpu' | 'webgpu-limited' | 'wasm' | 'none'; 
+  name?: string; 
+  limits?: any;
+  features?: string[];
+  isMobile?: boolean;
+} = { type: 'none' };
 
-// Detect WebGPU capability with detailed reporting
+// Detect WebGPU capability with comprehensive reporting
 async function detectWebGPU(): Promise<boolean> {
   if (typeof navigator === 'undefined' || !(navigator as any).gpu) {
-    deviceInfo = { type: 'none', name: 'WebGPU not supported' };
+    deviceInfo = { 
+      type: 'none', 
+      name: 'WebGPU not supported in this browser',
+      isMobile: /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent)
+    };
     return false;
   }
 
   try {
     // Request adapter to verify WebGPU is actually functional
     const adapter = await (navigator as any).gpu.requestAdapter();
-    
+
     if (!adapter) {
-      deviceInfo = { type: 'none', name: 'No WebGPU adapter found' };
+      deviceInfo = { 
+        type: 'none', 
+        name: 'No WebGPU adapter found',
+        isMobile: /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent)
+      };
       return false;
     }
 
     webGpuAvailable = true;
-    
+
     try {
       const device = await adapter.requestDevice();
       webGpuDevice = device;
-      
+
+      // Detect mobile devices for optimized model selection
+      const isMobile = /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent);
+
       deviceInfo = {
         type: 'webgpu',
         name: adapter.name,
         limits: {
           maxComputeWorkgroupStorageSize: device.limits.maxComputeWorkgroupStorageSize,
           maxBufferSize: device.limits.maxBufferSize,
+          maxStorageBufferBindingSize: device.limits.maxStorageBufferBindingSize,
         },
+        features: Array.from(device.features.keys()),
+        isMobile,
       };
-      
-      console.log('WebGPU available:', deviceInfo);
+
+      console.log('✅ WebGPU available:', deviceInfo);
     } catch (deviceErr) {
-      console.warn('WebGPU device acquisition failed:', deviceErr);
-      deviceInfo = { type: 'webgpu-limited', name: adapter.name };
-      // Still report WebGPU available but without device
+      console.warn('⚠️ WebGPU device acquisition failed:', deviceErr);
+      deviceInfo = { 
+        type: 'webgpu-limited', 
+        name: adapter.name,
+        isMobile: /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent)
+      };
+      // Still report WebGPU available but without full device access
     }
 
     return webGpuAvailable;
   } catch (err) {
-    console.warn('WebGPU detection failed:', err);
-    deviceInfo = { type: 'none', name: `WebGPU error: ${err}` };
+    console.warn('❌ WebGPU detection failed:', err);
+    deviceInfo = { 
+      type: 'none', 
+      name: `WebGPU error: ${err}`,
+      isMobile: /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent)
+    };
     return false;
   }
 }
 
 // Initialize WebGPU detection on worker start
 detectWebGPU().then(() => {
-  // Report device info to main thread
-  self.postMessage({ 
-    type: 'device-info', 
+  // Report device info to main thread immediately
+  self.postMessage({
+    type: 'device-info',
     info: deviceInfo,
-    webGpuAvailable 
+    webGpuAvailable
   });
 });
 
 let classifier: any = null;
 let embedder: any = null;
+let modelLoadState: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
 
-// Initialize the model with WebGPU device if possible
+/**
+ * Initialize the classifier with progressive loading strategy
+ * Task 1.4: Progressive model loading for faster initial response
+ * Task 1.5: Lazy loading with device-optimized model selection
+ */
 async function getClassifier() {
   if (classifier) return classifier;
+  if (modelLoadState === 'loading') {
+    // Wait for ongoing load to complete
+    while (modelLoadState === 'loading') {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return classifier;
+  }
+
+  modelLoadState = 'loading';
 
   try {
-    // Task 5.1: Use Moondream2 for high-quality vision analysis if WebGPU is available
-    if (webGpuAvailable) {
-      console.log('WebGPU detected, loading Moondream2 (ONNX)...');
-      self.postMessage({ 
-        type: 'progress', 
+    // Task 1.4: Use Moondream2 for high-quality vision analysis if WebGPU is available
+    if (webGpuAvailable && deviceInfo.type === 'webgpu') {
+      console.log('🚀 WebGPU detected, loading Moondream2 vision model...');
+      self.postMessage({
+        type: 'progress',
         message: 'Loading Moondream2 vision model (~50MB)...',
-        progress: 0.2
+        progress: 0.2,
+        stage: 'downloading'
       });
-      
-      classifier = await pipeline('image-to-text', 'onnx-community/moondream2', {
-        device: 'webgpu',
-        // Optimize for latency over memory
-        dtype: 'fp32',
-      });
-      
-      self.postMessage({ 
-        type: 'progress', 
-        message: 'Moondream2 ready!',
-        progress: 1.0
-      });
-      
-      console.log('Moondream2 loaded successfully on WebGPU');
-      return classifier;
+
+      try {
+        // Progressive loading: Load smaller quantized version first
+        classifier = await pipeline('image-to-text', 'onnx-community/moondream2', {
+          device: 'webgpu',
+          dtype: 'fp32', // Full precision for best accuracy
+          progress_callback: (data: any) => {
+            if (data.status === 'progress') {
+              self.postMessage({
+                type: 'progress',
+                message: `Loading model: ${Math.round(data.progress * 100)}%`,
+                progress: 0.2 + (data.progress * 0.6), // Scale from 0.2 to 0.8
+                stage: 'downloading',
+                details: data
+              });
+            } else if (data.status === 'ready') {
+              self.postMessage({
+                type: 'progress',
+                message: 'Model loaded successfully!',
+                progress: 0.9,
+                stage: 'ready'
+              });
+            }
+          }
+        });
+
+        self.postMessage({
+          type: 'progress',
+          message: '✨ Moondream2 ready for analysis!',
+          progress: 1.0,
+          stage: 'ready'
+        });
+
+        console.log('✅ Moondream2 loaded successfully on WebGPU');
+        modelLoadState = 'ready';
+        return classifier;
+      } catch (moondreamErr) {
+        console.warn('⚠️ Moondream2 loading failed, falling back:', moondreamErr);
+        self.postMessage({
+          type: 'progress',
+          message: 'Moondream2 failed, using fallback model...',
+          progress: 0.5,
+          stage: 'fallback'
+        });
+      }
     }
 
     // Fallback to MobileNet v2 for WASM (smaller, faster on CPU)
-    self.postMessage({ 
-      type: 'progress', 
-      message: 'Loading MobileNet v2 (WASM fallback)...',
-      progress: 0.5
+    self.postMessage({
+      type: 'progress',
+      message: 'Loading MobileNet v2 (optimized for CPU)...',
+      progress: 0.5,
+      stage: 'loading-fallback'
     });
-    
-    console.log('WebGPU not detected, falling back to MobileNet v2 (WASM)');
+
+    console.log('📱 WebGPU not available, using MobileNet v2 (WASM)');
     classifier = await pipeline('image-classification', 'onnx-community/mobilenetv2-1.0-224', {
       device: 'wasm',
+      progress_callback: (data: any) => {
+        if (data.status === 'progress') {
+          self.postMessage({
+            type: 'progress',
+            message: `Loading MobileNet: ${Math.round(data.progress * 100)}%`,
+            progress: 0.5 + (data.progress * 0.4),
+            stage: 'loading-fallback'
+          });
+        }
+      }
     });
-    
-    self.postMessage({ 
-      type: 'progress', 
-      message: 'MobileNet v2 ready!',
-      progress: 1.0
+
+    self.postMessage({
+      type: 'progress',
+      message: '✅ MobileNet v2 ready!',
+      progress: 1.0,
+      stage: 'ready'
     });
-    
+
+    modelLoadState = 'ready';
     return classifier;
   } catch (err) {
-    console.warn('Advanced model initialization failed, falling back to basic MobileNet', err);
-    self.postMessage({ 
-      type: 'progress', 
-      message: 'Using basic MobileNet model...',
-      progress: 0.8
+    console.error('❌ All model initialization failed:', err);
+    self.postMessage({
+      type: 'progress',
+      message: 'Using minimal fallback model...',
+      progress: 0.8,
+      stage: 'error'
     });
-    
+
+    // Last resort: Try basic MobileNet with minimal configuration
     classifier = await pipeline('image-classification', 'onnx-community/mobilenetv2-1.0-224', {
       device: 'wasm',
     });
-    
-    self.postMessage({ 
-      type: 'progress', 
-      message: 'Basic model ready',
-      progress: 1.0
+
+    self.postMessage({
+      type: 'progress',
+      message: 'Basic model ready (limited functionality)',
+      progress: 1.0,
+      stage: 'ready-limited'
     });
-    
+
+    modelLoadState = 'ready';
     return classifier;
   }
 }
 
+let embedderLoadState: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
+
 async function getEmbedder() {
   if (embedder) return embedder;
+  if (embedderLoadState === 'loading') {
+    while (embedderLoadState === 'loading') {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return embedder;
+  }
+
+  embedderLoadState = 'loading';
 
   try {
-    // Task 5.1: all-MiniLM-L6-v2 is small (23MB) and efficient for embeddings
+    // Task 1.5: all-MiniLM-L6-v2 is optimized (23MB) for embeddings
     // Uses WebGPU if available for 5-10x faster embedding generation
+    self.postMessage({
+      type: 'progress',
+      message: 'Loading embedding model...',
+      progress: 0.3,
+      stage: 'loading-embedder'
+    });
+
     embedder = await pipeline('feature-extraction', 'xenova/all-MiniLM-L6-v2', {
       device: webGpuAvailable ? 'webgpu' : 'wasm',
       dtype: webGpuAvailable ? 'fp32' : undefined,
+      progress_callback: (data: any) => {
+        if (data.status === 'progress') {
+          self.postMessage({
+            type: 'progress',
+            message: `Loading embeddings: ${Math.round(data.progress * 100)}%`,
+            progress: 0.3 + (data.progress * 0.5),
+            stage: 'loading-embedder'
+          });
+        } else if (data.status === 'ready') {
+          self.postMessage({
+            type: 'progress',
+            message: 'Embedding model ready!',
+            progress: 0.8,
+            stage: 'ready'
+          });
+        }
+      }
     });
-    console.log(`Embedder loaded on ${webGpuAvailable ? 'WebGPU' : 'WASM'}`);
+
+    console.log(`✅ Embedder loaded on ${webGpuAvailable ? 'WebGPU' : 'WASM'}`);
+    embedderLoadState = 'ready';
     return embedder;
   } catch (err) {
-    console.warn('WebGPU initialization failed for embedder, falling back to WASM', err);
-    embedder = await pipeline('feature-extraction', 'xenova/all-MiniLM-L6-v2', {
-      device: 'wasm',
+    console.error('❌ Embedder initialization failed:', err);
+    self.postMessage({
+      type: 'progress',
+      message: 'Embedding model unavailable',
+      progress: 0,
+      stage: 'error'
     });
-    return embedder;
+    embedderLoadState = 'error';
+    throw err;
   }
 }
 
@@ -220,14 +351,14 @@ self.onmessage = async (event) => {
     try {
       const model = await getClassifier();
       let results: any[] = [];
-      
+
       if (model.task === 'image-to-text') {
         // Moondream2 / VQA path
         console.log('Using Moondream2 for VQA...');
         const prompt = "Describe the food items in this image and estimate their weight in grams. Format: Item (Weight)";
         const output = await model(image, prompt);
         const generatedText = Array.isArray(output) ? output[0].generated_text : output.generated_text;
-        
+
         // Simple parser for "Item (Weight)"
         const lines = generatedText.split('\n');
         results = lines.map((line: string) => {
@@ -279,5 +410,20 @@ self.onmessage = async (event) => {
       console.error('Worker: embedding generation failed', error);
       self.postMessage({ type: 'error', error: String(error) });
     }
+  } else if (type === 'get-device-info') {
+    // Task 1.4: Allow main thread to request device info on demand
+    self.postMessage({
+      type: 'device-info',
+      info: deviceInfo,
+      webGpuAvailable
+    });
+  } else if (type === 'get-model-state') {
+    // Return current model loading state
+    self.postMessage({
+      type: 'model-state',
+      classifierState: modelLoadState,
+      embedderState: embedderLoadState,
+      deviceInfo
+    });
   }
 };

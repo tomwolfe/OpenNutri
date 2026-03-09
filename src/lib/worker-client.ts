@@ -1,7 +1,9 @@
 /**
  * Encryption Worker Client
- * 
+ *
  * Helper for communicating with the encryption web worker.
+ * 
+ * Task 1.5: Updated to use enhanced AI worker with progress tracking
  */
 
 import { type DecryptedFoodLog } from './db-local';
@@ -16,18 +18,20 @@ function getAIWorker(): Worker {
   if (typeof window === 'undefined') {
     throw new Error('Worker can only be used in the browser');
   }
-  
+
   if (!aiWorker) {
     aiWorker = new Worker(
-      new URL('../workers/ai.worker.ts', import.meta.url)
+      new URL('../workers/ai.worker.ts', import.meta.url),
+      { type: 'module' }
     );
   }
-  
+
   return aiWorker;
 }
 
 /**
  * Generate text embedding in the AI worker
+ * Task 1.5: Enhanced with better error handling
  */
 export async function generateEmbeddingInWorker(text: string): Promise<number[]> {
   const w = getAIWorker();
@@ -47,6 +51,12 @@ export async function generateEmbeddingInWorker(text: string): Promise<number[]>
 
     w.addEventListener('message', handler);
     w.postMessage({ type: 'embed', text });
+    
+    // Timeout after 30 seconds
+    setTimeout(() => {
+      w.removeEventListener('message', handler);
+      reject(new Error('Embedding generation timed out'));
+    }, 30000);
   });
 }
 
