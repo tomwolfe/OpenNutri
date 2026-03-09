@@ -125,15 +125,65 @@ self.onmessage = async (event: MessageEvent) => {
       const unsyncedLogs = await db.foodLogs
         .filter(log => !log.synced && log.userId === userId)
         .toArray();
-...
+
+      // Queue unsynced logs to outbox for processing
+      for (const log of unsyncedLogs) {
+        try {
+          await db.syncOutbox.add({
+            userId: log.userId,
+            table: 'foodLogs',
+            entityId: log.id,
+            operation: 'PUT',
+            payload: log,
+            timestamp: Date.now(),
+            status: 'pending'
+          });
+        } catch (err) {
+          console.error('Failed to queue log for sync:', err);
+        }
+      }
 
       const unsyncedTargets = await db.userTargets
         .filter(target => !target.synced && target.userId === userId)
         .toArray();
 
+      // Queue unsynced targets to outbox
+      for (const target of unsyncedTargets) {
+        try {
+          await db.syncOutbox.add({
+            userId: target.userId,
+            table: 'userTargets',
+            entityId: target.userId + '_' + target.date,
+            operation: 'PUT',
+            payload: target,
+            timestamp: Date.now(),
+            status: 'pending'
+          });
+        } catch (err) {
+          console.error('Failed to queue target for sync:', err);
+        }
+      }
+
       const unsyncedRecipes = await db.userRecipes
         .filter(recipe => !recipe.synced && recipe.userId === userId)
         .toArray();
+
+      // Queue unsynced recipes to outbox
+      for (const recipe of unsyncedRecipes) {
+        try {
+          await db.syncOutbox.add({
+            userId: recipe.userId,
+            table: 'userRecipes',
+            entityId: recipe.id,
+            operation: 'PUT',
+            payload: recipe,
+            timestamp: Date.now(),
+            status: 'pending'
+          });
+        } catch (err) {
+          console.error('Failed to queue recipe for sync:', err);
+        }
+      }
 
       let pushed = 0;
       if (unsyncedLogs.length > 0 || unsyncedTargets.length > 0 || unsyncedRecipes.length > 0) {

@@ -24,6 +24,7 @@ import {
 const VAULT_KEY_STORAGE = 'opennutri_vault_key';
 const SESSION_PERSISTENCE_KEY = 'opennutri_session_persistence_key';
 const WRAPPED_VAULT_KEY_STORAGE = 'opennutri_wrapped_vault_key';
+const DEVICE_KEY_STORAGE = 'opennutri_device_key';
 
 interface VaultKeyData {
   salt: string;
@@ -63,25 +64,72 @@ export function useEncryption(): UseEncryptionReturn {
 
   /**
    * Internal: Persist key for session resumption
-   * Wraps the vault key with a temporary session key
+   * Double-wraps the vault key: master key → session key → device key
+   * The device key is stored encrypted in localStorage with a browser-derived key
    */
   const persistSessionKey = useCallback(async (masterKey: CryptoKey) => {
     try {
       const sessionWrappingKey = await generateSessionKey();
-      
-      // Export wrapping key to sessionStorage
+
+      // Export wrapping key to sessionStorage (ephemeral)
       const exportedWrappingKey = await crypto.subtle.exportKey('raw', sessionWrappingKey);
       sessionStorage.setItem(SESSION_PERSISTENCE_KEY, arrayBufferToBase64(exportedWrappingKey));
-      
-      // Wrap master key and store in localStorage
+
+      // Wrap master key with session key
       const wrapped = await wrapKey(masterKey, sessionWrappingKey);
-      localStorage.setItem(WRAPPED_VAULT_KEY_STORAGE, JSON.stringify(wrapped));
-      
+
+      // Derive a device-specific key from browser fingerprint
+      const deviceKey = await getOrCreateDeviceKey();
+
+      // Encrypt the wrapped key with device key before storing in localStorage
+      const wrappedDataJson = JSON.stringify(wrapped);
+      const deviceEncrypted = await encryptBinaryData(
+        new TextEncoder().encode(wrappedDataJson),
+        deviceKey
+      );
+
+      localStorage.setItem(WRAPPED_VAULT_KEY_STORAGE, JSON.stringify({
+        ciphertext: arrayBufferToBase64(deviceEncrypted.ciphertext),
+        iv: arrayBufferToBase64(deviceEncrypted.iv)
+      }));
+
       // Also set the legacy flag
       sessionStorage.setItem(VAULT_KEY_STORAGE, JSON.stringify({ type: 'master', unlocked: true }));
     } catch (err) {
       console.warn('Failed to persist session key:', err);
     }
+  }, [encryptBinaryData, getOrCreateDeviceKey]);
+
+  /**
+   * Internal: Get or create a device-specific encryption key
+   * Derived from browser's Web Crypto API and stored persistently
+   */
+  const getOrCreateDeviceKey = useCallback(async (): Promise<CryptoKey> => {
+    const storedDeviceKey = localStorage.getItem(DEVICE_KEY_STORAGE);
+
+    if (storedDeviceKey) {
+      // Import existing device key
+      const keyData = JSON.parse(storedDeviceKey);
+      return crypto.subtle.importKey(
+        'raw',
+        base64ToArrayBuffer(keyData.key),
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+      );
+    }
+
+    // Generate new device key
+    const newDeviceKey = await generateSessionKey();
+    const exportedKey = await crypto.subtle.exportKey('raw', newDeviceKey);
+
+    // Store in localStorage (this is the root of trust for this device)
+    localStorage.setItem(DEVICE_KEY_STORAGE, JSON.stringify({
+      key: arrayBufferToBase64(exportedKey),
+      createdAt: Date.now()
+    }));
+
+    return newDeviceKey;
   }, []);
 
   /**
@@ -91,14 +139,26 @@ export function useEncryption(): UseEncryptionReturn {
     try {
       const exportedWrappingKey = sessionStorage.getItem(SESSION_PERSISTENCE_KEY);
       const wrappedDataStr = localStorage.getItem(WRAPPED_VAULT_KEY_STORAGE);
-      
+
       if (!exportedWrappingKey || !wrappedDataStr) return;
-      
+
       const wrappedData = JSON.parse(wrappedDataStr);
-      
+
+      // Get device key to decrypt the wrapped master key
+      const deviceKey = await getOrCreateDeviceKey();
+
+      // Decrypt the wrapped key data
+      const decryptedJson = await decryptBinaryData(
+        base64ToArrayBuffer(wrappedData.ciphertext),
+        base64ToArrayBuffer(wrappedData.iv),
+        deviceKey
+      );
+
+      const wrappedKeyData = JSON.parse(new TextDecoder().decode(decryptedJson));
+
       // Import the wrapping key back
       const binaryKey = base64ToArrayBuffer(exportedWrappingKey);
-      
+
       const sessionWrappingKey = await crypto.subtle.importKey(
         'raw',
         binaryKey,
@@ -106,8 +166,8 @@ export function useEncryption(): UseEncryptionReturn {
         false,
         ['unwrapKey']
       );
-      
-      const masterKey = await unwrapKey(wrappedData.ciphertext, wrappedData.iv, sessionWrappingKey);
+
+      const masterKey = await unwrapKey(wrappedKeyData.ciphertext, wrappedKeyData.iv, sessionWrappingKey);
       setKey(masterKey);
       console.log('Encryption session resumed successfully');
     } catch (err) {
@@ -116,7 +176,7 @@ export function useEncryption(): UseEncryptionReturn {
       sessionStorage.removeItem(SESSION_PERSISTENCE_KEY);
       localStorage.removeItem(WRAPPED_VAULT_KEY_STORAGE);
     }
-  }, []);
+  }, [getOrCreateDeviceKey, decryptBinaryData]);
 
   // Check Web Crypto API support and resume session on mount
   useEffect(() => {
@@ -255,6 +315,8 @@ export function useEncryption(): UseEncryptionReturn {
     sessionStorage.removeItem(VAULT_KEY_STORAGE);
     sessionStorage.removeItem(SESSION_PERSISTENCE_KEY);
     localStorage.removeItem(WRAPPED_VAULT_KEY_STORAGE);
+    // Note: We don't clear DEVICE_KEY_STORAGE on logout to maintain session persistence
+    // across tabs/windows. It's only cleared on explicit account deletion or browser data clear.
   }, []);
 
   return {

@@ -13,6 +13,7 @@ import { X, CheckCircle, AlertCircle, Loader2, Edit2, WifiOff } from 'lucide-rea
 import { experimental_useObject as useObject } from '@ai-sdk/react';
 import { useOfflineQueue } from '@/hooks/use-offline-queue';
 import { useEncryption } from '@/hooks/useEncryption';
+import { db } from '@/lib/db-local';
 import { BarcodeScanner } from './barcode-scanner';
 import { CameraOverlay } from './dashboard/camera-overlay';
 import { MacroEditor } from './dashboard/macro-editor';
@@ -324,8 +325,8 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
       // 2. Fallback to Cloud AI if local is not confident
       const sessionKey = await generateSessionKey();
       const { ciphertext, iv } = await encryptBinary(arrayBuffer, sessionKey);
-      
-      // 2. Export key and IV to base64 for transmission
+
+      // Export key and IV to base64 for headers
       const sessionKeyBase64 = await exportKeyToBase64(sessionKey);
       const ivArray = new Uint8Array(iv);
       let binary = '';
@@ -333,13 +334,6 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
         binary += String.fromCharCode(ivArray[i]);
       }
       const ivBase64 = btoa(binary);
-
-      // 3. Convert ciphertext to Base64 for JSON transmission
-      const encryptedBase64 = btoa(
-        Array.from(new Uint8Array(ciphertext))
-          .map(byte => String.fromCharCode(byte))
-          .join('')
-      );
 
       // Encrypt and upload permanent version for Visual Diary (in parallel)
       let vaultUrl = null;
@@ -367,25 +361,168 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
         }
       }
 
-      setImageUrl(vaultUrl || `data:image/webp;base64,${encryptedBase64}`);
+      setImageUrl(vaultUrl || null);
       setImageIv(vaultIv);
       setUploadProgress('streaming');
 
-      // 4. Send Encrypted Data + Session Key directly to AI
-      submit({ 
-        imageUrl: encryptedBase64, 
-        isEncrypted: true,
-        sessionKey: sessionKeyBase64,
-        iv: ivBase64,
-        mealTypeHint: selectedMealType 
-      });
+      // 3. Send Encrypted Binary Image + Session Key using FormData (not JSON)
+      // This prevents base64 images from appearing in request logs
+      // Note: We use fetch directly instead of submit() to support binary FormData
+      const encryptedImageBlob = new Blob([ciphertext], { type: 'application/octet-stream' });
+      const formData = new FormData();
+      formData.append('image', encryptedImageBlob, 'encrypted-image.bin');
+      formData.append('mealTypeHint', selectedMealType);
+      formData.append('isEncrypted', 'true');
+
+      // Start the AI analysis stream via fetch (useObject doesn't support FormData with custom headers)
+      try {
+        const response = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: {
+            'x-session-key': sessionKeyBase64,
+            'x-session-iv': ivBase64
+          },
+          body: formData
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Analysis failed');
+        }
+
+        // Read the streaming response
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('No response body');
+
+        let accumulatedText = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          accumulatedText += new TextDecoder().decode(value);
+          
+          // Try to parse partial JSON for streaming updates
+          try {
+            const lines = accumulatedText.split('\n').filter(line => line.trim());
+            const lastLine = lines[lines.length - 1];
+            if (lastLine.startsWith('data: ')) {
+              const jsonStr = lastLine.slice(6);
+              const parsed = JSON.parse(jsonStr);
+              if (parsed.items && Array.isArray(parsed.items)) {
+                // Update draft items as they stream in
+                const streamingItems = parsed.items.map((item: {
+                  name: string;
+                  calories?: number;
+                  protein_g?: number;
+                  carbs_g?: number;
+                  fat_g?: number;
+                  source?: string;
+                  notes?: string;
+                }) => ({
+                  foodName: item.name,
+                  calories: item.calories || 0,
+                  protein: item.protein_g || 0,
+                  carbs: item.carbs_g || 0,
+                  fat: item.fat_g || 0,
+                  source: item.source || 'AI_STREAM',
+                  servingGrams: 100,
+                  isEnhancing: true,
+                  notes: item.notes,
+                }));
+                setDraftItems(streamingItems);
+              }
+            }
+          } catch {
+            // Ignore parse errors during streaming
+          }
+        }
+
+        // Final parse of complete response
+        const finalLines = accumulatedText.split('\n').filter(line => line.trim());
+        for (const line of finalLines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const jsonStr = line.slice(6);
+              const parsed = JSON.parse(jsonStr);
+              if (parsed.items && Array.isArray(parsed.items)) {
+                const aiItems = parsed.items.map((item: {
+                  name: string;
+                  calories?: number;
+                  protein_g?: number;
+                  carbs_g?: number;
+                  fat_g?: number;
+                  source?: string;
+                  notes?: string;
+                  usdaMatch?: { fdcId: number; description: string };
+                  numeric_quantity?: number;
+                  unit?: string;
+                }) => ({
+                  foodName: item.name,
+                  calories: item.calories || 0,
+                  protein: item.protein_g || 0,
+                  carbs: item.carbs_g || 0,
+                  fat: item.fat_g || 0,
+                  source: item.source || 'AI_ESTIMATE',
+                  servingGrams: 100,
+                  numericQuantity: item.numeric_quantity,
+                  unit: item.unit,
+                  isEnhancing: true,
+                  notes: item.notes,
+                  usdaMatch: item.usdaMatch,
+                }));
+                setDraftItems(aiItems);
+                setUploadProgress('review');
+
+                // Enrich with USDA data
+                try {
+                  const res = await fetch('/api/food/usda/batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ items: aiItems }),
+                  });
+
+                  if (res.ok) {
+                    const enrichedData = await res.json();
+                    setDraftItems(enrichedData.items.map((item: DraftItem) => ({
+                      foodName: item.foodName,
+                      calories: item.calories,
+                      protein: item.protein,
+                      carbs: item.carbs,
+                      fat: item.fat,
+                      source: item.source || 'USDA',
+                      servingGrams: 100,
+                      numericQuantity: item.numericQuantity || 1,
+                      unit: item.unit || 'serving',
+                      isEnhancing: false,
+                      notes: item.notes,
+                      usdaMatch: item.usdaMatch,
+                    })));
+                  } else {
+                    setDraftItems(aiItems.map((item: DraftItem) => ({ ...item, isEnhancing: false })));
+                  }
+                } catch (err) {
+                  console.error('USDA enrichment failed:', err);
+                  setDraftItems(aiItems.map((item: DraftItem) => ({ ...item, isEnhancing: false })));
+                }
+                break;
+              }
+            } catch {
+              // Continue parsing
+            }
+          }
+        }
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Analysis failed';
+        setUploadError(errorMessage);
+        setUploadProgress('idle');
+        onError?.(errorMessage);
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Upload failed';
       setUploadError(errorMessage);
       setUploadProgress('idle');
       onError?.(errorMessage);
     }
-  }, [selectedFile, previewUrl, selectedMealType, isOnline, queueImage, onError, submit, isReady, vaultKey, encryptBinary, generateSessionKey, exportKeyToBase64, enrichItemsWithUsda]);
+  }, [selectedFile, previewUrl, selectedMealType, isOnline, queueImage, onError, isReady, vaultKey, encryptBinary, generateSessionKey, exportKeyToBase64, enrichItemsWithUsda]);
 
   const handleSaveDraft = useCallback(async () => {
     if (draftItems.length === 0) return;

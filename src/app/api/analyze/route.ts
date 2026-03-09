@@ -94,10 +94,26 @@ export async function POST(request: NextRequest) {
     // Decrypt if necessary
     if (isEncrypted && imageSource && sessionKeyBase64 && ivBase64) {
       try {
-        const ciphertext = typeof imageSource === 'string' 
-          ? Buffer.from(imageSource.split(',')[1] || imageSource, 'base64')
-          : Buffer.from(imageSource instanceof ArrayBuffer ? new Uint8Array(imageSource) : imageSource);
+        // Handle both binary (FormData) and base64 (JSON) image sources
+        let ciphertext: ArrayBuffer;
         
+        if (imageSource instanceof ArrayBuffer) {
+          // Binary data from FormData - already an ArrayBuffer
+          ciphertext = imageSource;
+        } else if (imageSource instanceof Uint8Array) {
+          // Uint8Array from formData arrayBuffer()
+          ciphertext = imageSource.buffer.slice(
+            imageSource.byteOffset,
+            imageSource.byteOffset + imageSource.byteLength
+          ) as ArrayBuffer;
+        } else if (typeof imageSource === 'string') {
+          // Base64 from JSON body (legacy support)
+          const base64Data = imageSource.split(',')[1] || imageSource;
+          ciphertext = new Uint8Array(Buffer.from(base64Data, 'base64')).buffer as ArrayBuffer;
+        } else {
+          throw new Error('Invalid encrypted image format');
+        }
+
         const keyBuffer = Buffer.from(sessionKeyBase64, 'base64');
         const ivBuffer = Buffer.from(ivBase64, 'base64');
 
