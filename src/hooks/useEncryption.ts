@@ -57,6 +57,7 @@ interface UseEncryptionReturn {
  */
 export function useEncryption(): UseEncryptionReturn {
   const [key, setKey] = useState<CryptoKey | null>(null);
+  const [isInitializing, setIsInitializing] = useState(true);
   const [isSupported, setIsSupported] = useState(false);
   const [isBiometricsSupported, setIsBiometricsSupported] = useState(false);
   const [hasBiometricKey, setHasBiometricKey] = useState(false);
@@ -162,7 +163,10 @@ export function useEncryption(): UseEncryptionReturn {
       const exportedWrappingKey = sessionStorage.getItem(SESSION_PERSISTENCE_KEY);
       const wrappedDataStr = localStorage.getItem(WRAPPED_VAULT_KEY_STORAGE);
 
-      if (!exportedWrappingKey || !wrappedDataStr) return;
+      if (!exportedWrappingKey || !wrappedDataStr) {
+        setIsInitializing(false);
+        return;
+      }
 
       const wrappedData = JSON.parse(wrappedDataStr);
 
@@ -197,6 +201,8 @@ export function useEncryption(): UseEncryptionReturn {
       // Clean up corrupted session
       sessionStorage.removeItem(SESSION_PERSISTENCE_KEY);
       localStorage.removeItem(WRAPPED_VAULT_KEY_STORAGE);
+    } finally {
+      setIsInitializing(false);
     }
   }, [getOrCreateDeviceKey, decryptBinaryData]);
 
@@ -320,7 +326,7 @@ export function useEncryption(): UseEncryptionReturn {
   }, []);
 
   return {
-    isReady: !!key || !isSupported,
+    isReady: !isInitializing,
     isSupported,
     isBiometricsSupported,
     hasBiometricKey,

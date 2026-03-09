@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { useSession } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,6 +21,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Scale, TrendingUp, TrendingDown, Minus, Loader2, Trash2 } from 'lucide-react';
+import { db } from '@/lib/db-local';
 
 interface UserTarget {
   userId: string;
@@ -32,14 +35,8 @@ interface UserTarget {
   highCarbs?: boolean;
 }
 
-interface WeightEntry {
-  date: string;
-  weight: number;
-  highSodium?: boolean;
-  highCarbs?: boolean;
-}
-
 export function WeightTracker() {
+  const { data: session } = useSession();
   const [open, setOpen] = useState(false);
   const [weight, setWeight] = useState('');
   const [highSodium, setHighSodium] = useState(false);
@@ -48,42 +45,28 @@ export function WeightTracker() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-  const [weightHistory, setWeightHistory] = useState<WeightEntry[]>([]);
-  const [fetchingHistory, setFetchingHistory] = useState(false);
 
-  // Fetch weight history when dialog opens
-  const fetchWeightHistory = useCallback(async () => {
-    try {
-      setFetchingHistory(true);
-      const response = await fetch('/api/targets');
-      const data = await response.json();
+  // Reactive local query replaces manual fetch
+  const weightHistory = useLiveQuery(
+    async () => {
+      if (!session?.user?.id) return [];
+      return await db.userTargets
+        .where('userId')
+        .equals(session.user.id)
+        .filter(t => t.weightRecord !== null)
+        .toArray();
+    },
+    [session?.user?.id]
+  ) || [];
 
-      if (data.targets) {
-        const weights = data.targets
-          .filter((t: UserTarget) => t.weightRecord !== null)
-          .map((t: UserTarget) => ({
-            date: t.date,
-            weight: t.weightRecord as number,
-            highSodium: t.highSodium,
-            highCarbs: t.highCarbs,
-          }))
-          .sort((a: WeightEntry, b: WeightEntry) => 
-            new Date(a.date).getTime() - new Date(b.date).getTime()
-          );
-        setWeightHistory(weights);
-      }
-    } catch (err) {
-      console.error('Failed to fetch weight history:', err);
-    } finally {
-      setFetchingHistory(false);
-    }
-  }, []);
+  // Derived state for the UI
+  const sortedHistory = [...weightHistory].sort((a, b) =>
+    new Date(a.date).getTime() - new Date(b.date).getTime()
+  );
 
-  useEffect(() => {
-    if (open) {
-      fetchWeightHistory();
-    }
-  }, [open, fetchWeightHistory]);
+  const latestWeight = sortedHistory.length > 0
+    ? sortedHistory[sortedHistory.length - 1]
+    : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -120,7 +103,6 @@ export function WeightTracker() {
       setWeight('');
       setHighSodium(false);
       setHighCarbs(false);
-      fetchWeightHistory();
 
       // Close dialog after success
       setTimeout(() => {
@@ -145,19 +127,18 @@ export function WeightTracker() {
       if (!response.ok) {
         throw new Error('Failed to delete entry');
       }
-
-      fetchWeightHistory();
+      // No need to manually refresh - useLiveQuery will update automatically
     } catch (err) {
       console.error('Delete error:', err);
     }
   };
 
   const getWeightChange = () => {
-    if (weightHistory.length < 2) return null;
+    if (sortedHistory.length < 2) return null;
 
-    const latest = weightHistory[weightHistory.length - 1];
-    const previous = weightHistory[weightHistory.length - 2];
-    const change = latest.weight - previous.weight;
+    const latest = sortedHistory[sortedHistory.length - 1];
+    const previous = sortedHistory[sortedHistory.length - 2];
+    const change = (latest.weightRecord ?? 0) - (previous.weightRecord ?? 0);
 
     return {
       value: Math.abs(change).toFixed(1),
@@ -167,7 +148,6 @@ export function WeightTracker() {
   };
 
   const weightChange = getWeightChange();
-  const latestWeight = weightHistory.length > 0 ? weightHistory[weightHistory.length - 1] : null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -181,14 +161,10 @@ export function WeightTracker() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {fetchingHistory ? (
-              <div className="flex h-20 items-center justify-center">
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-              </div>
-            ) : latestWeight ? (
+            {latestWeight ? (
               <div className="space-y-2">
                 <div className="flex items-baseline justify-between">
-                  <span className="text-2xl font-bold">{latestWeight.weight.toFixed(1)}</span>
+                  <span className="text-2xl font-bold">{latestWeight.weightRecord!.toFixed(1)}</span>
                   <span className="text-sm text-muted-foreground">kg</span>
                 </div>
                 <div className="text-xs text-muted-foreground">
@@ -196,7 +172,7 @@ export function WeightTracker() {
                 </div>
                 {weightChange && (
                   <div className={`flex items-center gap-1 text-xs ${
-                    weightChange.isIncrease ? 'text-red-500' : 
+                    weightChange.isIncrease ? 'text-red-500' :
                     weightChange.isDecrease ? 'text-green-500' : 'text-muted-foreground'
                   }`}>
                     {weightChange.isIncrease ? (
@@ -228,14 +204,14 @@ export function WeightTracker() {
 
         <div className="space-y-4 py-4">
           {/* Weight History Summary */}
-          {weightHistory.length > 0 && (
+          {sortedHistory.length > 0 && (
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm">Recent History</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="max-h-40 overflow-y-auto space-y-2">
-                  {weightHistory.slice(-5).reverse().map((entry) => (
+                  {sortedHistory.slice(-5).reverse().map((entry) => (
                     <div
                       key={entry.date}
                       className="flex items-center justify-between text-sm"
@@ -255,7 +231,7 @@ export function WeightTracker() {
                         )}
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="font-medium">{entry.weight.toFixed(1)} kg</span>
+                        <span className="font-medium">{entry.weightRecord!.toFixed(1)} kg</span>
                         <Button
                           variant="ghost"
                           size="sm"
