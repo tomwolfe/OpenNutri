@@ -1,13 +1,24 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { WifiOff } from 'lucide-react';
+import { WifiOff, Lock } from 'lucide-react';
 import { useOfflineQueue } from '@/hooks/use-offline-queue';
 import { useAiAnalysis } from '@/hooks/use-ai-analysis';
 import { usePersistence } from '@/hooks/use-persistence';
+import { useEncryption } from '@/hooks/useEncryption';
 import { DiscoveryMode, EntryMode, SearchResult } from '@/components/dashboard/discovery-mode';
 import { ReviewMode } from '@/components/dashboard/review-mode';
 import { DraftItem } from '@/types/food';
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 interface UniversalEntryProps {
   onComplete?: () => void;
@@ -18,7 +29,11 @@ type UploadProgress = 'idle' | 'uploading' | 'streaming' | 'review' | 'complete'
 
 export function UniversalEntry({ onComplete, onError }: UniversalEntryProps) {
   const { isAvailable: isOnline } = useOfflineQueue();
-  
+  const { vaultKey, unlockVault, isReady } = useEncryption();
+  const [isUnlocking, setIsUnlocking] = useState(false);
+  const [unlockPassword, setUnlockPassword] = useState('');
+  const [unlockError, setUnlockError] = useState<string | null>(null);
+
   // Local UI State
   const [mode, setMode] = useState<EntryMode>('text');
   const [searchQuery, setSearchQuery] = useState('');
@@ -30,6 +45,37 @@ export function UniversalEntry({ onComplete, onError }: UniversalEntryProps) {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
 
+  // Check if vault needs unlocking
+  const needsUnlock = isReady && !vaultKey;
+
+  const handleUnlock = async () => {
+    if (!unlockPassword) return;
+    setIsUnlocking(true);
+    setUnlockError(null);
+
+    try {
+      const res = await fetch('/api/auth/keys');
+      if (!res.ok) {
+        throw new Error('Failed to fetch encryption keys');
+      }
+      const keys = await res.json();
+
+      await unlockVault(
+        unlockPassword,
+        keys.salt,
+        keys.encryptedVaultKey,
+        keys.encryptionIv
+      );
+
+      setUnlockPassword('');
+      setIsUnlocking(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Incorrect password';
+      setUnlockError(message);
+      setIsUnlocking(false);
+    }
+  };
+
   const { saveLog, isSaving } = usePersistence({
     onSuccess: () => {
       setUploadProgress('complete');
@@ -37,8 +83,12 @@ export function UniversalEntry({ onComplete, onError }: UniversalEntryProps) {
     },
     onError: (error) => {
       console.error('Food logging failed:', error);
+      // If vault is locked, show unlock prompt
+      if (error.includes('Vault is locked')) {
+        setUnlockError('Please unlock your vault to log food');
+        return;
+      }
       // Show error to user via alert (simple approach)
-      // In production, you might want to use a toast notification system
       alert(`Failed to log meal: ${error}. Please try again.`);
       setUploadProgress('review'); // Allow retry
     }
@@ -127,36 +177,92 @@ export function UniversalEntry({ onComplete, onError }: UniversalEntryProps) {
         </div>
       )}
 
-      <DiscoveryMode
-        mode={mode}
-        onModeChange={setMode}
-        searchQuery={searchQuery}
-        onSearchQueryChange={setSearchQuery}
-        isSearching={false} // Managed inside DiscoveryMode now
-        isStreaming={isStreaming}
-        onSmartTextSubmit={() => analyzeText(searchQuery)}
-        onFileUpload={handleFileUpload}
-        onBarcodeFound={handleBarcodeFound}
-        onAddFromSearch={handleAddFromSearch}
-        onStartVoice={handleStartVoice}
-        isListening={isListening}
-        transcript={transcript}
-      />
+      {/* Vault Unlock Prompt */}
+      {needsUnlock && (
+        <Card className="border-primary/20">
+          <CardHeader className="pb-3">
+            <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
+              <Lock className="h-5 w-5 text-primary" />
+            </div>
+            <CardTitle className="text-lg text-center">Unlock Your Vault</CardTitle>
+            <CardDescription className="text-center">
+              Enter your password to decrypt your data and log food
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {unlockError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+                {unlockError}
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="unlock-password">Password</Label>
+              <Input
+                id="unlock-password"
+                type="password"
+                placeholder="Enter your password"
+                value={unlockPassword}
+                onChange={(e) => setUnlockPassword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
+                autoFocus
+              />
+            </div>
+            <Button
+              onClick={handleUnlock}
+              disabled={isUnlocking || !unlockPassword}
+              className="w-full"
+            >
+              {isUnlocking ? (
+                <>
+                  <span className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  Unlocking...
+                </>
+              ) : (
+                <>
+                  <Lock className="mr-2 h-4 w-4" />
+                  Unlock Vault
+                </>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
-      <ReviewMode
-        items={items}
-        previewUrl={previewUrl}
-        compressionStats={compressionStats}
-        uploadProgress={uploadProgress}
-        isStreaming={isStreaming}
-        isSaving={isSaving}
-        selectedMealType={selectedMealType}
-        onUpdateItems={setItems}
-        onUpdateMealType={setSelectedMealType}
-        onSave={() => saveLog(items, selectedMealType, imageUrl, imageIv)}
-        onAddItem={() => setItems([...items, { foodName: '', calories: 0, protein: 0, carbs: 0, fat: 0, source: 'MANUAL', servingGrams: 100 }])}
-        onRemoveItem={(index) => setItems(items.filter((_, i) => i !== index))}
-      />
+      {/* Entry Mode - hidden when vault needs unlocking */}
+      {!needsUnlock && (
+        <>
+          <DiscoveryMode
+            mode={mode}
+            onModeChange={setMode}
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+            isSearching={false}
+            isStreaming={isStreaming}
+            onSmartTextSubmit={() => analyzeText(searchQuery)}
+            onFileUpload={handleFileUpload}
+            onBarcodeFound={handleBarcodeFound}
+            onAddFromSearch={handleAddFromSearch}
+            onStartVoice={handleStartVoice}
+            isListening={isListening}
+            transcript={transcript}
+          />
+
+          <ReviewMode
+            items={items}
+            previewUrl={previewUrl}
+            compressionStats={compressionStats}
+            uploadProgress={uploadProgress}
+            isStreaming={isStreaming}
+            isSaving={isSaving}
+            selectedMealType={selectedMealType}
+            onUpdateItems={setItems}
+            onUpdateMealType={setSelectedMealType}
+            onSave={() => saveLog(items, selectedMealType, imageUrl, imageIv)}
+            onAddItem={() => setItems([...items, { foodName: '', calories: 0, protein: 0, carbs: 0, fat: 0, source: 'MANUAL', servingGrams: 100 }])}
+            onRemoveItem={(index) => setItems(items.filter((_, i) => i !== index))}
+          />
+        </>
+      )}
     </div>
   );
 }
