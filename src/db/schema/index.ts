@@ -17,6 +17,7 @@ import {
   index,
   primaryKey,
   vector,
+  jsonb,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
@@ -351,7 +352,7 @@ export const communityFoods = pgTable('community_foods', {
   verified: boolean('verified').default(false),
   // Metadata
   source: text('source'), // 'user_submission', 'imported', etc.
-  metadata: text('metadata', { mode: 'json' }), // Additional JSON data
+  metadata: jsonb('metadata'), // Additional JSON data
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({

@@ -20,6 +20,7 @@ export const localeNames: Record<Locale, string> = {
 };
 
 export default getRequestConfig(async ({locale}) => ({
+  locale: locale as string,
   // Can be imported from a shared config
   messages: (await import(`./messages/${locale}.json`)).default
 }));

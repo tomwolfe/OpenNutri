@@ -38,36 +38,44 @@ export async function GET(request: NextRequest) {
 
     const offset = (page - 1) * limit;
 
-    // Build query
-    let foodsQuery = db
-      .select()
-      .from(communityFoods)
-      .where(eq(communityFoods.status, status));
-
-    // Add search filter
-    if (query) {
-      foodsQuery = foodsQuery.where(
-        sql`${communityFoods.name} ILIKE ${`%${query}%`} OR ${communityFoods.description} ILIKE ${`%${query}%`}`
-      );
-    }
-
-    // Add category filter
+    // Build WHERE conditions
+    const whereConditions = [];
+    
+    // Status filter (always apply)
+    whereConditions.push(eq(communityFoods.status, status));
+    
+    // Optional filters
     if (category) {
-      foodsQuery = foodsQuery.where(eq(communityFoods.category, category));
+      whereConditions.push(eq(communityFoods.category, category));
     }
-
-    // Add language filter
+    
     if (language) {
-      foodsQuery = foodsQuery.where(eq(communityFoods.language, language));
+      whereConditions.push(eq(communityFoods.language, language));
     }
 
-    // Add sorting (by upvotes - downvotes)
-    foodsQuery = foodsQuery
-      .orderBy(desc(sql`${communityFoods.upvotes} - ${communityFoods.downvotes}`), desc(communityFoods.createdAt))
-      .limit(limit)
-      .offset(offset);
-
-    const foods = await foodsQuery;
+    // Execute query with filters
+    let foods;
+    if (query) {
+      // Text search requires SQL
+      foods = await db
+        .select()
+        .from(communityFoods)
+        .where(
+          sql`${communityFoods.name} ILIKE ${`%${query}%`} OR ${communityFoods.description} ILIKE ${`%${query}%`}`
+        )
+        .orderBy(desc(sql`${communityFoods.upvotes} - ${communityFoods.downvotes}`), desc(communityFoods.createdAt))
+        .limit(limit)
+        .offset(offset);
+    } else {
+      // No text search - use regular where
+      foods = await db
+        .select()
+        .from(communityFoods)
+        .where(whereConditions.reduce((acc, condition) => sql`${acc} AND ${condition}` as any, whereConditions[0]))
+        .orderBy(desc(sql`${communityFoods.upvotes} - ${communityFoods.downvotes}`), desc(communityFoods.createdAt))
+        .limit(limit)
+        .offset(offset);
+    }
 
     // Get total count
     const countResult = await db

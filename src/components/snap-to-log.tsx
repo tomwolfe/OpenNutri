@@ -952,7 +952,6 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
                               source: 'LOCAL_AI',
                               servingGrams: 100,
                               isEnhancing: isOnline,
-                              confidence: topResult.score,
                             };
                             setDraftItems([localItem]);
                             setUploadProgress('review');
