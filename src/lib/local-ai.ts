@@ -1,6 +1,6 @@
 /**
  * Local AI Inference Service
- * 
+ *
  * Proxies inference requests to a background Web Worker (Transformers.js).
  * Reduces main-thread load and avoids native module build errors.
  */
@@ -16,8 +16,24 @@ export interface ImageClassificationResult {
   };
 }
 
+export interface DeviceInfo {
+  type: 'webgpu' | 'webgpu-limited' | 'wasm' | 'none';
+  name?: string;
+  limits?: {
+    maxComputeWorkgroupStorageSize: number;
+    maxBufferSize: number;
+  };
+}
+
+export interface ProgressUpdate {
+  message: string;
+  progress: number; // 0-1
+}
+
 let worker: Worker | null = null;
 let classificationPromise: ((results: ImageClassificationResult[]) => void) | null = null;
+let progressCallback: ((update: ProgressUpdate) => void) | null = null;
+let deviceInfoCallback: ((info: DeviceInfo) => void) | null = null;
 
 /**
  * Initialize the AI Web Worker
@@ -25,23 +41,47 @@ let classificationPromise: ((results: ImageClassificationResult[]) => void) | nu
 export function getAiWorker(): Worker | null {
   if (typeof window === 'undefined') return null;
   if (worker) return worker;
-  
+
   try {
     worker = new Worker(new URL('../workers/ai.worker.ts', import.meta.url), {
       type: 'module',
     });
-    
+
     worker.onmessage = (event) => {
-      if (event.data.type === 'results' && classificationPromise) {
+      const { type } = event.data;
+      
+      if (type === 'results' && classificationPromise) {
         classificationPromise(event.data.results as ImageClassificationResult[]);
         classificationPromise = null;
+      } else if (type === 'progress' && progressCallback) {
+        progressCallback(event.data as ProgressUpdate);
+      } else if (type === 'device-info' && deviceInfoCallback) {
+        deviceInfoCallback(event.data.info as DeviceInfo);
       }
     };
-    
+
     return worker;
   } catch (error) {
     console.error('Failed to create AI worker:', error);
     return null;
+  }
+}
+
+/**
+ * Set progress callback for model loading updates
+ */
+export function onProgress(callback: (update: ProgressUpdate) => void) {
+  progressCallback = callback;
+}
+
+/**
+ * Set device info callback
+ */
+export function onDeviceInfo(callback: (info: DeviceInfo) => void) {
+  deviceInfoCallback = callback;
+  // Request immediate update if worker already initialized
+  if (worker) {
+    worker.postMessage({ type: 'get-device-info' });
   }
 }
 

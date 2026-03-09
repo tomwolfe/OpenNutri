@@ -28,7 +28,7 @@ const sql = neon(process.env.DATABASE_URL!);
 /**
  * Configuration
  */
-const MAX_AGE_HOURS = 24; // Delete images older than 24 hours (changed from 7 days)
+const MAX_AGE_HOURS = 1; // Delete images older than 1 hour (reduced from 24 hours for better privacy)
 const BATCH_SIZE = 100; // Process in batches to avoid rate limits
 
 /**
