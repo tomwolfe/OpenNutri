@@ -9,6 +9,8 @@ import { db } from '@/lib/db';
 import { foodLogs } from '@/db/schema';
 import { eq, and, gte, lt, desc } from 'drizzle-orm';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const session = await auth();

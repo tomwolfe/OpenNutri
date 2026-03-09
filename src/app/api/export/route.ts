@@ -12,6 +12,8 @@ import { db } from '@/lib/db';
 import { foodLogs, logItems, userTargets } from '@/db/schema';
 import { eq, desc } from 'drizzle-orm';
 
+export const dynamic = 'force-dynamic';
+
 /**
  * Export all user data as JSON
  */

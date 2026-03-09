@@ -6,6 +6,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { searchFoods, extractMacros } from '@/lib/usda';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;

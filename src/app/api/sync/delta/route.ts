@@ -21,6 +21,8 @@ import { db } from '@/lib/db';
 import { foodLogs, userTargets, userRecipes } from '@/db/schema';
 import { eq, and, gt } from 'drizzle-orm';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const session = await auth();

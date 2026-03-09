@@ -224,9 +224,11 @@ export async function unlockVaultWithMnemonic(
   const encrypted = await encrypt(arrayBufferToBase64(masterKey), baseKey);
 
   // Import the master key as a CryptoKey
+  // Copy to a fresh ArrayBuffer to avoid SharedArrayBuffer type issues
+  const keyBuffer = new Uint8Array(masterKey).buffer;
   const vaultKey = await crypto.subtle.importKey(
     'raw',
-    masterKey,
+    keyBuffer,
     { name: 'AES-GCM', length: 256 },
     false,
     ['encrypt', 'decrypt']

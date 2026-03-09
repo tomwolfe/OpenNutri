@@ -12,6 +12,8 @@ import { db } from '@/lib/db';
 import { userTargets, users } from '@/db/schema';
 import { eq, and, gte, lte } from 'drizzle-orm';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const session = await auth();
