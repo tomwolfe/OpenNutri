@@ -51,6 +51,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // CRITICAL: Log AI usage IMMEDIATELY after rate limit check
+    // This ensures every analysis attempt is counted, even if it fails mid-stream
+    // Prevents users from bypassing limits by canceling requests or exploiting errors
+    try {
+      await db.insert(aiUsage).values({ userId });
+    } catch (err) {
+      console.error('Failed to log AI usage:', err);
+      // Don't block the request - logging failure shouldn't prevent analysis
+      // But we continue anyway to ensure user experience isn't impacted
+    }
+
     // Determine request type
     const contentType = request.headers.get('content-type') || '';
 
@@ -150,9 +161,6 @@ export async function POST(request: NextRequest) {
 
     // Fetch recent foods for context
     const recentFoods = await fetchRecentFoods(userId);
-
-    // Log AI usage
-    await db.insert(aiUsage).values({ userId });
 
     // Call AI service
     let result;

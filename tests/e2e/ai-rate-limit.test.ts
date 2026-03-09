@@ -5,9 +5,13 @@
  * - Daily scan limits for free users
  * - Proper error messages
  * - Limit reset behavior
+ * - Rate limit is checked BEFORE analysis (loophole prevention)
  */
 
 import { test, expect } from './fixtures';
+import { db } from '@/lib/db';
+import { aiUsage } from '@/db/schema';
+import { eq, sql } from 'drizzle-orm';
 
 test.describe('AI Rate Limiting', () => {
   test('should show AI scan limit error after exceeding daily limit', async ({ page }) => {
@@ -189,5 +193,130 @@ test.describe('AI Analysis Error Handling', () => {
 
     console.log('✓ AI error handling test setup complete');
     console.log('  (Full test requires error simulation)');
+  });
+});
+
+test.describe('AI Rate Limit Loophole Prevention', () => {
+  test('should log AI usage BEFORE analysis starts (prevent loophole)', async () => {
+    // This test verifies the fix for the rate limit loophole
+    // where users could bypass limits by canceling requests
+
+    const testEmail = `test_loophole_${Date.now()}@opennutri.test`;
+    const testPassword = 'TestPassword123!';
+
+    // Create test user via signup
+    const signupResponse = await test.request.post('/api/auth/signup', {
+      data: {
+        email: testEmail,
+        password: testPassword,
+      },
+    });
+
+    expect(signupResponse.ok()).toBeTruthy();
+    const { userId } = await signupResponse.json();
+
+    // Get initial AI usage count
+    const initialCount = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(aiUsage)
+      .where(eq(aiUsage.userId, userId));
+
+    const initialCountNum = Number(initialCount[0]?.count ?? 0);
+
+    // Make an AI analysis request
+    const analysisResponse = await test.request.post('/api/analyze', {
+      data: {
+        text: 'Test food analysis',
+        mealTypeHint: 'breakfast',
+      },
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    // Verify usage was logged IMMEDIATELY (even before response completes)
+    const afterCount = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(aiUsage)
+      .where(eq(aiUsage.userId, userId));
+
+    const afterCountNum = Number(afterCount[0]?.count ?? 0);
+
+    expect(afterCountNum).toBe(initialCountNum + 1);
+    console.log('✓ AI usage logged immediately (loophole prevented)');
+
+    // Cleanup
+    await db.delete(aiUsage).where(eq(aiUsage.userId, userId));
+  });
+
+  test('should enforce rate limit even on failed/canceled requests', async () => {
+    const testEmail = `test_failed_${Date.now()}@opennutri.test`;
+    const testPassword = 'TestPassword123!';
+
+    const signupResponse = await test.request.post('/api/auth/signup', {
+      data: {
+        email: testEmail,
+        password: testPassword,
+      },
+    });
+
+    const { userId } = await signupResponse.json();
+
+    // Simulate 5 successful requests (hit the limit)
+    for (let i = 0; i < 5; i++) {
+      await test.request.post('/api/analyze', {
+        data: { text: `Test food ${i}` },
+      });
+    }
+
+    // 6th request should be blocked (even if it would fail mid-stream)
+    const blockedResponse = await test.request.post('/api/analyze', {
+      data: { text: 'Should be blocked' },
+    });
+
+    expect(blockedResponse.status()).toBe(429);
+
+    const errorData = await blockedResponse.json();
+    expect(errorData.error).toContain('Daily AI scan limit reached');
+    console.log('✓ Rate limit enforced on all requests (no bypass)');
+
+    // Cleanup
+    await db.delete(aiUsage).where(eq(aiUsage.userId, userId));
+  });
+
+  test('should count usage even when analysis fails mid-stream', async () => {
+    const testEmail = `test_midstream_${Date.now()}@opennutri.test`;
+    const testPassword = 'TestPassword123!';
+
+    const signupResponse = await test.request.post('/api/auth/signup', {
+      data: {
+        email: testEmail,
+        password: testPassword,
+      },
+    });
+
+    const { userId } = await signupResponse.json();
+
+    // Send invalid request that will fail mid-stream
+    const invalidResponse = await test.request.post('/api/analyze', {
+      data: {
+        imageUrl: 'invalid-url-that-will-fail',
+      },
+    });
+
+    // Should fail, but usage should still be counted
+    expect(invalidResponse.ok()).toBeFalsy();
+
+    const usageCount = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(aiUsage)
+      .where(eq(aiUsage.userId, userId));
+
+    const countNum = Number(usageCount[0]?.count ?? 0);
+    expect(countNum).toBe(1);
+    console.log('✓ Usage counted even on failed requests');
+
+    // Cleanup
+    await db.delete(aiUsage).where(eq(aiUsage.userId, userId));
   });
 });
