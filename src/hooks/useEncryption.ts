@@ -173,8 +173,12 @@ export function useEncryption(): UseEncryptionReturn {
       // Get device key to decrypt the wrapped master key
       const deviceKey = await getOrCreateDeviceKey();
 
+      // FIX: Import the library function directly instead of using the state-dependent decryptBinaryData
+      // This breaks the circular dependency that caused the infinite render loop
+      const { decryptBinary } = await import('@/lib/encryption');
+
       // Decrypt the wrapped key data
-      const decryptedJson = await decryptBinaryData(
+      const decryptedJson = await decryptBinary(
         base64ToArrayBuffer(wrappedData.ciphertext),
         base64ToArrayBuffer(wrappedData.iv),
         deviceKey
@@ -204,7 +208,7 @@ export function useEncryption(): UseEncryptionReturn {
     } finally {
       setIsInitializing(false);
     }
-  }, [getOrCreateDeviceKey, decryptBinaryData]);
+  }, [getOrCreateDeviceKey]);
 
   // Check Web Crypto API support and resume session on mount
   useEffect(() => {
