@@ -129,12 +129,14 @@ export async function generateRecoveryKit(
   const salt = new Uint8Array(base64ToArrayBuffer(keyData.salt));
   const baseKey = await deriveKey(password, salt);
 
-  // Decrypt the master key
-  const decryptedMasterKey = await decrypt<Uint8Array>(
+  // Decrypt the master key (it's now stored as a base64 string)
+  const decryptedMasterKeyBase64 = await decrypt<string>(
     keyData.encryptedKey,
     keyData.iv,
     baseKey
   );
+
+  const decryptedMasterKey = new Uint8Array(base64ToArrayBuffer(decryptedMasterKeyBase64));
 
   // Convert master key to mnemonics
   const mnemonics = masterKeyToMnemonic(decryptedMasterKey);
@@ -177,8 +179,8 @@ export async function recoverVaultKeyFromMnemonic(
   // Derive base key from password
   const baseKey = await deriveKey(password, salt);
 
-  // Encrypt the master key with the derived key
-  const encrypted = await encrypt(masterKey, baseKey);
+  // Encrypt the master key (base64 encoded) with the derived key
+  const encrypted = await encrypt(arrayBufferToBase64(masterKey), baseKey);
 
   return {
     salt: arrayBufferToBase64(salt),
@@ -218,13 +220,13 @@ export async function unlockVaultWithMnemonic(
   // Derive base key from NEW password
   const baseKey = await deriveKey(newpassword, salt);
 
-  // Encrypt the master key with the new derived key
-  const encrypted = await encrypt(masterKey, baseKey);
+  // Encrypt the master key (base64 encoded) with the new derived key
+  const encrypted = await encrypt(arrayBufferToBase64(masterKey), baseKey);
 
   // Import the master key as a CryptoKey
   const vaultKey = await crypto.subtle.importKey(
     'raw',
-    masterKey.buffer as ArrayBuffer,
+    masterKey,
     { name: 'AES-GCM', length: 256 },
     false,
     ['encrypt', 'decrypt']

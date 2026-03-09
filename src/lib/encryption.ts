@@ -159,8 +159,8 @@ export async function generateVaultKey(email: string, password: string): Promise
   // Generate a random master key
   const masterKey = crypto.getRandomValues(new Uint8Array(32));
   
-  // Encrypt the master key with the derived key
-  const encrypted = await encrypt(masterKey, baseKey);
+  // Encrypt the master key (base64 encoded) with the derived key
+  const encrypted = await encrypt(arrayBufferToBase64(masterKey), baseKey);
   
   return {
     salt: arrayBufferToBase64(salt),
@@ -187,17 +187,19 @@ export async function getVaultKey(
   const salt = new Uint8Array(base64ToArrayBuffer(storedSalt));
   const baseKey = await deriveKey(password, salt);
   
-  // Decrypt the master key
-  const decryptedMasterKey = await decrypt<Uint8Array>(
+  // Decrypt the master key (it was stored as a base64 string)
+  const decryptedMasterKeyBase64 = await decrypt<string>(
     encryptedKey,
     iv,
     baseKey
   );
   
+  const decryptedMasterKey = base64ToArrayBuffer(decryptedMasterKeyBase64);
+  
   // Import the decrypted master key as a CryptoKey
   return crypto.subtle.importKey(
     'raw',
-    decryptedMasterKey.buffer as ArrayBuffer,
+    decryptedMasterKey,
     { name: ENCRYPTION_ALGORITHM, length: KEY_LENGTH },
     false,
     ['encrypt', 'decrypt']
