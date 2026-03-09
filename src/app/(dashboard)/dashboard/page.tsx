@@ -276,12 +276,12 @@ export default function DashboardPage() {
                   if (!open) setEditingLog(null);
                 }}
               >
-                <DialogTrigger asChild>
+                <DialogTrigger render={
                   <Button className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-md">
                     <Plus className="mr-2 h-4 w-4" />
                     Log Food
                   </Button>
-                </DialogTrigger>
+                } />
                 <DialogContent className="max-w-2xl overflow-y-auto max-h-[90vh]">
                   <DialogHeader>
                     <DialogTitle>{editingLog ? 'Edit Meal' : 'Log Food'}</DialogTitle>
