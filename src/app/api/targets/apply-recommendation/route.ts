@@ -11,7 +11,7 @@ import { db } from '@/lib/db';
 import { userTargets } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 interface ApplyRecommendationBody {
   /** Target date (YYYY-MM-DD), defaults to today */

@@ -183,7 +183,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
     setTranscript('');
     const recognition = new SpeechRecognition();
     recognition.lang = 'en-US';
-    recognition.onresult = (event: { results: Array<{ [key: number]: { transcript: string } }> }) => {
+    recognition.onresult = (event: { results: { [key: number]: { [key: number]: { transcript: string } } } }) => {
       const text = event.results[0][0].transcript;
       setTranscript(text);
       handleVoiceSubmit(text);
@@ -286,13 +286,13 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
 
       if (shouldSkipCloud) {
         const topResult = localResults![0];
-        
+
         // Tier 2: Cached Knowledge (Check user favorites)
         const favoriteId = topResult.label.toLowerCase().trim();
-        const favorite = await db.userFavorites.get(favoriteId);
+        const favorite = await db.foodFavorites.get(favoriteId);
 
         const localItem: DraftItem = {
-          foodName: favorite?.foodName || topResult.label,
+          foodName: favorite?.description || topResult.label,
           calories: favorite?.calories || topResult.macros?.calories || 0,
           protein: favorite?.protein || topResult.macros?.protein || 0,
           carbs: favorite?.carbs || topResult.macros?.carbs || 0,
@@ -532,16 +532,17 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
       for (const item of draftItems) {
         if (!item.foodName) continue;
         const favoriteId = item.foodName.toLowerCase().trim();
-        const existing = await db.userFavorites.get(favoriteId);
+        const existing = await db.foodFavorites.get(favoriteId);
         if (existing) {
-          await db.userFavorites.update(favoriteId, {
+          await db.foodFavorites.update(favoriteId, {
             frequency: (existing.frequency || 1) + 1,
             lastUsed: new Date()
           });
         } else {
-          await db.userFavorites.add({
+          await db.foodFavorites.add({
             id: favoriteId,
-            foodName: item.foodName,
+            fdcId: item.foodName,
+            description: item.foodName,
             calories: item.calories,
             protein: item.protein,
             carbs: item.carbs,

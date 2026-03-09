@@ -11,7 +11,7 @@ import { db } from '@/lib/db';
 import { userTargets } from '@/db/schema';
 import { eq, and, gte, lte, desc } from 'drizzle-orm';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 interface TargetBody {
   date?: string;

@@ -141,11 +141,13 @@ export default function SharedVaultPage() {
         </div>
 
         {/* Use the existing Coaching Dashboard component, but pass the shared vault key */}
-        <CoachingDashboard 
-          userId={shareData.ownerId} 
-          sharedVaultKey={vaultKey} 
-          isSharedView={true}
-        />
+        {shareData && (
+          <CoachingDashboard 
+            userId={shareData.ownerId} 
+            sharedVaultKey={vaultKey} 
+            isSharedView={true}
+          />
+        )}
       </div>
     </div>
   );

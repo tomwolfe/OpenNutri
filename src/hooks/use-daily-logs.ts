@@ -51,7 +51,7 @@ export interface UseDailyLogsReturn {
   dailyTotals: DailyTotals;
   isLoading: boolean;
   error: string | null;
-  triggerSync: (userId: string, vaultKey: CryptoKey | null) => Promise<{ conflicts?: SyncConflict[] }>;
+  triggerSync: (userId: string, vaultKey: CryptoKey | null) => Promise<{ success?: boolean; pulled?: number }>;
   removeLog: (logId: string) => Promise<boolean>;
   resolveConflicts: (conflicts: SyncConflict[], resolution: 'keep-local' | 'keep-server' | 'keep-newest') => Promise<void>;
 }
@@ -146,10 +146,10 @@ export function useDailyLogs(
   );
 
   // Trigger background sync
-  const triggerSync = async (syncUserId: string, syncVaultKey: CryptoKey | null): Promise<{ conflicts?: SyncConflict[] }> => {
+  const triggerSync = async (syncUserId: string, syncVaultKey: CryptoKey | null): Promise<{ success?: boolean; pulled?: number }> => {
     try {
       const result = await syncDelta(syncUserId, syncVaultKey);
-      return { conflicts: result.conflicts };
+      return { success: result.success, pulled: result.pulled };
     } catch (err) {
       console.error('Sync error:', err);
       return {};
@@ -195,8 +195,8 @@ export function useDailyLogs(
           // Use the version with the most recent updatedAt timestamp
           const localLog = await db.foodLogs.get(conflict.id);
           const localUpdatedAt = localLog?.updatedAt || 0;
-          const serverUpdatedAt = conflict.serverData?.updatedAt || 0;
-          
+          const serverUpdatedAt = (conflict.serverData as any)?.updatedAt || 0;
+
           if (serverUpdatedAt > localUpdatedAt) {
             const response = await fetch(`/api/log/daily?id=${conflict.id}`);
             if (response.ok) {

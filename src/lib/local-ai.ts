@@ -66,7 +66,7 @@ export async function classifyFoodLocally(image: string | ImageData): Promise<Im
 export function needsCloudAnalysis(localResults: ImageClassificationResult[] | null): boolean {
   if (!localResults || localResults.length === 0) return true;
   
-  const hasWebGPU = typeof navigator !== 'undefined' && !!navigator.gpu;
+  const hasWebGPU = typeof navigator !== 'undefined' && !!(navigator as any).gpu;
   const topResult = localResults[0];
   
   // If we have WebGPU, we assume Moondream2 was used, which is significantly more accurate.

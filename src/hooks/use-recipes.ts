@@ -61,13 +61,26 @@ export function useRecipes() {
       const { ciphertext, iv } = await encryptBinary(data);
 
       // 3. Store in Dexie
+      const ciphertextArray = new Uint8Array(ciphertext);
+      const ivArray = new Uint8Array(iv);
+      let encryptedDataStr = '';
+      let ivStr = '';
+      for (let i = 0; i < ciphertextArray.byteLength; i++) {
+        encryptedDataStr += String.fromCharCode(ciphertextArray[i]);
+      }
+      for (let i = 0; i < ivArray.byteLength; i++) {
+        ivStr += String.fromCharCode(ivArray[i]);
+      }
+
       const recipe: LocalUserRecipe = {
         id: crypto.randomUUID(),
         userId: session.user.id,
         name: params.name,
         description: params.description,
-        encryptedData: btoa(String.fromCharCode(...new Uint8Array(ciphertext))),
-        encryptionIv: btoa(String.fromCharCode(...iv)),
+        encryptedData: btoa(encryptedDataStr),
+        encryptionIv: btoa(ivStr),
+        version: 1,
+        deviceId: typeof window !== 'undefined' ? localStorage.getItem('opennutri_device_id') : null,
         updatedAt: new Date().toISOString(),
         synced: 0,
       };

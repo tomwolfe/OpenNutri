@@ -15,7 +15,7 @@ interface UsePersistenceOptions {
 export function usePersistence({ onSuccess, onError }: UsePersistenceOptions = {}) {
   const { data: session } = useSession();
   const { vaultKey, encryptLog } = useEncryption();
-  const { triggerSync } = useDailyLogs(new Date(), session?.user?.id, vaultKey);
+  const { triggerSync } = useDailyLogs(new Date(), session?.user?.id);
   const [isSaving, setIsSaving] = useState(false);
 
   const saveLog = useCallback(async (
@@ -101,16 +101,17 @@ export function usePersistence({ onSuccess, onError }: UsePersistenceOptions = {
       // 4. Update local favorites (background)
       for (const item of items) {
         const favoriteId = item.foodName.toLowerCase().trim();
-        const existing = await db.userFavorites.get(favoriteId);
+        const existing = await db.foodFavorites.get(favoriteId);
         if (existing) {
-          await db.userFavorites.update(favoriteId, {
+          await db.foodFavorites.update(favoriteId, {
             frequency: (existing.frequency || 1) + 1,
             lastUsed: new Date()
           });
         } else {
-          await db.userFavorites.add({
+          await db.foodFavorites.add({
             id: favoriteId,
-            foodName: item.foodName,
+            fdcId: item.foodName,
+            description: item.foodName,
             calories: item.calories,
             protein: item.protein,
             carbs: item.carbs,

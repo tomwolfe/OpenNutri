@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { experimental_useObject as useObject } from '@ai-sdk/react';
 import { FoodAnalysisSchema, DraftItem, FoodAnalysis } from '@/types/food';
 import { useEncryption } from '@/hooks/useEncryption';
 import { compressImage, blobToImageData } from '@/lib/image-utils';
 import { classifyFoodLocally } from '@/lib/local-ai';
+import { searchLocalHistory, addToLocalCache } from '@/lib/ai-local-semantic';
 
 interface UseAiAnalysisOptions {
   onItemsIdentified: (items: DraftItem[]) => void;
@@ -25,10 +26,14 @@ export function useAiAnalysis({
   const { encryptBinary, generateSessionKey, exportKeyToBase64, isReady, vaultKey } = useEncryption();
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageIv, setImageIv] = useState<string | null>(null);
+  
+  // Ref to hold dynamic headers for the next request
+  const headersRef = useRef<Record<string, string> | null>(null);
 
   const { submit, isLoading: isStreaming } = useObject({
     api: '/api/analyze',
     schema: FoodAnalysisSchema,
+    headers: () => headersRef.current ?? {},
     onFinish: async (event) => {
       if (event.object?.items) {
         const aiItems: DraftItem[] = event.object.items.map((item: FoodAnalysis['items'][number]) => ({
@@ -45,10 +50,6 @@ export function useAiAnalysis({
           notes: item?.notes,
           usdaMatch: item?.usdaMatch,
         }));
-        
-import { searchLocalHistory, addToLocalCache } from '@/lib/ai-local-semantic';
-
-// ... (existing interfaces)
 
         onItemsIdentified(aiItems);
         onUploadProgress?.('review');
@@ -187,15 +188,14 @@ import { searchLocalHistory, addToLocalCache } from '@/lib/ai-local-semantic';
       onUploadProgress?.('streaming');
 
       // Use headers for key distribution to prevent body logging
-      submit({ 
+      headersRef.current = {
+        'x-session-key': sessionKeyBase64,
+        'x-session-iv': ivBase64
+      };
+      submit({
         imageUrl: encryptedBase64,
-        mealTypeHint: mealType 
-      }, {
-        headers: {
-          'x-session-key': sessionKeyBase64,
-          'x-session-iv': ivBase64
-        }
-      } as { headers?: Record<string, string> }); // useObject types might need cast if headers not in options
+        mealTypeHint: mealType
+      });
     } catch (err) {
       console.error('AI Analysis upload failed', err);
       onUploadProgress?.('idle');

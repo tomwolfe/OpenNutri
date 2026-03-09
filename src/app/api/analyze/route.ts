@@ -16,7 +16,7 @@ import { db } from '@/lib/db';
 import { aiUsage } from '@/db/schema';
 import { deleteFoodImage } from '@/lib/blob';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 /**

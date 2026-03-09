@@ -22,8 +22,8 @@ function resolveLogConflict(
   const { mergedUpdate, mergedData } = mergeCrdt(
     localLog?.yjsData || null,
     serverLog.yjsData || null,
-    localLog || serverLog,
-    serverLog
+    (localLog || serverLog) as any,
+    serverLog as any
   );
 
   if (!localLog) return { mergedUpdate, mergedData: mergedData as Record<string, unknown> };
@@ -228,21 +228,20 @@ self.onmessage = async (event: MessageEvent) => {
             }
           }
           
-          for (const recipe of unsyncedRecipes) {
-            const hasConflict = serverConflicts.some((c) => c.type === 'recipe' && c.id === recipe.id);
-            if (!hasConflict) {
-              await db.userRecipes.update(recipe.id, {
-                synced: true,
-                version: (recipe.version || 0) + 1,
-                deviceId,
-              });
-              pushed++;
+            for (const recipe of unsyncedRecipes) {
+              const hasConflict = serverConflicts.some((c) => c.type === 'recipe' && c.id === recipe.id);
+              if (!hasConflict) {
+                await db.userRecipes.update(recipe.id, {
+                  synced: 1,
+                  version: (recipe.version || 0) + 1,
+                  deviceId,
+                });
+              }
             }
           }
         }
-      }
 
-      // 2. Pull
+        // 2. Pull
       const pullRes = await fetch(`/api/sync/delta?since=${lastSyncTimestamp}`);
       if (!pullRes.ok) throw new Error('Pull failed');
       const data = await pullRes.json();

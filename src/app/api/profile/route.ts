@@ -11,7 +11,7 @@ import { users, userTargets } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { calculateTDEEFromProfile } from '@/lib/tdee';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 /**
  * GET /api/profile

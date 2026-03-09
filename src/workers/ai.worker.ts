@@ -12,8 +12,8 @@ env.allowLocalModels = false;
 env.useBrowserCache = true;
 
 // Force WebGPU if available
-if (navigator.gpu) {
-  env.backends.onnx.wasm.proxy = false;
+if ((navigator as any).gpu && env.backends?.onnx?.wasm) {
+  (env.backends.onnx.wasm as any).proxy = false;
 }
 
 let classifier: any = null;
@@ -25,7 +25,7 @@ async function getClassifier() {
   
   try {
     // Attempt to use Moondream2 for high-quality vision analysis if WebGPU is available
-    if (navigator.gpu) {
+    if ((navigator as any).gpu) {
       console.log('WebGPU detected, loading Moondream2...');
       classifier = await pipeline('image-to-text', 'onnx-community/moondream2', {
         device: 'webgpu',
@@ -54,7 +54,7 @@ async function getEmbedder() {
   try {
     // all-MiniLM-L6-v2 is small (23MB) and efficient for embeddings
     embedder = await pipeline('feature-extraction', 'xenova/all-MiniLM-L6-v2', {
-      device: navigator.gpu ? 'webgpu' : 'wasm',
+      device: (navigator as any).gpu ? 'webgpu' : 'wasm',
     });
     return embedder;
   } catch (err) {
@@ -68,8 +68,37 @@ async function getEmbedder() {
 
 /**
  * Find the closest macro match for a label
+ * Returns per-100g macros for common items
  */
-// ... (keep getMacrosForLabel)
+function getMacrosForLabel(label: string): { calories: number; protein: number; carbs: number; fat: number } | null {
+  const lowercaseLabel = label.toLowerCase();
+  
+  // Hardcoded core dataset for fast matching in the worker
+  const coreFoods: Record<string, { calories: number; protein: number; carbs: number; fat: number }> = {
+    'apple': { calories: 52, protein: 0.3, carbs: 13.8, fat: 0.2 },
+    'banana': { calories: 89, protein: 1.1, carbs: 22.8, fat: 0.3 },
+    'chicken': { calories: 165, protein: 31, carbs: 0, fat: 3.6 },
+    'egg': { calories: 155, protein: 12.6, carbs: 1.1, fat: 10.6 },
+    'oatmeal': { calories: 71, protein: 2.5, carbs: 12, fat: 1.4 },
+    'milk': { calories: 50, protein: 3.3, carbs: 4.8, fat: 2 },
+    'avocado': { calories: 160, protein: 2, carbs: 8.5, fat: 14.7 },
+    'rice': { calories: 130, protein: 2.7, carbs: 28, fat: 0.3 },
+    'salmon': { calories: 208, protein: 22, carbs: 0, fat: 13 },
+    'peanut butter': { calories: 588, protein: 25, carbs: 20, fat: 50 },
+    'bread': { calories: 265, protein: 9, carbs: 49, fat: 3.2 },
+    'steak': { calories: 271, protein: 27, carbs: 0, fat: 18 },
+    'broccoli': { calories: 34, protein: 2.8, carbs: 7, fat: 0.4 },
+    'potato': { calories: 77, protein: 2, carbs: 17, fat: 0.1 },
+    'yogurt': { calories: 59, protein: 10, carbs: 3.6, fat: 0.4 },
+  };
+
+  // Simple substring match
+  for (const [key, macros] of Object.entries(coreFoods)) {
+    if (lowercaseLabel.includes(key)) return macros;
+  }
+
+  return null;
+}
 
 // Listen for messages from the main thread
 self.onmessage = async (event) => {

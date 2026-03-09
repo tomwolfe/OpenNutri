@@ -63,6 +63,60 @@ export function useEncryption(): UseEncryptionReturn {
   const [error, setError] = useState<string | null>(null);
 
   /**
+   * Internal: Get or create a device-specific encryption key
+   * Derived from browser's Web Crypto API and stored persistently
+   */
+  const getOrCreateDeviceKey = useCallback(async (): Promise<CryptoKey> => {
+    const storedDeviceKey = localStorage.getItem(DEVICE_KEY_STORAGE);
+
+    if (storedDeviceKey) {
+      // Import existing device key
+      const keyData = JSON.parse(storedDeviceKey);
+      return crypto.subtle.importKey(
+        'raw',
+        base64ToArrayBuffer(keyData.key),
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+      );
+    }
+
+    // Generate new device key
+    const newDeviceKey = await generateSessionKey();
+    const exportedKey = await crypto.subtle.exportKey('raw', newDeviceKey);
+
+    // Store in localStorage (this is the root of trust for this device)
+    localStorage.setItem(DEVICE_KEY_STORAGE, JSON.stringify({
+      key: arrayBufferToBase64(exportedKey),
+      createdAt: Date.now()
+    }));
+
+    return newDeviceKey;
+  }, []);
+
+  // Encrypt binary data (e.g. image)
+  const encryptBinaryData = useCallback(
+    async (data: ArrayBuffer | Uint8Array, customKey?: CryptoKey): Promise<{ ciphertext: ArrayBuffer; iv: Uint8Array }> => {
+      const targetKey = customKey || key;
+      if (!targetKey) throw new Error('Vault not unlocked and no session key provided.');
+      const { encryptBinary } = await import('@/lib/encryption');
+      return encryptBinary(data, targetKey);
+    },
+    [key]
+  );
+
+  // Decrypt binary data
+  const decryptBinaryData = useCallback(
+    async (ciphertext: ArrayBuffer, iv: ArrayBuffer | Uint8Array, customKey?: CryptoKey): Promise<ArrayBuffer> => {
+      const targetKey = customKey || key;
+      if (!targetKey) throw new Error('Vault not unlocked and no session key provided.');
+      const { decryptBinary } = await import('@/lib/encryption');
+      return decryptBinary(ciphertext, iv, targetKey);
+    },
+    [key]
+  );
+
+  /**
    * Internal: Persist key for session resumption
    * Double-wraps the vault key: master key → session key → device key
    * The device key is stored encrypted in localStorage with a browser-derived key
@@ -99,38 +153,6 @@ export function useEncryption(): UseEncryptionReturn {
       console.warn('Failed to persist session key:', err);
     }
   }, [encryptBinaryData, getOrCreateDeviceKey]);
-
-  /**
-   * Internal: Get or create a device-specific encryption key
-   * Derived from browser's Web Crypto API and stored persistently
-   */
-  const getOrCreateDeviceKey = useCallback(async (): Promise<CryptoKey> => {
-    const storedDeviceKey = localStorage.getItem(DEVICE_KEY_STORAGE);
-
-    if (storedDeviceKey) {
-      // Import existing device key
-      const keyData = JSON.parse(storedDeviceKey);
-      return crypto.subtle.importKey(
-        'raw',
-        base64ToArrayBuffer(keyData.key),
-        { name: 'AES-GCM', length: 256 },
-        false,
-        ['encrypt', 'decrypt']
-      );
-    }
-
-    // Generate new device key
-    const newDeviceKey = await generateSessionKey();
-    const exportedKey = await crypto.subtle.exportKey('raw', newDeviceKey);
-
-    // Store in localStorage (this is the root of trust for this device)
-    localStorage.setItem(DEVICE_KEY_STORAGE, JSON.stringify({
-      key: arrayBufferToBase64(exportedKey),
-      createdAt: Date.now()
-    }));
-
-    return newDeviceKey;
-  }, []);
 
   /**
    * Internal: Resume session from storage
@@ -270,28 +292,6 @@ export function useEncryption(): UseEncryptionReturn {
     async (encryptedData: string, iv: string): Promise<EncryptedFoodLog> => {
       if (!key) throw new Error('Vault not unlocked. Please log in first.');
       return decryptFoodLog(encryptedData, iv, key);
-    },
-    [key]
-  );
-
-  // Encrypt binary data (e.g. image)
-  const encryptBinaryData = useCallback(
-    async (data: ArrayBuffer | Uint8Array, customKey?: CryptoKey): Promise<{ ciphertext: ArrayBuffer; iv: Uint8Array }> => {
-      const targetKey = customKey || key;
-      if (!targetKey) throw new Error('Vault not unlocked and no session key provided.');
-      const { encryptBinary } = await import('@/lib/encryption');
-      return encryptBinary(data, targetKey);
-    },
-    [key]
-  );
-
-  // Decrypt binary data
-  const decryptBinaryData = useCallback(
-    async (ciphertext: ArrayBuffer, iv: ArrayBuffer | Uint8Array, customKey?: CryptoKey): Promise<ArrayBuffer> => {
-      const targetKey = customKey || key;
-      if (!targetKey) throw new Error('Vault not unlocked and no session key provided.');
-      const { decryptBinary } = await import('@/lib/encryption');
-      return decryptBinary(ciphertext, iv, targetKey);
     },
     [key]
   );

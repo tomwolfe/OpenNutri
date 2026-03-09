@@ -11,8 +11,6 @@
  * Any 2 shards can recover the vault.
  */
 
-import secrets from 'secrets.js-grempe';
-
 /**
  * Split a mnemonic phrase into shards
  * @param mnemonic - The 24-word mnemonic phrase
@@ -25,6 +23,7 @@ export function splitMnemonic(
   totalShards: number = 3, 
   threshold: number = 2
 ): string[] {
+  const secrets = require('secrets.js-grempe');
   // Convert mnemonic to hex for SSS
   const hexSecret = Buffer.from(mnemonic).toString('hex');
   
@@ -40,6 +39,7 @@ export function splitMnemonic(
  * @returns The original mnemonic phrase
  */
 export function combineShards(shards: string[]): string {
+  const secrets = require('secrets.js-grempe');
   const hexSecret = secrets.combine(shards);
   return Buffer.from(hexSecret, 'hex').toString();
 }
@@ -51,6 +51,7 @@ export function combineShards(shards: string[]): string {
  */
 export function isValidShard(shard: string): boolean {
   try {
+    const secrets = require('secrets.js-grempe');
     const extract = secrets.extractShareComponents(shard);
     return !!(extract && extract.id && extract.data);
   } catch {

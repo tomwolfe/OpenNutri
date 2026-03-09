@@ -28,7 +28,7 @@ import { analyzeFoodImageStream, analyzeFoodTextStream } from '@/lib/ai-vision-s
 import { db } from '@/lib/db';
 import { aiUsage } from '@/db/schema';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 /**

@@ -187,7 +187,8 @@ export function generateCoachingInsights(weightData: Array<{ timestamp: number; 
   intakeData.sort((a, b) => a.timestamp - b.timestamp);
   const start = Math.min(weightData[0].timestamp, intakeData[0].timestamp);
 
-  const smoothedWeights = WeightKalmanFilter.filter(weightData.map(d => d.weight), 0.015, 1.2);
+  const smoothedResults = WeightKalmanFilter.filter(weightData.map(d => d.weight), 0.015, 1.2);
+  const smoothedWeights = smoothedResults.map(r => r.weight);
   const weightPoints = weightData.map((d, i) => ({ x: (d.timestamp - start) / 86400000, y: smoothedWeights[i] }));
   const caloriePoints = intakeData.map(d => ({ x: (d.timestamp - start) / 86400000, y: d.calories }));
 

@@ -114,12 +114,15 @@ export function DiscoveryMode({
       await db.foodFavorites.where('fdcId').equals(food.fdcId).delete();
     } else {
       await db.foodFavorites.add({
+        id: food.fdcId.toString(),
         fdcId: food.fdcId,
         description: food.description,
         calories: food.calories,
         protein: food.protein,
         carbs: food.carbs,
         fat: food.fat,
+        frequency: 1,
+        lastUsed: new Date(),
         updatedAt: Date.now()
       });
     }

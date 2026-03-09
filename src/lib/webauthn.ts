@@ -98,9 +98,9 @@ export async function enableBiometricUnlock(vaultKey: CryptoKey, userId: string)
     // Encrypt the vault key
     const iv = generateIV();
     const encryptedVaultKey = await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv },
+      { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
       wrappingKey,
-      rawVaultKey
+      rawVaultKey.buffer as ArrayBuffer
     );
 
     // Store in IndexedDB

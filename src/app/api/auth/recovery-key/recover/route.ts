@@ -18,6 +18,8 @@ import { unlockVaultWithMnemonic, validateMnemonic } from '@/lib/recovery-kit';
 import { combineShards, isValidShard } from '@/lib/sss';
 import { z } from 'zod';
 
+export const dynamic = 'force-dynamic';
+
 const requestSchema = z.object({
   userId: z.string(),
   mnemonics: z.string().optional(),

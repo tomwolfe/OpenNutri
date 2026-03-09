@@ -295,7 +295,8 @@ export async function getHealthDataForDate(
   userId: string,
   date: string
 ): Promise<LocalHealthData | null> {
-  return await db.healthData.get([userId, date]);
+  const data = await db.healthData.get([userId, date]);
+  return data ?? null;
 }
 
 /**

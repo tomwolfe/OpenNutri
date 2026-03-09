@@ -264,6 +264,8 @@ export const sharedVaults = pgTable('shared_vaults', {
   publicKey: text('public_key').notNull(), // Recipient's public key used for this session
   expiresAt: timestamp('expires_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  active: boolean('active').default(true).notNull(), // Track if sharing session is active
+  lastAccessedAt: timestamp('last_accessed_at', { withTimezone: true }), // Track last access time
 });
 
 export const sharedVaultsRelations = relations(sharedVaults, ({ one }) => ({

@@ -70,13 +70,15 @@ export interface LocalUserTarget {
 
 export interface UserFavorite {
   id: string; // Combined foodName or fdcId
-  foodName: string;
+  fdcId: number | string;
+  description: string;
   calories: number;
   protein: number;
   carbs: number;
   fat: number;
   frequency: number;
   lastUsed: Date;
+  updatedAt?: number;
 }
 
 export interface DecryptedImage {
@@ -92,6 +94,8 @@ export interface LocalUserRecipe {
   description?: string;
   encryptedData: string;
   encryptionIv: string;
+  version: number;
+  deviceId: string | null;
   updatedAt: string;
   synced: 0 | 1;
 }
@@ -141,7 +145,7 @@ export class OpenNutriDB extends Dexie {
   foodLogs!: Table<LocalFoodLog>;
   decryptedLogs!: Table<DecryptedFoodLog>;
   userTargets!: Table<LocalUserTarget>;
-  userFavorites!: Table<UserFavorite>;
+  foodFavorites!: Table<UserFavorite>;
   decryptedImages!: Table<DecryptedImage>;
   userRecipes!: Table<LocalUserRecipe>;
   healthData!: Table<LocalHealthData>;
@@ -156,7 +160,7 @@ export class OpenNutriDB extends Dexie {
       foodLogs: 'id, userId, timestamp, synced, updatedAt',
       decryptedLogs: 'id, userId, timestamp',
       userTargets: '[userId+date], userId, date, synced, updatedAt',
-      userFavorites: 'id, foodName, frequency, lastUsed',
+      foodFavorites: 'id, fdcId, frequency, lastUsed',
       decryptedImages: 'id, timestamp',
       userRecipes: 'id, userId, name, synced, updatedAt',
       healthData: '[userId+date], userId, date',

@@ -229,7 +229,7 @@ export async function wrapKey(
     'raw',
     keyToWrap,
     wrappingKey,
-    { name: ENCRYPTION_ALGORITHM, iv }
+    { name: ENCRYPTION_ALGORITHM, iv: iv.buffer as ArrayBuffer }
   );
   
   return {
@@ -253,7 +253,7 @@ export async function unwrapKey(
     'raw',
     wrappedKey,
     wrappingKey,
-    { name: ENCRYPTION_ALGORITHM, iv },
+    { name: ENCRYPTION_ALGORITHM, iv: iv as ArrayBuffer },
     { name: ENCRYPTION_ALGORITHM, length: KEY_LENGTH },
     false,
     ['encrypt', 'decrypt']
@@ -289,7 +289,7 @@ export function base64ToArrayBuffer(base64: string): ArrayBuffer {
   for (let i = 0; i < binaryString.length; i++) {
     bytes[i] = binaryString.charCodeAt(i);
   }
-  return bytes.buffer;
+  return bytes.buffer as ArrayBuffer;
 }
 
 /**

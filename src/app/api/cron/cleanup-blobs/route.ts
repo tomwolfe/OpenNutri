@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { list, del } from '@vercel/blob';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 export const maxDuration = 300; // 5 minutes for cleanup
 
 /**

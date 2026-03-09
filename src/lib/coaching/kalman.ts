@@ -25,17 +25,18 @@ export class WeightKalmanFilter {
 
   /**
    * @param initialWeight - The first weight measurement
+   * @param qWeight - Process noise for weight
+   * @param r - Measurement noise
    */
-  constructor(initialWeight: number) {
+  constructor(initialWeight: number, qWeight = 0.001, r = 1.0) {
     this.x = [initialWeight, 0];
     this.p = [[1, 0], [0, 1]];
     
     // Process noise: how much weight and velocity can change
-    const qWeight = 0.001;
-    const qVelocity = 0.00001;
+    const qVelocity = qWeight / 100;
     this.q = [[qWeight, 0], [0, qVelocity]];
     
-    this.r = 1.0; // Base measurement noise
+    this.r = r; // Base measurement noise
   }
 
   /**
@@ -45,7 +46,7 @@ export class WeightKalmanFilter {
    * @returns The new estimated "true" weight
    */
   public update(measurement: number, customNoise?: number): number {
-    const r = customNoise || this.r;
+    const r = customNoise !== undefined ? customNoise : this.r;
 
     // 1. Predict
     // x = F * x (where F = [1 1; 0 1] for weight + velocity)
@@ -104,25 +105,35 @@ export class WeightKalmanFilter {
    * Process a series of weights with optional metadata
    */
   public static filter(
-    entries: Array<{ 
+    entries: Array<number | { 
       weight: number; 
       highSodium?: boolean; 
       highCarbs?: boolean;
       holiday?: boolean; 
       traveling?: boolean;
-    }>
+    }>,
+    qWeight?: number,
+    r?: number
   ): { weight: number; trend: number; prediction7Days: number }[] {
     if (entries.length === 0) return [];
     
-    const kf = new WeightKalmanFilter(entries[0].weight);
+    const firstEntry = entries[0];
+    const initialWeight = typeof firstEntry === 'number' ? firstEntry : firstEntry.weight;
+    
+    const kf = new WeightKalmanFilter(initialWeight, qWeight, r);
     return entries.map(e => {
-      let noise = 1.5; // Default measurement noise
-      if (e.highSodium) noise += 2.0;
-      if (e.highCarbs) noise += 1.5;
-      if (e.holiday) noise += 3.0;
-      if (e.traveling) noise += 2.0;
+      const isNum = typeof e === 'number';
+      const weightVal = isNum ? e : e.weight;
+      
+      let noise = r !== undefined ? r : 1.5; // Default measurement noise
+      if (!isNum) {
+        if (e.highSodium) noise += 2.0;
+        if (e.highCarbs) noise += 1.5;
+        if (e.holiday) noise += 3.0;
+        if (e.traveling) noise += 2.0;
+      }
 
-      const weight = kf.update(e.weight, noise);
+      const weight = kf.update(weightVal, isNum ? r : noise);
       return {
         weight,
         trend: kf.getVelocity(),
