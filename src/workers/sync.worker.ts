@@ -153,7 +153,7 @@ self.onmessage = async (event: MessageEvent) => {
 
   try {
     if (type === 'SYNC_DELTA') {
-      const { userId, deviceId, lastSyncTimestamp } = payload;
+      const { userId, deviceId, lastSyncTimestamp, origin } = payload;
 
       // 1. Process Sync Outbox (Write-Ahead Log)
       const outboxItems = await db.syncOutbox
@@ -166,7 +166,7 @@ self.onmessage = async (event: MessageEvent) => {
         try {
           await db.syncOutbox.update(item.id!, { status: 'processing' });
 
-          const response = await fetch('/api/sync/outbox/process', {
+          const response = await fetch(`${origin}/api/sync/outbox/process`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(item),
@@ -274,7 +274,7 @@ self.onmessage = async (event: MessageEvent) => {
           })),
         };
 
-        const response = await fetch('/api/sync/delta/push', {
+        const response = await fetch(`${origin}/api/sync/delta/push`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(pushPayload),
@@ -321,7 +321,7 @@ self.onmessage = async (event: MessageEvent) => {
       }
 
       // 2. Pull
-      const pullRes = await fetch(`/api/sync/delta?since=${lastSyncTimestamp}`);
+      const pullRes = await fetch(`${origin}/api/sync/delta?since=${lastSyncTimestamp}`);
       if (!pullRes.ok) throw new Error('Pull failed');
       const data = await pullRes.json();
       

@@ -105,11 +105,18 @@ export function useDailyLogs(
   selectedDate: Date,
   userId: string | undefined
 ): UseDailyLogsReturn {
-  // Calculate date boundaries
-  const dateStr = selectedDate.toISOString().split('T')[0];
-  const startOfDay = new Date(dateStr);
-  const endOfDay = new Date(dateStr);
-  endOfDay.setHours(23, 59, 59, 999);
+  // Calculate date boundaries using local time
+  const { startOfDay, endOfDay, dateStr } = useMemo(() => {
+    const start = new Date(selectedDate);
+    start.setHours(0, 0, 0, 0);
+    
+    const end = new Date(selectedDate);
+    end.setHours(23, 59, 59, 999);
+    
+    const dateStr = selectedDate.toISOString().split('T')[0];
+    
+    return { startOfDay: start, endOfDay: end, dateStr };
+  }, [selectedDate]);
 
   // Live query to Dexie - automatically updates when data changes
   const decryptedLogs = useLiveQuery<DecryptedFoodLog[]>(

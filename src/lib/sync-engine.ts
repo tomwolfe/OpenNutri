@@ -60,9 +60,10 @@ export async function syncDelta(
     const { syncDeltaInWorker, decryptBatchInWorker } = await import('@/lib/worker-client');
     const deviceId = getDeviceId();
     const since = getLastSyncTimestamp();
+    const origin = window.location.origin;
 
     // 1. Offload the main sync logic to the worker
-    const { pulled, pushed, serverTime, pulledLogIds } = await syncDeltaInWorker(userId, deviceId, since);
+    const { pulled, pushed, serverTime, pulledLogIds } = await syncDeltaInWorker(userId, deviceId, since, origin);
 
     // 2. Handle decryption using explicit pulled IDs
     if (pulledLogIds && pulledLogIds.length > 0 && vaultKey) {

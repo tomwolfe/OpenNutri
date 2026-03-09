@@ -104,7 +104,8 @@ function getSyncWorker(): Worker {
 export async function syncDeltaInWorker(
   userId: string,
   deviceId: string,
-  lastSyncTimestamp: number
+  lastSyncTimestamp: number,
+  origin: string
 ): Promise<{ pulled: number; pushed: number; serverTime: number; pulledLogIds: string[]; pulledRecipeIds: string[] }> {
   const w = getSyncWorker();
 
@@ -124,7 +125,7 @@ export async function syncDeltaInWorker(
     w.addEventListener('message', handler);
     w.postMessage({
       type: 'SYNC_DELTA',
-      payload: { userId, deviceId, lastSyncTimestamp }
+      payload: { userId, deviceId, lastSyncTimestamp, origin }
     });
   });
 }
