@@ -18,7 +18,7 @@ import { BarcodeScanner } from './barcode-scanner';
 import { CameraOverlay } from './dashboard/camera-overlay';
 import { MacroEditor } from './dashboard/macro-editor';
 import { VoiceCapture } from './dashboard/voice-capture';
-import { classifyFoodLocally, needsCloudAnalysis, ImageClassificationResult } from '@/lib/local-ai';
+import { classifyFoodLocally, needsCloudAnalysis, ImageClassificationResult, onProgress, onDeviceInfo, onModelState, type ProgressUpdate, type DeviceInfo } from '@/lib/local-ai';
 import { FoodAnalysisSchema, DraftItem } from '@/types/food';
 import { compressImage, formatBytes } from '@/lib/image-utils';
 import { cn } from '@/lib/utils';
@@ -57,6 +57,9 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
   const [imageIv, setImageIv] = useState<string | null>(null);
   const [compressionStats, setCompressionStats] = useState<{ original: number; compressed: number } | null>(null);
   const [localAiResults, setLocalAiResults] = useState<ImageClassificationResult[] | null>(null);
+  const [modelLoadingProgress, setModelLoadingProgress] = useState<ProgressUpdate | null>(null);
+  const [deviceInfo, setDeviceInfo] = useState<DeviceInfo | null>(null);
+  const [modelState, setModelState] = useState<{ classifierState: string; embedderState: string } | null>(null);
   
   const { encryptLog, encryptBinary, generateSessionKey, exportKeyToBase64, isReady, vaultKey } = useEncryption();
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -160,6 +163,42 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
     setUploadProgress('review');
     setMode('vision');
   };
+
+  // Task 2.3: Model Loading Progress Indicator
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    // Set up progress callbacks
+    onProgress((update) => {
+      setModelLoadingProgress(update);
+      console.log('🔄 Model loading:', update.message, `${Math.round(update.progress * 100)}%`);
+    });
+
+    onDeviceInfo((info) => {
+      setDeviceInfo(info);
+      console.log('📱 Device:', info.type, info.name || '');
+    });
+
+    onModelState((state) => {
+      setModelState({
+        classifierState: state.classifierState,
+        embedderState: state.embedderState,
+      });
+    });
+
+    // Request initial state
+    import('@/lib/local-ai').then(({ getDeviceInfo, getModelState }) => {
+      getDeviceInfo().then(setDeviceInfo);
+      getModelState().then((state) => {
+        if (state) {
+          setModelState({
+            classifierState: state.classifierState,
+            embedderState: state.embedderState,
+          });
+        }
+      });
+    });
+  }, []);
 
   const handleVoiceSubmit = useCallback(async (text: string) => {
     setUploadProgress('streaming');
@@ -802,6 +841,46 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
             </div>
           </label>
         </div>
+        
+        {/* Task 2.3: Model Loading Progress Indicator */}
+        {modelLoadingProgress && modelLoadingProgress.stage !== 'ready' && (
+          <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Loader2 className="w-3 h-3 text-blue-600 animate-spin" />
+                <span className="text-xs font-medium text-blue-900">Loading Local AI...</span>
+              </div>
+              <span className="text-[10px] text-blue-700 font-semibold">
+                {Math.round(modelLoadingProgress.progress * 100)}%
+              </span>
+            </div>
+            <div className="w-full bg-blue-200 rounded-full h-1.5 overflow-hidden">
+              <div
+                className="bg-blue-600 h-full rounded-full transition-all duration-300"
+                style={{ width: `${modelLoadingProgress.progress * 100}%` }}
+              />
+            </div>
+            <p className="mt-2 text-[10px] text-blue-700">
+              {modelLoadingProgress.message}
+            </p>
+            {deviceInfo && (
+              <p className="mt-1 text-[9px] text-blue-500">
+                Device: {deviceInfo.type === 'webgpu' ? '✅ WebGPU' : deviceInfo.type === 'wasm' ? '📱 WASM' : '⚠️ Limited'}
+                {deviceInfo.isMobile && ' (Mobile)'}
+              </p>
+            )}
+          </div>
+        )}
+        
+        {/* Show device capability when ready */}
+        {modelLoadingProgress?.stage === 'ready' && deviceInfo && (
+          <div className="mt-3 p-2 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
+            <CheckCircle className="w-3 h-3 text-green-600" />
+            <span className="text-[10px] text-green-700 font-medium">
+              {deviceInfo.type === 'webgpu' ? 'WebGPU Acceleration Active' : 'Optimized for Your Device'}
+            </span>
+          </div>
+        )}
       </div>
 
       {uploadProgress === 'idle' && mode === 'barcode' ? (
@@ -841,14 +920,75 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
               )}
 
               {uploadProgress === 'idle' && (
-                <button
-                  type="button"
-                  onClick={handleUpload}
-                  disabled={!isOnline && !isIndexedDBAvailable}
-                  className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {isOnline ? 'Analyze Food' : 'Queue for Later'}
-                </button>
+                <div className="space-y-2">
+                  {/* Task 2.2: Cloud Fallback Choice UI */}
+                  {localAiResults && needsCloudAnalysis(localAiResults) && (
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                      <p className="text-xs font-medium text-amber-900 mb-2">
+                        🤖 Local AI Confidence: {Math.round((localAiResults[0]?.score || 0) * 100)}%
+                      </p>
+                      <p className="text-[10px] text-amber-700 mb-3">
+                        Local analysis detected low confidence. Would you like to use cloud AI for better accuracy?
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={handleUpload}
+                          className="flex-1 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-xs font-medium"
+                        >
+                          ☁️ Use Cloud AI (More Accurate)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Use local results even with low confidence
+                            const topResult = localAiResults[0];
+                            const localItem: DraftItem = {
+                              foodName: topResult.label,
+                              calories: topResult.macros?.calories || 0,
+                              protein: topResult.macros?.protein || 0,
+                              carbs: topResult.macros?.carbs || 0,
+                              fat: topResult.macros?.fat || 0,
+                              source: 'LOCAL_AI',
+                              servingGrams: 100,
+                              isEnhancing: isOnline,
+                              confidence: topResult.score,
+                            };
+                            setDraftItems([localItem]);
+                            setUploadProgress('review');
+                            if (isOnline) {
+                              enrichItemsWithUsda([localItem]);
+                            }
+                          }}
+                          className="flex-1 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-xs font-medium"
+                        >
+                          📱 Use Local AI (Free & Private)
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {localAiResults && !needsCloudAnalysis(localAiResults) ? (
+                    <button
+                      type="button"
+                      onClick={handleUpload}
+                      disabled={!isOnline && !isIndexedDBAvailable}
+                      className="w-full py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      <CheckCircle className="w-4 h-4" />
+                      {isOnline ? 'Analyze with Local AI (Confident)' : 'Queue for Later'}
+                    </button>
+                  ) : !localAiResults ? (
+                    <button
+                      type="button"
+                      onClick={handleUpload}
+                      disabled={!isOnline && !isIndexedDBAvailable}
+                      className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {isOnline ? 'Analyze Food' : 'Queue for Later'}
+                    </button>
+                  ) : null}
+                </div>
               )}
 
               {(uploadProgress === 'uploading' || uploadProgress === 'streaming') && (
@@ -910,10 +1050,9 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
       )}
 
       <div className="mt-4 pt-4 border-t text-[10px] text-gray-400 text-center space-y-1">
-        <p>Powered by Zhipu GLM-4V & Neon pgvector</p>
+        <p>Powered by Local AI (WebGPU) + Cloud Fallback</p>
         <p className="text-gray-300">
-          <strong>Privacy Notice:</strong> Images are temporarily processed by AI and immediately destroyed. 
-          They are never stored unencrypted on the server.
+          <strong>Privacy-First:</strong> Local AI runs on your device. Cloud AI is optional for better accuracy.
         </p>
       </div>
     </div>

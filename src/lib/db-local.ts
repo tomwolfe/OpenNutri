@@ -146,6 +146,12 @@ export interface LocalSemanticMatch {
   portionFrequency?: number; // How often this portion was used
 }
 
+export interface OFFProductCache {
+  id: string; // Barcode
+  product: any; // Full OFF product object
+  lastFetched: number; // Unix timestamp
+}
+
 export class OpenNutriDB extends Dexie {
   pendingImages!: Table<PendingImage>;
   foodLogs!: Table<LocalFoodLog>;
@@ -158,10 +164,11 @@ export class OpenNutriDB extends Dexie {
   vaultKeys!: Table<LocalVaultKey>;
   localSemanticCache!: Table<LocalSemanticMatch>;
   syncOutbox!: Table<SyncOutboxItem>;
+  offProducts!: Table<OFFProductCache>;
 
   constructor() {
     super('OpenNutriDB');
-    this.version(9).stores({
+    this.version(10).stores({
       pendingImages: 'id, timestamp',
       foodLogs: 'id, userId, timestamp, synced, updatedAt',
       decryptedLogs: 'id, userId, timestamp',
@@ -173,6 +180,7 @@ export class OpenNutriDB extends Dexie {
       vaultKeys: 'userId, credentialId',
       localSemanticCache: 'id, lastUsed',
       syncOutbox: '++id, userId, status, timestamp',
+      offProducts: 'id, lastFetched',
     });
   }
 

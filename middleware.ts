@@ -1,13 +1,18 @@
-/**
- * Auth Middleware
- * Protects routes and redirects unauthenticated users
- */
+import createMiddleware from 'next-intl/middleware';
+import {locales} from './src/i18n';
 
-import NextAuth from 'next-auth';
-import { authConfig } from '@/lib/auth.config';
-
-export const { auth: middleware } = NextAuth(authConfig);
+export default createMiddleware({
+  // A list of all locales that are supported
+  locales,
+ 
+  // Used when no locale matches
+  defaultLocale: 'en',
+  
+  // Locale detection from Accept-Language header
+  localeDetection: true,
+});
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/log/:path*'],
+  // Match only internationalized pathnames
+  matcher: ['/', '/(es|fr|de|pt)/:path*'],
 };

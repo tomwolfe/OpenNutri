@@ -317,3 +317,51 @@ export type NewUsdaCache = typeof usdaCache.$inferInsert;
 
 export type UserKeys = typeof userKeys.$inferSelect;
 export type NewUserKeys = typeof userKeys.$inferInsert;
+
+// ============================================
+// Community Foods Table (Phase 2)
+// User-contributed foods with voting/moderation
+// ============================================
+export const communityFoods = pgTable('community_foods', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: text('user_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .notNull(),
+  name: text('name').notNull(),
+  description: text('description'),
+  calories: integer('calories').notNull(),
+  protein: doublePrecision('protein'),
+  carbs: doublePrecision('carbs'),
+  fat: doublePrecision('fat'),
+  fiber: doublePrecision('fiber'),
+  sodium: doublePrecision('sodium'),
+  servingSize: text('serving_size').default('100g'),
+  servingGrams: integer('serving_grams').default(100),
+  category: text('category'), // packaged, homemade, restaurant, etc.
+  brand: text('brand'),
+  barcode: text('barcode'), // For packaged foods
+  language: text('language').default('en'),
+  country: text('country'), // Country of origin
+  ingredients: text('ingredients'),
+  allergens: text('allergens'),
+  // Voting and moderation
+  upvotes: integer('upvotes').default(0).notNull(),
+  downvotes: integer('downvotes').default(0).notNull(),
+  status: text('status').default('pending').notNull(), // pending, approved, rejected
+  verified: boolean('verified').default(false),
+  // Metadata
+  source: text('source'), // 'user_submission', 'imported', etc.
+  metadata: text('metadata', { mode: 'json' }), // Additional JSON data
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  nameIdx: index('community_foods_name_idx').on(table.name),
+  barcodeIdx: index('community_foods_barcode_idx').on(table.barcode),
+  statusIdx: index('community_foods_status_idx').on(table.status),
+  categoryIdx: index('community_foods_category_idx').on(table.category),
+  languageIdx: index('community_foods_language_idx').on(table.language),
+  createdAtIdx: index('community_foods_created_at_idx').on(table.createdAt),
+}));
+
+export type CommunityFood = typeof communityFoods.$inferSelect;
+export type NewCommunityFood = typeof communityFoods.$inferInsert;
