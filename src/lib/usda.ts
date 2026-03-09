@@ -39,10 +39,11 @@ export async function searchFoods(
   pageNumber: number = 1
 ): Promise<SearchResults> {
   const apiKey = process.env.USDA_API_KEY;
-  
+
   const params = new URLSearchParams({
     query,
-    dataType: 'Foundation,SR Legacy,Survey (FNDDS)',
+    // Note: dataType parameter removed as it causes 400 errors with special characters
+    // The API now returns all data types by default
     pageSize: pageSize.toString(),
     pageNumber: pageNumber.toString(),
     sortBy: 'dataType.keyword',
