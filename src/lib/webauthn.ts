@@ -173,8 +173,8 @@ export async function unlockVaultWithBiometrics(userId: string): Promise<CryptoK
       'raw',
       decryptedRawKey,
       { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt', 'decrypt']
+      true,
+      ['encrypt', 'decrypt', 'wrapKey']
     );
   } catch (error) {
     console.error('Biometric unlock failed:', error);

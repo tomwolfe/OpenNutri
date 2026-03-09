@@ -77,7 +77,7 @@ export function useEncryption(): UseEncryptionReturn {
         'raw',
         base64ToArrayBuffer(keyData.key),
         { name: 'AES-GCM', length: 256 },
-        false,
+        true,
         ['encrypt', 'decrypt']
       );
     }

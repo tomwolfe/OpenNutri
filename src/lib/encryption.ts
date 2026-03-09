@@ -250,15 +250,15 @@ export async function unwrapKey(
 ): Promise<CryptoKey> {
   const wrappedKey = base64ToArrayBuffer(wrappedKeyBase64);
   const iv = base64ToArrayBuffer(ivBase64);
-  
+
   return crypto.subtle.unwrapKey(
     'raw',
     wrappedKey,
     wrappingKey,
     { name: ENCRYPTION_ALGORITHM, iv: iv as ArrayBuffer },
     { name: ENCRYPTION_ALGORITHM, length: KEY_LENGTH },
-    false,
-    ['encrypt', 'decrypt']
+    true,
+    ['encrypt', 'decrypt', 'wrapKey']
   );
 }
 
