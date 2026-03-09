@@ -111,13 +111,88 @@ const nextConfig = {
   },
 };
 
-// Disable PWA for now due to bundling issues with onnxruntime
-// const withPWA = withPWAInit({
-//   dest: 'public',
-//   cacheOnFrontEndNav: true,
-//   reloadOnOnline: true,
-//   disable: process.env.NODE_ENV === 'development',
-//   runtimeCaching: [],
-// });
+// Task 5.2: Enable PWA with robust offline support
+const withPWA = withPWAInit({
+  dest: 'public',
+  cacheOnFrontEndNav: true,
+  reloadOnOnline: true,
+  disable: process.env.NODE_ENV === 'development',
+  // Register service worker
+  register: true,
+  // Scope for service worker
+  scope: '/',
+  // Sw location
+  sw: 'service-worker.js',
+  // Runtime caching strategies
+  runtimeCaching: [
+    {
+      // Cache static assets (JS, CSS, images)
+      urlPattern: /^https:\/\/.*\.(js|css|png|jpg|jpeg|gif|svg|webp|wasm)$/i,
+      handler: 'CacheFirst',
+      options: {
+        cacheName: 'opennutri-static-assets',
+        expiration: {
+          maxEntries: 100,
+          maxAgeSeconds: 30 * 24 * 60 * 60, // 30 days
+        },
+      },
+    },
+    {
+      // Cache API responses with network-first strategy
+      urlPattern: /^https:\/\/.*\/api\/.*$/i,
+      handler: 'NetworkFirst',
+      options: {
+        cacheName: 'opennutri-api-cache',
+        networkTimeoutSeconds: 10,
+        expiration: {
+          maxEntries: 50,
+          maxAgeSeconds: 24 * 60 * 60, // 24 hours
+        },
+        cacheableResponse: {
+          statuses: [0, 200],
+        },
+      },
+    },
+    {
+      // Cache USDA API responses
+      urlPattern: /^https:\/\/api\.nal\.usda\.gov\/.*$/i,
+      handler: 'StaleWhileRevalidate',
+      options: {
+        cacheName: 'opennutri-usda-cache',
+        expiration: {
+          maxEntries: 500,
+          maxAgeSeconds: 7 * 24 * 60 * 60, // 7 days
+        },
+      },
+    },
+    {
+      // Cache Hugging Face model files (Transformers.js)
+      urlPattern: /^https:\/\/.*\.hf\.co\/.*$/i,
+      handler: 'CacheFirst',
+      options: {
+        cacheName: 'opennutri-ml-models',
+        expiration: {
+          maxEntries: 50,
+          maxAgeSeconds: 30 * 24 * 60 * 60, // 30 days
+        },
+        cacheableResponse: {
+          statuses: [0, 200],
+        },
+      },
+    },
+    {
+      // Cache CDN assets (Transformers.js, ONNX)
+      urlPattern: /^https:\/\/cdn\.jsdelivr\.net\/.*$/i,
+      handler: 'CacheFirst',
+      options: {
+        cacheName: 'opennutri-cdn-assets',
+        expiration: {
+          maxEntries: 100,
+          maxAgeSeconds: 30 * 24 * 60 * 60, // 30 days
+        },
+      },
+    },
+  ],
+});
 
-export default nextConfig;
+export default withPWA(nextConfig);

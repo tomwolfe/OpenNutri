@@ -53,5 +53,6 @@
         }
       ]
     }
-  }
+  },
+  "offline_enabled": true
 }
