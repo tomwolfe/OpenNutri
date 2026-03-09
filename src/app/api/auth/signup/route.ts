@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { users, userKeys } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import * as argon2 from 'argon2';
+import { hash } from '@node-rs/argon2';
 
 export const runtime = 'nodejs'; // Argon2 needs Node.js, not Edge
 
@@ -76,9 +76,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Hash password and create user
-    const passwordHash = await argon2.hash(password, {
-      type: argon2.argon2id, // Use Argon2id for maximum security
-    });
+    const passwordHash = await hash(password);
     const userId = `user_${crypto.randomUUID().replace(/-/g, '')}`;
 
     // Create user and their encryption key record in a transaction

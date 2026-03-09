@@ -75,7 +75,7 @@ const nextConfig = {
         'onnxruntime-node',
         'onnxruntime-web',
         '@huggingface/transformers',
-        'argon2',
+        '@node-rs/argon2',
       ];
 
       // Exclude binary files from being processed

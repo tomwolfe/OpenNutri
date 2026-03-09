@@ -10,7 +10,7 @@ import Credentials from 'next-auth/providers/credentials';
 import { db } from '@/lib/db';
 import { users } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import * as argon2 from 'argon2';
+import { verify } from '@node-rs/argon2';
 import { authConfig } from './auth.config';
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
@@ -46,7 +46,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         try {
           // If the hash starts with $argon2, it's an argon2 hash
           if (user.passwordHash.startsWith('$argon2')) {
-            isValid = await argon2.verify(user.passwordHash, password);
+            isValid = await verify(user.passwordHash, password);
           } else {
             // Legacy check (optional, but good for migration)
             // If the hash is SHA-256 + bcrypt as it was before, 
