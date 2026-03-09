@@ -19,15 +19,18 @@ import {
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { FoodLog } from '@/hooks/use-daily-logs';
+import { useEffect } from 'react';
 
 interface UniversalEntryProps {
   onComplete?: () => void;
   onError?: (error: string) => void;
+  editingLog?: FoodLog;
 }
 
 type UploadProgress = 'idle' | 'uploading' | 'streaming' | 'review' | 'complete';
 
-export function UniversalEntry({ onComplete, onError }: UniversalEntryProps) {
+export function UniversalEntry({ onComplete, onError: _onError, editingLog }: UniversalEntryProps) {
   const { isAvailable: isOnline } = useOfflineQueue();
   const { vaultKey, unlockVault, isReady } = useEncryption();
   const [isUnlocking, setIsUnlocking] = useState(false);
@@ -35,15 +38,25 @@ export function UniversalEntry({ onComplete, onError }: UniversalEntryProps) {
   const [unlockError, setUnlockError] = useState<string | null>(null);
 
   // Local UI State
-  const [mode, setMode] = useState<EntryMode>('text');
+  const [mode, setMode] = useState<EntryMode>(editingLog ? 'text' : 'text');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedMealType, setSelectedMealType] = useState('breakfast');
-  const [items, setItems] = useState<DraftItem[]>([]);
-  const [uploadProgress, setUploadProgress] = useState<UploadProgress>('idle');
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [selectedMealType, setSelectedMealType] = useState(editingLog?.mealType || 'breakfast');
+  const [items, setItems] = useState<DraftItem[]>(editingLog?.items as DraftItem[] || []);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress>(editingLog ? 'review' : 'idle');
+  const [previewUrl, setPreviewUrl] = useState<string | null>(editingLog?.imageUrl || null);
   const [compressionStats, setCompressionStats] = useState<{ original: number; compressed: number } | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
+
+  // Pre-fill state if editingLog changes
+  useEffect(() => {
+    if (editingLog) {
+      setItems(editingLog.items as DraftItem[]);
+      setSelectedMealType(editingLog.mealType);
+      setPreviewUrl(editingLog.imageUrl || null);
+      setUploadProgress('review');
+    }
+  }, [editingLog]);
 
   // Check if vault needs unlocking
   const needsUnlock = isReady && !vaultKey;
@@ -257,7 +270,14 @@ export function UniversalEntry({ onComplete, onError }: UniversalEntryProps) {
             selectedMealType={selectedMealType}
             onUpdateItems={setItems}
             onUpdateMealType={setSelectedMealType}
-            onSave={() => saveLog(items, selectedMealType, imageUrl, imageIv)}
+            onSave={() => saveLog(
+              items, 
+              selectedMealType, 
+              imageUrl || (editingLog?.imageUrl || null), 
+              imageIv || (editingLog?.imageIv || null),
+              editingLog?.id,
+              editingLog ? new Date(editingLog.timestamp) : undefined
+            )}
             onAddItem={() => setItems([...items, { foodName: '', calories: 0, protein: 0, carbs: 0, fat: 0, source: 'MANUAL', servingGrams: 100 }])}
             onRemoveItem={(index) => setItems(items.filter((_, i) => i !== index))}
           />

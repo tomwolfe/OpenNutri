@@ -227,12 +227,23 @@ export function useDailyLogs(
 
   // Delete a log
   const removeLog = async (logId: string): Promise<boolean> => {
+    if (!userId) return false;
     try {
-      const response = await fetch(`/api/log/food?id=${logId}`, { method: 'DELETE' });
-      if (!response.ok) throw new Error('Delete failed');
-
+      // 1. Remove from local tables
       await db.foodLogs.delete(logId);
       await db.decryptedLogs.delete(logId);
+
+      // 2. Add to Sync Outbox so the server knows to delete it
+      await db.syncOutbox.add({
+        userId: userId,
+        table: 'foodLogs',
+        entityId: logId,
+        operation: 'DELETE',
+        payload: { id: logId },
+        timestamp: Date.now(),
+        status: 'pending'
+      });
+
       return true;
     } catch (error) {
       console.error('Failed to delete log:', error);

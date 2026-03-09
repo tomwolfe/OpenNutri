@@ -23,9 +23,11 @@ export function usePersistence({ onSuccess, onError }: UsePersistenceOptions = {
     items: DraftItem[],
     mealType: string,
     imageUrl: string | null,
-    imageIv: string | null
+    imageIv: string | null,
+    existingId?: string,
+    existingTimestamp?: Date
   ) => {
-    console.log('[usePersistence] saveLog called:', { itemsCount: items.length, mealType, hasImageUrl: !!imageUrl, hasVaultKey: !!vaultKey });
+    console.log('[usePersistence] saveLog called:', { itemsCount: items.length, mealType, hasImageUrl: !!imageUrl, hasVaultKey: !!vaultKey, isUpdate: !!existingId });
     if (!session?.user?.id || items.length === 0) {
       console.warn('[usePersistence] Aborting save: no user or empty items', { hasUser: !!session?.user?.id, itemsCount: items.length });
       return;
@@ -36,8 +38,8 @@ export function usePersistence({ onSuccess, onError }: UsePersistenceOptions = {
     try {
       const totalCalories = items.reduce((sum, item) => sum + item.calories, 0);
       const notes = items.map(i => i.notes).filter(Boolean).join(' ');
-      const logId = crypto.randomUUID();
-      const timestamp = new Date();
+      const logId = existingId || crypto.randomUUID();
+      const timestamp = existingTimestamp || new Date();
 
       // 1. Prepare Encrypted Data
       let encryptedData = '', encryptionIv = '';

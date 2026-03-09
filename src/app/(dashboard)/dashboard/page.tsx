@@ -31,11 +31,12 @@ import {
 } from '@/components/ui/dialog';
 import Image from 'next/image';
 import { Calendar } from '@/components/ui/calendar';
-import { Loader2, LogOut, Plus, Utensils, Settings, Image as ImageIcon } from 'lucide-react';
+import { Loader2, LogOut, Plus, Utensils, Settings, Image as ImageIcon, Trash2, Edit2 } from 'lucide-react';
 import { EncryptedImage } from '@/components/encrypted-image';
 import { db } from '@/lib/db-local';
 import { useHealthData } from '@/hooks/use-health-data';
-import { Activity, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
+import { FoodLog } from '@/hooks/use-daily-logs';
 
 const MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack'];
 
@@ -47,6 +48,7 @@ export default function DashboardPage() {
   // State for selected date
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [isUnlocked, setIsUnlocked] = useState(false);
+  const [editingLog, setEditingLog] = useState<FoodLog | null>(null);
 
   // useDailyLogs Hook (reactive Dexie queries)
   const {
@@ -54,9 +56,10 @@ export default function DashboardPage() {
     dailyTotals,
     isLoading: loading,
     triggerSync,
+    removeLog,
   } = useDailyLogs(selectedDate, session?.user?.id);
 
-  const { healthData, syncHealthData, isSyncing } = useHealthData(selectedDate);
+  const { syncHealthData, isSyncing } = useHealthData(selectedDate);
 
   const [snapDialogOpen, setSnapDialogOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -266,23 +269,35 @@ export default function DashboardPage() {
               </div>
 
               {/* Universal Entry */}
-              <Dialog open={snapDialogOpen} onOpenChange={setSnapDialogOpen}>
-                <DialogTrigger render={
+              <Dialog 
+                open={snapDialogOpen || !!editingLog} 
+                onOpenChange={(open) => {
+                  setSnapDialogOpen(open);
+                  if (!open) setEditingLog(null);
+                }}
+              >
+                <DialogTrigger asChild>
                   <Button className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-md">
                     <Plus className="mr-2 h-4 w-4" />
                     Log Food
                   </Button>
-                } />
+                </DialogTrigger>
                 <DialogContent className="max-w-2xl overflow-y-auto max-h-[90vh]">
                   <DialogHeader>
-                    <DialogTitle>Log Food</DialogTitle>
+                    <DialogTitle>{editingLog ? 'Edit Meal' : 'Log Food'}</DialogTitle>
                     <CardDescription>
-                      Snap a photo, scan a barcode, or search for food.
+                      {editingLog 
+                        ? 'Modify your existing meal log.' 
+                        : 'Snap a photo, scan a barcode, or search for food.'}
                     </CardDescription>
                   </DialogHeader>
                   <UniversalEntry
+                    editingLog={editingLog || undefined}
                     onComplete={() => {
-                      setTimeout(() => setSnapDialogOpen(false), 2000);
+                      setTimeout(() => {
+                        setSnapDialogOpen(false);
+                        setEditingLog(null);
+                      }, 1000);
                     }}
                   />
                 </DialogContent>
@@ -324,19 +339,59 @@ export default function DashboardPage() {
                       {mealLogs.map((log) => (
                         <div
                           key={log.id}
-                          className="rounded-md border p-3"
+                          className="rounded-md border p-3 group relative hover:border-primary/50 transition-colors"
                         >
                           <div className="mb-2 flex items-center justify-between">
-                            <span className="text-xs text-muted-foreground">
-                              {formatTime(log.timestamp)}
-                            </span>
                             <div className="flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground">
+                                {formatTime(log.timestamp)}
+                              </span>
                               {log.isVerified && (
-                                <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">
+                                <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] text-green-700">
                                   Verified
                                 </span>
                               )}
-                              {log.imageUrl && (
+                            </div>
+                            
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                className="h-7 w-7 p-0"
+                                onClick={() => setEditingLog(log)}
+                              >
+                                <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
+                              </Button>
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                className="h-7 w-7 p-0 text-destructive hover:bg-destructive/10"
+                                onClick={async () => {
+                                  if (confirm('Delete this entry?')) {
+                                    await removeLog(log.id);
+                                  }
+                                }}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </div>
+                          <div className="flex gap-3">
+                            <div className="flex-1 space-y-1">
+                              {log.items.map((item, idx) => (
+                                <div
+                                  key={`${log.id}-item-${idx}`}
+                                  className="flex justify-between text-sm"
+                                >
+                                  <span>{item.foodName}</span>
+                                  <span className="font-medium">
+                                    {item.calories} cal
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="flex-shrink-0">
+                              {log.imageUrl ? (
                                 <div className="relative h-12 w-12 overflow-hidden rounded-md border bg-gray-100 flex items-center justify-center">
                                   {log.imageIv ? (
                                     <EncryptedImage
@@ -357,26 +412,12 @@ export default function DashboardPage() {
                                     />
                                   )}
                                 </div>
-                              )}
-                              {!log.imageUrl && (
+                              ) : (
                                 <div className="h-12 w-12 flex items-center justify-center bg-gray-50 rounded-md border border-dashed text-gray-300">
                                   <ImageIcon className="w-4 h-4" />
                                 </div>
                               )}
                             </div>
-                          </div>
-                          <div className="space-y-1">
-                            {log.items.map((item, idx) => (
-                              <div
-                                key={`${log.id}-item-${idx}`}
-                                className="flex justify-between text-sm"
-                              >
-                                <span>{item.foodName}</span>
-                                <span className="font-medium">
-                                  {item.calories} cal
-                                </span>
-                              </div>
-                            ))}
                           </div>
                         </div>
                       ))}
