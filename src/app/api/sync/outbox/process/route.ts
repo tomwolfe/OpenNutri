@@ -81,7 +81,69 @@ export async function POST(request: NextRequest) {
         await db.delete(foodLogs).where(and(eq(foodLogs.id, entityId), eq(foodLogs.userId, userId)));
       }
     } else if (table === 'userTargets') {
-       // Similar logic for targets...
+      if (operation === 'PUT') {
+        // Upsert user target
+        await db.insert(userTargets).values({
+          userId: payload.userId,
+          date: payload.date,
+          calorieTarget: payload.calorieTarget,
+          proteinTarget: payload.proteinTarget,
+          carbTarget: payload.carbTarget,
+          fatTarget: payload.fatTarget,
+          weightRecord: payload.weightRecord,
+          highSodium: payload.highSodium,
+          highCarbs: payload.highCarbs,
+          yjsData: payload.yjsData,
+          version: payload.version,
+          deviceId: payload.deviceId,
+          updatedAt: new Date(payload.updatedAt),
+        }).onConflictDoUpdate({
+          target: [userTargets.userId, userTargets.date],
+          set: {
+            calorieTarget: payload.calorieTarget,
+            proteinTarget: payload.proteinTarget,
+            carbTarget: payload.carbTarget,
+            fatTarget: payload.fatTarget,
+            weightRecord: payload.weightRecord,
+            highSodium: payload.highSodium,
+            highCarbs: payload.highCarbs,
+            yjsData: payload.yjsData,
+            version: payload.version,
+            deviceId: payload.deviceId,
+            updatedAt: new Date(payload.updatedAt),
+          }
+        });
+      } else if (operation === 'DELETE') {
+        await db.delete(userTargets).where(
+          and(eq(userTargets.userId, userId), eq(userTargets.date, entityId))
+        );
+      }
+    } else if (table === 'userRecipes') {
+      if (operation === 'PUT') {
+        // Upsert user recipe
+        await db.insert(userRecipes).values({
+          id: payload.id,
+          userId,
+          name: payload.name,
+          description: payload.description,
+          encryptedData: payload.encryptedData,
+          encryptionIv: payload.encryptionIv,
+          version: payload.version,
+          updatedAt: new Date(payload.updatedAt),
+        }).onConflictDoUpdate({
+          target: [userRecipes.id],
+          set: {
+            name: payload.name,
+            description: payload.description,
+            encryptedData: payload.encryptedData,
+            encryptionIv: payload.encryptionIv,
+            version: payload.version,
+            updatedAt: new Date(payload.updatedAt),
+          }
+        });
+      } else if (operation === 'DELETE') {
+        await db.delete(userRecipes).where(and(eq(userRecipes.id, entityId), eq(userRecipes.userId, userId)));
+      }
     }
 
     return NextResponse.json({ success: true });

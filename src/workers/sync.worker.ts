@@ -5,7 +5,7 @@
  * Powered by Yjs and Dexie.
  */
 
-import { db, type LocalFoodLog } from '../lib/db-local';
+import { db, type LocalFoodLog, type LocalUserTarget } from '../lib/db-local';
 import { mergeCrdt, applyYUpdate, encodeYDoc } from '../lib/crdt';
 import * as Y from 'yjs';
 
@@ -55,7 +55,7 @@ function resolveLogConflict(
       map.set('encryptionIv', serverLog.encryptionIv);
       needsOverride = true;
     }
-  } 
+  }
   else if (localLog.aiConfidenceScore !== null && serverLog.aiConfidenceScore !== null) {
     const diff = (localLog.aiConfidenceScore || 0) - (serverLog.aiConfidenceScore || 0);
     if (Math.abs(diff) > 0.05) {
@@ -67,6 +67,74 @@ function resolveLogConflict(
         map.set('encryptionIv', preferred.encryptionIv);
         needsOverride = true;
       }
+    }
+  }
+
+  if (needsOverride) {
+    return {
+      mergedUpdate: encodeYDoc(doc),
+      mergedData: map.toJSON() as Record<string, unknown>
+    };
+  }
+
+  return { mergedUpdate, mergedData: currentData };
+}
+
+/**
+ * Domain-aware conflict resolution for user targets (Worker version)
+ * Uses CRDT merge with business rules (prefer newer timestamps, favor weight records)
+ */
+function resolveTargetConflict(
+  localTarget: LocalUserTarget | undefined,
+  serverTarget: LocalUserTarget
+): { mergedUpdate: string; mergedData: Record<string, unknown> } {
+  const { mergedUpdate, mergedData } = mergeCrdt(
+    localTarget?.yjsData || null,
+    serverTarget.yjsData || null,
+    (localTarget || serverTarget) as any,
+    serverTarget as any
+  );
+
+  if (!localTarget) return { mergedUpdate, mergedData: mergedData as Record<string, unknown> };
+
+  const doc = new Y.Doc();
+  applyYUpdate(doc, mergedUpdate);
+  const map = doc.getMap('data');
+  let needsOverride = false;
+  const currentData = mergedData as Record<string, unknown>;
+
+  // Rule: Prefer newer timestamp for weight records (user-entered data)
+  if (localTarget.weightRecord !== null || serverTarget.weightRecord !== null) {
+    const localTime = localTarget.updatedAt || 0;
+    const serverTime = new Date(serverTarget.updatedAt).getTime() || 0;
+    
+    if (localTime > serverTime && localTarget.weightRecord !== null) {
+      if (currentData.weightRecord !== localTarget.weightRecord) {
+        map.set('weightRecord', localTarget.weightRecord);
+        needsOverride = true;
+      }
+    } else if (serverTime > localTime && serverTarget.weightRecord !== null) {
+      if (currentData.weightRecord !== serverTarget.weightRecord) {
+        map.set('weightRecord', serverTarget.weightRecord);
+        needsOverride = true;
+      }
+    }
+  }
+
+  // Rule: Prefer higher calorie/protein targets (more ambitious goals)
+  if (localTarget.calorieTarget !== null && serverTarget.calorieTarget !== null) {
+    const maxCalories = Math.max(localTarget.calorieTarget, serverTarget.calorieTarget);
+    if (currentData.calorieTarget !== maxCalories) {
+      map.set('calorieTarget', maxCalories);
+      needsOverride = true;
+    }
+  }
+
+  if (localTarget.proteinTarget !== null && serverTarget.proteinTarget !== null) {
+    const maxProtein = Math.max(localTarget.proteinTarget, serverTarget.proteinTarget);
+    if (currentData.proteinTarget !== maxProtein) {
+      map.set('proteinTarget', maxProtein);
+      needsOverride = true;
     }
   }
 
@@ -215,7 +283,7 @@ self.onmessage = async (event: MessageEvent) => {
         if (response.ok) {
           const result = await response.json();
           const serverConflicts = (result.conflicts || []) as Array<{ type: string, id: string }>;
-          
+
           for (const log of unsyncedLogs) {
             const hasConflict = serverConflicts.some((c) => c.type === 'log' && c.id === log.id);
             if (!hasConflict) {
@@ -227,27 +295,39 @@ self.onmessage = async (event: MessageEvent) => {
               pushed++;
             }
           }
-          
-            for (const recipe of unsyncedRecipes) {
-              const hasConflict = serverConflicts.some((c) => c.type === 'recipe' && c.id === recipe.id);
-              if (!hasConflict) {
-                await db.userRecipes.update(recipe.id, {
-                  synced: 1,
-                  version: (recipe.version || 0) + 1,
-                  deviceId,
-                });
-              }
+
+          for (const target of unsyncedTargets) {
+            const hasConflict = serverConflicts.some((c) => c.type === 'target' && c.id === `${target.userId}-${target.date}`);
+            if (!hasConflict) {
+              await db.userTargets.update(target.userId + '_' + target.date, {
+                synced: true,
+                version: (target.version || 0) + 1,
+                deviceId,
+              });
+            }
+          }
+
+          for (const recipe of unsyncedRecipes) {
+            const hasConflict = serverConflicts.some((c) => c.type === 'recipe' && c.id === recipe.id);
+            if (!hasConflict) {
+              await db.userRecipes.update(recipe.id, {
+                synced: 1,
+                version: (recipe.version || 0) + 1,
+                deviceId,
+              });
             }
           }
         }
+      }
 
-        // 2. Pull
+      // 2. Pull
       const pullRes = await fetch(`/api/sync/delta?since=${lastSyncTimestamp}`);
       if (!pullRes.ok) throw new Error('Pull failed');
       const data = await pullRes.json();
       
       const serverLogs = (data.logs || []) as LocalFoodLog[];
       const serverRecipes = (data.recipes || []) as any[];
+      const serverTargets = (data.targets || []) as LocalUserTarget[];
       let pulled = 0;
 
       // Sync Logs
@@ -256,7 +336,7 @@ self.onmessage = async (event: MessageEvent) => {
         if (sLog.deviceId === deviceId) continue;
         const localLog = await db.foodLogs.get(sLog.id);
         const { mergedUpdate, mergedData } = resolveLogConflict(localLog, sLog);
-        
+
         const hasLocalChanges = localLog && !localLog.synced;
         const needsRePush = hasLocalChanges || mergedUpdate !== sLog.yjsData;
 
@@ -273,12 +353,31 @@ self.onmessage = async (event: MessageEvent) => {
         pulled++;
       }
 
+      // Sync Targets (CRDT merge with business rules)
+      for (const sTarget of serverTargets) {
+        if (sTarget.deviceId === deviceId) continue;
+        const localTarget = await db.userTargets.get([sTarget.userId, sTarget.date]);
+        const { mergedUpdate, mergedData } = resolveTargetConflict(localTarget, sTarget);
+
+        const hasLocalChanges = localTarget && !localTarget.synced;
+        const needsRePush = hasLocalChanges || mergedUpdate !== sTarget.yjsData;
+
+        await db.userTargets.put({
+          ...sTarget,
+          ...mergedData,
+          yjsData: mergedUpdate,
+          updatedAt: Date.now(),
+          synced: !needsRePush,
+          version: Math.max(localTarget?.version || 0, sTarget.version || 0) + 1,
+        });
+      }
+
       // Sync Recipes (LWW - Last Write Wins)
       const pulledRecipeIds: string[] = [];
       for (const sRecipe of serverRecipes) {
         if (sRecipe.deviceId === deviceId) continue;
         const localRecipe = await db.userRecipes.get(sRecipe.id);
-        
+
         if (!localRecipe || new Date(sRecipe.updatedAt) > new Date(localRecipe.updatedAt)) {
           await db.userRecipes.put({
             ...sRecipe,

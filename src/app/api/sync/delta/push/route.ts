@@ -90,7 +90,88 @@ export async function POST(request: NextRequest) {
       serverVersion: number;
     }> = [];
 
-    // Process food logs... (existing logic)
+    // Process food logs
+    if (body.logs && body.logs.length > 0) {
+      for (const log of body.logs) {
+        if (log.deviceId && log.deviceId !== userId) continue;
+
+        const existingLogs = await db
+          .select()
+          .from(foodLogs)
+          .where(and(eq(foodLogs.id, log.id), eq(foodLogs.userId, userId)))
+          .limit(1);
+
+        const serverVersion = existingLogs.length > 0 ? existingLogs[0].version : 0;
+
+        // Conflict detection: if server version is >= local version, reject push
+        if (serverVersion >= log.version) {
+          conflicts.push({
+            type: 'log',
+            id: log.id,
+            localVersion: log.version,
+            serverVersion,
+          });
+          continue;
+        }
+
+        // Upsert the food log
+        await db
+          .insert(foodLogs)
+          .values({
+            id: log.id,
+            userId,
+            timestamp: new Date(log.timestamp),
+            mealType: log.mealType,
+            totalCalories: log.totalCalories,
+            aiConfidenceScore: log.aiConfidenceScore,
+            isVerified: log.isVerified,
+            imageUrl: log.imageUrl,
+            notes: log.notes,
+            encryptedData: log.encryptedData,
+            encryptionIv: log.encryptionIv,
+            encryptionSalt: log.encryptionSalt,
+            yjsData: log.yjsData,
+            version: log.version,
+            deviceId: log.deviceId,
+            updatedAt: new Date(log.updatedAt),
+          })
+          .onConflictDoUpdate({
+            target: [foodLogs.id],
+            set: {
+              mealType: log.mealType,
+              totalCalories: log.totalCalories,
+              aiConfidenceScore: log.aiConfidenceScore,
+              isVerified: log.isVerified,
+              imageUrl: log.imageUrl,
+              notes: log.notes,
+              encryptedData: log.encryptedData,
+              encryptionIv: log.encryptionIv,
+              encryptionSalt: log.encryptionSalt,
+              yjsData: log.yjsData,
+              version: log.version,
+              deviceId: log.deviceId,
+              updatedAt: new Date(log.updatedAt),
+            },
+          });
+
+        // Process log items if present (delete old + insert new for clean state)
+        if (log.items && log.items.length > 0) {
+          await db.delete(logItems).where(eq(logItems.logId, log.id));
+
+          await db.insert(logItems).values(
+            log.items.map((item) => ({
+              logId: log.id,
+              foodName: item.foodName,
+              calories: item.calories,
+              protein: item.protein,
+              carbs: item.carbs,
+              fat: item.fat,
+              source: item.source || 'AI_ESTIMATE',
+            }))
+          );
+        }
+      }
+    }
 
     // Process user recipes
     if (body.recipes && body.recipes.length > 0) {

@@ -52,7 +52,38 @@ export async function GET(request: NextRequest) {
       serverTime: Date.now(),
     };
 
-    // Fetch food logs... (existing logic)
+    // Fetch food logs modified since timestamp
+    if (includeTypes.includes('logs')) {
+      const logs = await db.query.foodLogs.findMany({
+        where: and(
+          eq(foodLogs.userId, session.user.id),
+          gt(foodLogs.updatedAt, sinceTimestamp)
+        ),
+        with: {
+          logItems: true,
+        },
+        columns: {
+          id: true,
+          userId: true,
+          timestamp: true,
+          mealType: true,
+          totalCalories: true,
+          aiConfidenceScore: true,
+          isVerified: true,
+          imageUrl: true,
+          notes: true,
+          encryptedData: true,
+          encryptionIv: true,
+          encryptionSalt: true,
+          yjsData: true,
+          version: true,
+          deviceId: true,
+          updatedAt: true,
+        },
+      });
+
+      results.logs = logs;
+    }
 
     // Fetch user recipes modified since timestamp
     if (includeTypes.includes('recipes')) {
@@ -76,7 +107,32 @@ export async function GET(request: NextRequest) {
       results.recipes = recipes;
     }
 
-    // Fetch user targets... (existing logic)
+    // Fetch user targets modified since timestamp
+    if (includeTypes.includes('targets')) {
+      const targets = await db.query.userTargets.findMany({
+        where: and(
+          eq(userTargets.userId, session.user.id),
+          gt(userTargets.updatedAt, sinceTimestamp)
+        ),
+        columns: {
+          userId: true,
+          date: true,
+          calorieTarget: true,
+          proteinTarget: true,
+          carbTarget: true,
+          fatTarget: true,
+          weightRecord: true,
+          highSodium: true,
+          highCarbs: true,
+          yjsData: true,
+          version: true,
+          deviceId: true,
+          updatedAt: true,
+        },
+      });
+
+      results.targets = targets;
+    }
 
 
     return NextResponse.json(results);

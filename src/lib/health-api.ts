@@ -335,3 +335,168 @@ export async function cleanupOldHealthData(
     await db.healthData.delete([userId, item.date]);
   }
 }
+
+/**
+ * Google Fit OAuth 2.0 Configuration
+ */
+const GOOGLE_FIT_CONFIG = {
+  clientId: process.env.NEXT_PUBLIC_GOOGLE_FIT_CLIENT_ID || '',
+  redirectUri: typeof window !== 'undefined' ? window.location.origin + '/api/auth/google-fit/callback' : '',
+  scopes: [
+    'https://www.googleapis.com/auth/fitness.activity.read',
+    'https://www.googleapis.com/auth/fitness.body.read',
+  ],
+};
+
+/**
+ * Get Google Fit access token from sessionStorage or initiate OAuth flow
+ * Returns null if not authenticated or if OAuth flow needs to be initiated
+ */
+export async function getGoogleFitAccessToken(): Promise<string | null> {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  // Check sessionStorage for existing token
+  const stored = sessionStorage.getItem('google_fit_access_token');
+  const expiresAt = sessionStorage.getItem('google_fit_expires_at');
+
+  if (stored && expiresAt) {
+    const expiryTime = parseInt(expiresAt, 10);
+    const now = Date.now();
+
+    // Token is still valid (with 5 minute buffer)
+    if (now < expiryTime - 5 * 60 * 1000) {
+      return stored;
+    }
+
+    // Token is expired, remove it
+    sessionStorage.removeItem('google_fit_access_token');
+    sessionStorage.removeItem('google_fit_expires_at');
+  }
+
+  // No valid token found - OAuth flow required
+  console.log('Google Fit OAuth required, initiating flow...');
+  return null;
+}
+
+/**
+ * Initiate Google Fit OAuth 2.0 authorization flow
+ * Opens Google OAuth popup and handles the authorization response
+ */
+export async function initiateGoogleFitOAuth(): Promise<string | null> {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  if (!GOOGLE_FIT_CONFIG.clientId) {
+    console.error('Google Fit Client ID not configured');
+    return null;
+  }
+
+  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authUrl.searchParams.set('client_id', GOOGLE_FIT_CONFIG.clientId);
+  authUrl.searchParams.set('redirect_uri', GOOGLE_FIT_CONFIG.redirectUri);
+  authUrl.searchParams.set('response_type', 'token');
+  authUrl.searchParams.set('scope', GOOGLE_FIT_CONFIG.scopes.join(' '));
+  authUrl.searchParams.set('access_type', 'offline');
+  authUrl.searchParams.set('prompt', 'consent');
+  authUrl.searchParams.set('state', crypto.randomUUID());
+
+  return new Promise((resolve) => {
+    const popupWidth = 500;
+    const popupHeight = 600;
+    const left = window.screenX + (window.outerWidth - popupWidth) / 2;
+    const top = window.screenY + (window.outerHeight - popupHeight) / 2;
+
+    const popup = window.open(
+      authUrl.toString(),
+      'Google Fit OAuth',
+      `width=${popupWidth},height=${popupHeight},left=${left},top=${top}`
+    );
+
+    if (!popup) {
+      console.error('Failed to open OAuth popup - popup blocker may be enabled');
+      resolve(null);
+      return;
+    }
+
+    // Listen for message from popup callback
+    const handleMessage = (event: MessageEvent) => {
+      // Verify origin for security
+      if (event.origin !== window.location.origin) return;
+
+      if (event.data.type === 'GOOGLE_FIT_OAUTH_SUCCESS') {
+        const { accessToken, expiresIn } = event.data.payload;
+
+        // Store token in sessionStorage
+        sessionStorage.setItem('google_fit_access_token', accessToken);
+        sessionStorage.setItem('google_fit_expires_at', (Date.now() + expiresIn * 1000).toString());
+
+        resolve(accessToken);
+      } else if (event.data.type === 'GOOGLE_FIT_OAUTH_ERROR') {
+        console.error('Google Fit OAuth error:', event.data.error);
+        resolve(null);
+      }
+
+      window.removeEventListener('message', handleMessage);
+      popup.close();
+    };
+
+    window.addEventListener('message', handleMessage);
+
+    // Check if popup was closed without completing
+    const checkClosed = setInterval(() => {
+      if (popup.closed) {
+        clearInterval(checkClosed);
+        window.removeEventListener('message', handleMessage);
+        resolve(null);
+      }
+    }, 500);
+  });
+}
+
+/**
+ * Revoke Google Fit access token and clear stored credentials
+ */
+export async function revokeGoogleFitAccessToken(): Promise<void> {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const token = sessionStorage.getItem('google_fit_access_token');
+
+  if (token) {
+    try {
+      // Revoke token with Google
+      await fetch(`https://oauth2.googleapis.com/revoke?token=${token}`, {
+        method: 'POST',
+      });
+    } catch (error) {
+      console.error('Failed to revoke Google Fit token:', error);
+    }
+
+    // Clear stored tokens
+    sessionStorage.removeItem('google_fit_access_token');
+    sessionStorage.removeItem('google_fit_expires_at');
+  }
+}
+
+/**
+ * Check if user is authenticated with Google Fit
+ */
+export function isGoogleFitAuthenticated(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  const token = sessionStorage.getItem('google_fit_access_token');
+  const expiresAt = sessionStorage.getItem('google_fit_expires_at');
+
+  if (!token || !expiresAt) return false;
+
+  const expiryTime = parseInt(expiresAt, 10);
+  const now = Date.now();
+
+  return now < expiryTime - 5 * 60 * 1000;
+}
