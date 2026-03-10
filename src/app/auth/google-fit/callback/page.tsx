@@ -47,7 +47,7 @@ export default function GoogleFitCallback() {
     <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
       <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mb-4"></div>
       <h1 className="text-xl font-semibold mb-2">Connecting to Google Fit...</h1>
-      <p className="text-muted-foreground">You can close this window if it doesn't close automatically.</p>
+      <p className="text-muted-foreground">You can close this window if it doesn&apos;t close automatically.</p>
     </div>
   );
 }

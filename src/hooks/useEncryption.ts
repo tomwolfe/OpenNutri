@@ -45,8 +45,8 @@ interface UseEncryptionReturn {
   decryptBinary: (ciphertext: ArrayBuffer, iv: ArrayBuffer | Uint8Array, key?: CryptoKey) => Promise<ArrayBuffer>;
   generateSessionKey: () => Promise<CryptoKey>;
   exportKeyToBase64: (key: CryptoKey) => Promise<string>;
-  initializeKey: (email: string, password: string) => Promise<VaultKeyData>;
-  unlockVault: (password: string, salt: string, encryptedKey: string, iv: string) => Promise<void>;
+  initializeKey: (userId: string | null, email: string, password: string) => Promise<VaultKeyData>;
+  unlockVault: (userId: string, password: string, salt: string, encryptedKey: string, iv: string) => Promise<void>;
   enableBiometricUnlock: (userId: string) => Promise<boolean>;
   unlockWithBiometrics: (userId: string) => Promise<boolean>;
   clearKey: () => void;
@@ -247,7 +247,7 @@ export function useEncryption(): UseEncryptionReturn {
     const keyData = await generateVaultKey(email, password);
     // Derive the master key object for current session
     const masterKey = await getVaultKey(password, keyData.salt, keyData.encryptedKey, keyData.iv);
-    setVaultKey(masterKey);
+    setKey(masterKey);
     if (userId) {
       await persistSessionKey(masterKey, userId);
     }
@@ -258,7 +258,7 @@ export function useEncryption(): UseEncryptionReturn {
   const unlockVault = useCallback(async (userId: string, password: string, salt: string, encryptedKey: string, iv: string) => {
     try {
       const masterKey = await getVaultKey(password, salt, encryptedKey, iv);
-      setVaultKey(masterKey);
+      setKey(masterKey);
       await persistSessionKey(masterKey, userId);
     } catch (err) {
       console.error('Failed to unlock vault:', err);
@@ -282,7 +282,7 @@ export function useEncryption(): UseEncryptionReturn {
       const unlockedKey = await unlockVaultWithBiometrics(userId);
       if (unlockedKey) {
         setKey(unlockedKey);
-        await persistSessionKey(unlockedKey);
+        await persistSessionKey(unlockedKey, userId);
         return true;
       }
       return false;
