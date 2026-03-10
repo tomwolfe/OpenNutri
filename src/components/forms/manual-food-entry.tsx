@@ -163,6 +163,8 @@ let encryptionIv = null;
         mealType: encryptedData ? 'encrypted' : mealType,
         items: encryptedData ? [] : items,
         totalCalories: encryptedData ? 0 : totals.calories,
+        notes: encryptedData ? 'encrypted' : null,
+        imageUrl: null,
         encryptedData,
         encryptionIv,
       }),

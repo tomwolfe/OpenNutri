@@ -64,6 +64,7 @@ export async function POST(request: NextRequest) {
 
     // Determine request type
     const contentType = request.headers.get('content-type') || '';
+    const isEphemeral = request.headers.get('x-ephemeral') === 'true';
 
     let isEncrypted = false;
     let sessionKeyBase64: string | null = request.headers.get('x-session-key');
@@ -97,9 +98,16 @@ export async function POST(request: NextRequest) {
           imageSource = imageUrl;
         } else {
           imageSource = imageUrl;
-          imageUrlToDelete = imageUrl;
+          // Only purge if it's not explicitly ephemeral (though ephemeral implies no URL should be passed)
+          if (!isEphemeral) {
+            imageUrlToDelete = imageUrl;
+          }
         }
       }
+    }
+
+    if (isEphemeral) {
+      console.log('Processing ephemeral analysis request (no storage)');
     }
 
     // Decrypt if necessary

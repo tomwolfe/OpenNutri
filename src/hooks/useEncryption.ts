@@ -112,7 +112,16 @@ export function useEncryption(): UseEncryptionReturn {
       const targetKey = customKey || key;
       if (!targetKey) throw new Error('Vault not unlocked and no session key provided.');
       const { decryptBinary } = await import('@/lib/encryption');
-      return decryptBinary(ciphertext, iv, targetKey);
+      try {
+        const result = await decryptBinary(ciphertext, iv, targetKey);
+        const { logPrivacyEvent } = await import('@/lib/privacy-audit');
+        await logPrivacyEvent('Binary data decryption', 'decryption', `Decrypted ${ciphertext.byteLength} bytes of binary data`, 'success');
+        return result;
+      } catch (err) {
+        const { logPrivacyEvent } = await import('@/lib/privacy-audit');
+        await logPrivacyEvent('Binary data decryption', 'decryption', `Failed to decrypt ${ciphertext.byteLength} bytes`, 'failure');
+        throw err;
+      }
     },
     [key]
   );
@@ -305,7 +314,16 @@ export function useEncryption(): UseEncryptionReturn {
   const decryptLog = useCallback(
     async (encryptedData: string, iv: string): Promise<EncryptedFoodLog> => {
       if (!key) throw new Error('Vault not unlocked. Please log in first.');
-      return decryptFoodLog(encryptedData, iv, key);
+      try {
+        const result = await decryptFoodLog(encryptedData, iv, key);
+        const { logPrivacyEvent } = await import('@/lib/privacy-audit');
+        await logPrivacyEvent('Food log decryption', 'decryption', 'Decrypted food log data', 'success');
+        return result;
+      } catch (err) {
+        const { logPrivacyEvent } = await import('@/lib/privacy-audit');
+        await logPrivacyEvent('Food log decryption', 'decryption', 'Failed to decrypt food log data', 'failure');
+        throw err;
+      }
     },
     [key]
   );

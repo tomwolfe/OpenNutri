@@ -233,19 +233,18 @@ export function useCoaching(options: UseCoachingOptions = {}) {
     try {
       switch (action.type) {
         case 'UPDATE_TARGET':
-          // Call API to update user targets with today's date
-          const today = new Date().toISOString().split('T')[0];
-          const payload = action.payload as { calorieTarget?: number; proteinTarget?: number };
-          const response = await fetch('/api/targets', {
+          // Task 4.10: Call dedicated apply-recommendation endpoint
+          const payload = action.payload as { calorieTarget?: number; proteinTarget?: number; carbTarget?: number; fatTarget?: number };
+          const response = await fetch('/api/targets/apply-recommendation', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              date: today,
-              ...payload,
-            }),
+            body: JSON.stringify(payload),
           });
 
-          if (!response.ok) throw new Error('Failed to update target');
+          if (!response.ok) {
+            const errData = await response.json();
+            throw new Error(errData.error || 'Failed to update target');
+          }
 
           // Refresh coaching data
           await fetchInsights();

@@ -113,12 +113,27 @@ export function mergeCrdt(
           map.set(k, yArray);
         }
         
-        // Very simple diffing: if lengths match and items look similar, don't re-insert
-        // In a real app, we'd use IDs for items to merge accurately.
-        const currentItems = (yArray as Y.Array<unknown>).toArray();
+        // Task 4.7: Granular operational transforms for items
+        const currentYArray = yArray as Y.Array<unknown>;
+        const currentItems = currentYArray.toArray();
+        
+        // Basic diffing to avoid full replacement
         if (JSON.stringify(currentItems) !== JSON.stringify(v)) {
-          (yArray as Y.Array<unknown>).delete(0, (yArray as Y.Array<unknown>).length);
-          (yArray as Y.Array<unknown>).insert(0, v);
+          // If lengths are different or items changed, we need to sync them
+          // For now, we'll do a slightly smarter replacement that preserves common prefixes
+          let commonPrefix = 0;
+          while (commonPrefix < currentItems.length && 
+                 commonPrefix < v.length && 
+                 JSON.stringify(currentItems[commonPrefix]) === JSON.stringify(v[commonPrefix])) {
+            commonPrefix++;
+          }
+
+          if (commonPrefix < currentItems.length) {
+            currentYArray.delete(commonPrefix, currentItems.length - commonPrefix);
+          }
+          if (commonPrefix < v.length) {
+            currentYArray.insert(commonPrefix, v.slice(commonPrefix));
+          }
         }
       } else if (map.get(k) !== v) {
         map.set(k, v);

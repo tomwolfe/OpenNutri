@@ -51,19 +51,59 @@ function setLastSyncTimestamp(timestamp: number): void {
 
 /**
  * Global Delta Sync (Offloaded to Worker)
+ * Task 4.9: Enhanced with throttling, WiFi-only check, and exponential backoff
  */
 export async function syncDelta(
   userId: string,
   vaultKey: CryptoKey | null
 ): Promise<{ success: boolean; pulled: number; pushed: number; pulledLogIds?: string[] }> {
   try {
-    const { syncDeltaInWorker, decryptBatchInWorker } = await import('@/lib/worker-client');
     const deviceId = getDeviceId();
     const since = getLastSyncTimestamp();
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
 
-    // 1. Offload the main sync logic to the worker
+    // 1. Task 4.9: Throttling & Connection Checks
+    if (typeof window !== 'undefined' && typeof navigator !== 'undefined') {
+      // Check if sync only on WiFi is enabled (default: true)
+      const wifiOnly = localStorage.getItem('opennutri_sync_wifi_only') !== 'false';
+      const connection = (navigator as any).connection || (navigator as any).mozConnection || (navigator as any).webkitConnection;
+      
+      if (wifiOnly && connection && connection.type && connection.type !== 'wifi' && connection.type !== 'ethernet') {
+        console.log('SyncEngine: Skipping sync (not on WiFi)');
+        return { success: false, pulled: 0, pushed: 0 };
+      }
+
+      // Exponential Backoff check
+      const failureCount = parseInt(localStorage.getItem('opennutri_sync_failure_count') || '0');
+      if (failureCount > 0) {
+        const lastFailure = parseInt(localStorage.getItem('opennutri_sync_last_failure') || '0');
+        const backoffMs = Math.min(Math.pow(2, failureCount) * 1000, 300000); // Max 5 mins
+        if (Date.now() - lastFailure < backoffMs) {
+          console.warn(`SyncEngine: In backoff period (${Math.round((backoffMs - (Date.now() - lastFailure)) / 1000)}s remaining)`);
+          return { success: false, pulled: 0, pushed: 0 };
+        }
+      }
+
+      // Throttle frequent syncs (max once every 30 seconds)
+      const lastSync = parseInt(localStorage.getItem('opennutri_last_sync_attempt') || '0');
+      if (Date.now() - lastSync < 30000) {
+        return { success: false, pulled: 0, pushed: 0 };
+      }
+      localStorage.setItem('opennutri_last_sync_attempt', Date.now().toString());
+    }
+
+    const { syncDeltaInWorker, decryptBatchInWorker } = await import('@/lib/worker-client');
+
+    // 2. Offload the main sync logic to the worker
     const { pulled, pushed, serverTime, pulledLogIds } = await syncDeltaInWorker(userId, deviceId, since, origin);
+
+    // Reset failure count on success
+    localStorage.setItem('opennutri_sync_failure_count', '0');
+
+    const { logPrivacyEvent } = await import('@/lib/privacy-audit');
+    if (pulled > 0 || pushed > 0) {
+      await logPrivacyEvent('Delta Sync', 'sync', `Synced ${pushed} items up, ${pulled} items down`, 'success');
+    }
 
     // 2. Handle decryption using explicit pulled IDs
     if (pulledLogIds && pulledLogIds.length > 0 && vaultKey) {
@@ -84,6 +124,13 @@ export async function syncDelta(
     setLastSyncTimestamp(serverTime);
     return { success: true, pulled, pushed, pulledLogIds };
   } catch (error) {
+    // Task 4.9: Record failure for exponential backoff
+    if (typeof window !== 'undefined') {
+      const currentFailures = parseInt(localStorage.getItem('opennutri_sync_failure_count') || '0');
+      localStorage.setItem('opennutri_sync_failure_count', (currentFailures + 1).toString());
+      localStorage.setItem('opennutri_sync_last_failure', Date.now().toString());
+    }
+
     if (error instanceof Error && error.message === 'UNAUTHORIZED') {
       console.warn('SyncEngine: Unauthorized. Session may be expired.');
       // Task 3: Trigger Vault Unlock UI via global event

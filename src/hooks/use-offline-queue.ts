@@ -151,6 +151,7 @@ export function useOfflineQueue(): UseOfflineQueueReturn {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
+              'x-ephemeral': 'true', // SIGNAL: Ephemeral in-memory only analysis
             },
             body: JSON.stringify({
               imageUrl: base64Uri,
@@ -192,6 +193,7 @@ export function useOfflineQueue(): UseOfflineQueueReturn {
               mealType: encryptedData ? 'encrypted' : pending.mealType,
               items: encryptedData ? [] : items,
               totalCalories: encryptedData ? 0 : totalCalories,
+              notes: encryptedData ? 'encrypted' : null,
               imageUrl: encryptedData ? null : vaultUrl,
               encryptedData,
               encryptionIv,

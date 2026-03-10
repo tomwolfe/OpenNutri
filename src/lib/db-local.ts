@@ -155,6 +155,16 @@ export interface OFFProductCache {
   lastFetched: number; // Unix timestamp
 }
 
+export interface PrivacyAuditLog {
+  id?: number;
+  timestamp: number;
+  event: string;
+  category: 'decryption' | 'ai_analysis' | 'sync' | 'export' | 'sharing';
+  details: string;
+  userAgent?: string;
+  status: 'success' | 'failure' | 'warning';
+}
+
 export class OpenNutriDB extends Dexie {
   pendingImages!: Table<PendingImage>;
   foodLogs!: Table<LocalFoodLog>;
@@ -168,10 +178,11 @@ export class OpenNutriDB extends Dexie {
   localSemanticCache!: Table<LocalSemanticMatch>;
   syncOutbox!: Table<SyncOutboxItem>;
   offProducts!: Table<OFFProductCache>;
+  privacyAudit!: Table<PrivacyAuditLog>;
 
   constructor() {
     super('OpenNutriDB');
-    this.version(10).stores({
+    this.version(11).stores({
       pendingImages: 'id, timestamp',
       foodLogs: 'id, userId, timestamp, synced, updatedAt',
       decryptedLogs: 'id, userId, timestamp',
@@ -184,6 +195,7 @@ export class OpenNutriDB extends Dexie {
       localSemanticCache: 'id, lastUsed',
       syncOutbox: '++id, userId, status, timestamp',
       offProducts: 'id, lastFetched',
+      privacyAudit: '++id, timestamp, category, status',
     });
   }
 

@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '@/lib/db-local';
 import {
   Card,
   CardContent,
@@ -8,12 +9,8 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Loader2, TrendingUp, TrendingDown } from 'lucide-react';
-
-interface WeightEntry {
-  date: string;
-  weight: number;
-}
+import { Loader2, TrendingUp, TrendingDown, Info, Droplets } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface WeightChartProps {
   days?: number;
@@ -21,44 +18,21 @@ interface WeightChartProps {
 }
 
 export function WeightChart({ days = 30, height = 200 }: WeightChartProps) {
-  const [weightHistory, setWeightHistory] = useState<WeightEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const weightHistory = useLiveQuery(
+    async () => {
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - days);
+      const cutoffStr = cutoffDate.toISOString().split('T')[0];
 
-  const fetchWeightHistory = useCallback(async () => {
-    try {
-      const response = await fetch('/api/targets');
-      const data = await response.json();
+      return await db.userTargets
+        .where('date')
+        .aboveOrEqual(cutoffStr)
+        .toArray();
+    },
+    [days]
+  );
 
-      if (data.targets) {
-        const weights = data.targets
-          .filter((t: { weightRecord: number | null }) => t.weightRecord !== null)
-          .map((t: { date: string; weightRecord: number }) => ({
-            date: t.date,
-            weight: t.weightRecord,
-          }))
-          .sort((a: WeightEntry, b: WeightEntry) => 
-            new Date(a.date).getTime() - new Date(b.date).getTime()
-          );
-
-        // Filter to last N days
-        const cutoffDate = new Date();
-        cutoffDate.setDate(cutoffDate.getDate() - days);
-        const filtered = weights.filter(
-          (entry: WeightEntry) => new Date(entry.date) >= cutoffDate
-        );
-
-        setWeightHistory(filtered);
-      }
-    } catch (err) {
-      console.error('Failed to fetch weight history:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [days]);
-
-  useEffect(() => {
-    fetchWeightHistory();
-  }, [fetchWeightHistory]);
+  const loading = weightHistory === undefined;
 
   if (loading) {
     return (
@@ -75,7 +49,11 @@ export function WeightChart({ days = 30, height = 200 }: WeightChartProps) {
     );
   }
 
-  if (weightHistory.length === 0) {
+  const validEntries = (weightHistory || [])
+    .filter(t => t.weightRecord !== null)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  if (validEntries.length === 0) {
     return (
       <Card>
         <CardHeader className="pb-3">
@@ -92,7 +70,7 @@ export function WeightChart({ days = 30, height = 200 }: WeightChartProps) {
   }
 
   // Calculate chart data
-  const weights = weightHistory.map((entry) => entry.weight);
+  const weights = validEntries.map((entry) => entry.weightRecord as number);
   const minWeight = Math.min(...weights) - 0.5;
   const maxWeight = Math.max(...weights) + 0.5;
   const range = maxWeight - minWeight || 1;
@@ -106,33 +84,39 @@ export function WeightChart({ days = 30, height = 200 }: WeightChartProps) {
   const padding = 5;
   const chartHeight = height - padding * 2;
 
-  const points = weightHistory.map((entry, index) => {
-    const x = padding + (index / (weightHistory.length - 1 || 1)) * (width - padding * 2);
-    const y = padding + chartHeight - ((entry.weight - minWeight) / range) * chartHeight;
-    return `${x},${y}`;
+  const points = validEntries.map((entry, index) => {
+    const x = padding + (index / (validEntries.length - 1 || 1)) * (width - padding * 2);
+    const y = padding + chartHeight - (((entry.weightRecord as number) - minWeight) / range) * chartHeight;
+    return { x, y, entry };
   });
 
-  const pathD = `M ${points.join(' L ')}`;
+  const pathD = `M ${points.map(p => `${p.x},${p.y}`).join(' L ')}`;
   const areaD = `${pathD} L ${width - padding},${height} L ${padding},${height} Z`;
-
-  // Generate date labels
-  const dateLabels = weightHistory.filter((_, index) => {
-    const step = Math.ceil(weightHistory.length / 5);
-    return index % step === 0 || index === weightHistory.length - 1;
-  });
 
   return (
     <Card>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="text-base">Weight Trend</CardTitle>
+          <div className="space-y-1">
+            <CardTitle className="text-base flex items-center gap-2">
+              Weight Trend
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger>
+                    <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-[200px] text-xs">
+                    Weight fluctuates based on hydration, salt, and carbs. Look at the long-term trend!
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </CardTitle>
             <CardDescription>
-              Last {days} days • {weightHistory.length} entries
+              Last {days} days • {validEntries.length} entries
             </CardDescription>
           </div>
           <div className={`flex items-center gap-1 text-sm ${
-            isIncreasing ? 'text-red-500' : 'text-green-500'
+            isIncreasing ? 'text-orange-500' : 'text-green-500'
           }`}>
             {isIncreasing ? (
               <TrendingUp className="h-4 w-4" />
@@ -161,23 +145,14 @@ export function WeightChart({ days = 30, height = 200 }: WeightChartProps) {
                 x2={width - padding}
                 y2={padding + chartHeight * ratio}
                 stroke="hsl(var(--border))"
-                strokeWidth="0.5"
+                strokeWidth="0.2"
               />
             ))}
 
-            {/* Area fill */}
             <defs>
               <linearGradient id="weightGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop
-                  offset="0%"
-                  stopColor="hsl(var(--primary))"
-                  stopOpacity={0.3}
-                />
-                <stop
-                  offset="100%"
-                  stopColor="hsl(var(--primary))"
-                  stopOpacity={0}
-                />
+                <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.2} />
+                <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0} />
               </linearGradient>
             </defs>
             <path d={areaD} fill="url(#weightGradient)" />
@@ -187,45 +162,56 @@ export function WeightChart({ days = 30, height = 200 }: WeightChartProps) {
               d={pathD}
               fill="none"
               stroke="hsl(var(--primary))"
-              strokeWidth="1.5"
+              strokeWidth="1.2"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
 
-            {/* Data points */}
-            {points.map((point, index) => {
-              const [cx, cy] = point.split(',').map(Number);
+            {/* Data points with metabolic markers */}
+            {points.map((p, index) => {
+              const isHighRetention = p.entry.highSodium || p.entry.highCarbs || p.entry.waterRetentionLikely;
+              
               return (
-                <circle
-                  key={index}
-                  cx={cx}
-                  cy={cy}
-                  r="1.5"
-                  fill="hsl(var(--background))"
-                  stroke="hsl(var(--primary))"
-                  strokeWidth="1"
-                />
+                <g key={index}>
+                  {isHighRetention && (
+                    <circle
+                      cx={p.x}
+                      cy={p.y}
+                      r="3"
+                      fill="hsl(var(--primary))"
+                      fillOpacity="0.15"
+                    />
+                  )}
+                  <circle
+                    cx={p.x}
+                    cy={p.y}
+                    r="1.2"
+                    fill={isHighRetention ? "hsl(var(--primary))" : "hsl(var(--background))"}
+                    stroke="hsl(var(--primary))"
+                    strokeWidth="0.8"
+                  />
+                </g>
               );
             })}
           </svg>
 
-          {/* Y-axis labels */}
-          <div className="absolute left-0 top-0 flex h-full flex-col justify-between text-xs text-muted-foreground">
-            <span>{maxWeight.toFixed(1)}</span>
-            <span>{((maxWeight + minWeight) / 2).toFixed(1)}</span>
-            <span>{minWeight.toFixed(1)}</span>
+          {/* Markers Legend */}
+          <div className="mt-4 flex items-center justify-center gap-4 text-[10px] text-muted-foreground">
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full border border-primary bg-background" />
+              <span>Normal</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full bg-primary/30" />
+              <Droplets className="h-3 w-3 text-blue-500" />
+              <span>Likely Water Retention (High Salt/Carbs)</span>
+            </div>
           </div>
 
-          {/* X-axis labels */}
-          <div className="absolute bottom-0 left-0 right-0 flex justify-between text-xs text-muted-foreground px-2">
-            {dateLabels.map((entry) => (
-              <span key={entry.date}>
-                {new Date(entry.date).toLocaleDateString(undefined, {
-                  month: 'short',
-                  day: 'numeric',
-                })}
-              </span>
-            ))}
+          {/* Y-axis labels */}
+          <div className="absolute left-0 top-0 flex h-full flex-col justify-between text-[10px] text-muted-foreground">
+            <span>{maxWeight.toFixed(1)}</span>
+            <span>{minWeight.toFixed(1)}</span>
           </div>
         </div>
       </CardContent>

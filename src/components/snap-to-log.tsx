@@ -387,34 +387,6 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
       }
       const ivBase64 = btoa(binary);
 
-      // Encrypt and upload permanent version for Visual Diary (in parallel)
-      let vaultUrl = null;
-      let vaultIv = null;
-      if (isReady && vaultKey) {
-        try {
-          // Use the actual vault key for permanent storage
-          const vaultEnc = await encryptBinary(arrayBuffer);
-          const encryptedFile = new File([vaultEnc.ciphertext], 'vault-image.bin', { type: 'application/octet-stream' });
-          const encryptedFormData = new FormData();
-          encryptedFormData.append('image', encryptedFile);
-          const encryptedUploadResponse = await fetch('/api/blob/upload', { method: 'POST', body: encryptedFormData });
-          if (encryptedUploadResponse.ok) {
-            const { imageUrl: eUrl } = await encryptedUploadResponse.json();
-            vaultUrl = eUrl;
-            const vIvArray = new Uint8Array(vaultEnc.iv);
-            let vBinary = '';
-            for (let i = 0; i < vIvArray.byteLength; i++) {
-              vBinary += String.fromCharCode(vIvArray[i]);
-            }
-            vaultIv = btoa(vBinary);
-          }
-        } catch (err) {
-          console.error('Vault encryption failed', err);
-        }
-      }
-
-      setImageUrl(vaultUrl || null);
-      setImageIv(vaultIv);
       setUploadProgress('streaming');
 
       // 3. Send Encrypted Binary Image + Session Key using FormData (not JSON)
@@ -432,7 +404,8 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
           method: 'POST',
           headers: {
             'x-session-key': sessionKeyBase64,
-            'x-session-iv': ivBase64
+            'x-session-iv': ivBase64,
+            'x-ephemeral': 'true' // SIGNAL: Ephemeral in-memory only analysis
           },
           body: formData
         });
@@ -580,6 +553,38 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
     if (draftItems.length === 0) return;
     setSaveInProgress(true);
     try {
+      // Defer vault upload until save for ephemeral analysis
+      let finalImageUrl = imageUrl;
+      let finalImageIv = imageIv;
+
+      if (!finalImageUrl && selectedFile && isReady && vaultKey) {
+        try {
+          const compressedBlob = await compressImage(selectedFile);
+          const arrayBuffer = await compressedBlob.arrayBuffer();
+          const vaultEnc = await encryptBinary(arrayBuffer);
+          const encryptedFile = new File([vaultEnc.ciphertext], 'vault-image.bin', { type: 'application/octet-stream' });
+          const encryptedFormData = new FormData();
+          encryptedFormData.append('image', encryptedFile);
+          const encryptedUploadResponse = await fetch('/api/blob/upload', { method: 'POST', body: encryptedFormData });
+          if (encryptedUploadResponse.ok) {
+            const { imageUrl: eUrl } = await encryptedUploadResponse.json();
+            finalImageUrl = eUrl;
+            const vIvArray = new Uint8Array(vaultEnc.iv);
+            let vBinary = '';
+            for (let i = 0; i < vIvArray.byteLength; i++) {
+              vBinary += String.fromCharCode(vIvArray[i]);
+            }
+            finalImageIv = btoa(vBinary);
+            
+            // Update local state too
+            setImageUrl(finalImageUrl);
+            setImageIv(finalImageIv);
+          }
+        } catch (err) {
+          console.error('Vault encryption/upload failed during save', err);
+        }
+      }
+
       // 1. Update local favorites for all items
       for (const item of draftItems) {
         if (!item.foodName) continue;
@@ -616,8 +621,8 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
             mealType: selectedMealType,
             items: draftItems,
             notes,
-            imageUrl, // This is the vaultUrl
-            imageIv,  // This is the vaultIv
+            imageUrl: finalImageUrl,
+            imageIv: finalImageIv,
             timestamp: Date.now()
           });
           encryptedData = result.encryptedData;
@@ -636,7 +641,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
           items: encryptedData ? [] : draftItems,
           totalCalories: encryptedData ? 0 : totalCalories,
           notes: encryptedData ? 'encrypted' : notes,
-          imageUrl: encryptedData ? null : imageUrl, // Server sees null if encrypted
+          imageUrl: encryptedData ? null : finalImageUrl, // Server sees null if encrypted
           aiConfidenceScore: 0.8,
           encryptedData,
           encryptionIv,
@@ -652,12 +657,44 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
     } finally {
       setSaveInProgress(false);
     }
-  }, [draftItems, selectedMealType, onComplete, onError, onDraftSaved, imageUrl, isReady, encryptLog, imageIv]);
+  }, [draftItems, selectedMealType, onComplete, onError, onDraftSaved, imageUrl, isReady, encryptLog, imageIv, selectedFile, vaultKey, encryptBinary]);
 
   const handleAutoSave = useCallback(async (items: DraftItem[], totalCalories: number) => {
     if (items.length === 0 || !autoSaveEnabled) return;
-    
+
     try {
+      // Defer vault upload until save for ephemeral analysis
+      let finalImageUrl = imageUrl;
+      let finalImageIv = imageIv;
+
+      if (!finalImageUrl && selectedFile && isReady && vaultKey) {
+        try {
+          const compressedBlob = await compressImage(selectedFile);
+          const arrayBuffer = await compressedBlob.arrayBuffer();
+          const vaultEnc = await encryptBinary(arrayBuffer);
+          const encryptedFile = new File([vaultEnc.ciphertext], 'vault-image.bin', { type: 'application/octet-stream' });
+          const encryptedFormData = new FormData();
+          encryptedFormData.append('image', encryptedFile);
+          const encryptedUploadResponse = await fetch('/api/blob/upload', { method: 'POST', body: encryptedFormData });
+          if (encryptedUploadResponse.ok) {
+            const { imageUrl: eUrl } = await encryptedUploadResponse.json();
+            finalImageUrl = eUrl;
+            const vIvArray = new Uint8Array(vaultEnc.iv);
+            let vBinary = '';
+            for (let i = 0; i < vIvArray.byteLength; i++) {
+              vBinary += String.fromCharCode(vIvArray[i]);
+            }
+            finalImageIv = btoa(vBinary);
+
+            // Update local state too
+            setImageUrl(finalImageUrl);
+            setImageIv(finalImageIv);
+          }
+        } catch (err) {
+          console.error('Vault encryption/upload failed during auto-save', err);
+        }
+      }
+
       // Quick save without user review - update favorites and portion memory
       for (const item of items) {
         if (!item.foodName) continue;
@@ -681,7 +718,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
             lastUsed: new Date()
           });
         }
-        
+
         // Task 1.3: Store portion memory
         if (item.numericQuantity && item.unit) {
           await addToLocalCache({
@@ -706,8 +743,8 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
           mealType: selectedMealType,
           items,
           notes,
-          imageUrl,
-          imageIv,
+          imageUrl: finalImageUrl,
+          imageIv: finalImageIv,
           timestamp: Date.now()
         });
         encryptedData = result.encryptedData;
@@ -722,13 +759,12 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
           items: encryptedData ? [] : items,
           totalCalories: encryptedData ? 0 : totalCalories,
           notes: encryptedData ? 'encrypted' : notes,
-          imageUrl: encryptedData ? null : imageUrl,
+          imageUrl: encryptedData ? null : finalImageUrl,
           aiConfidenceScore: 0.95, // High confidence auto-save
           encryptedData,
           encryptionIv,
         }),
       });
-      
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Failed to auto-save');
       
@@ -742,7 +778,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
       setUploadProgress('review');
       onError?.((err as Error).message);
     }
-  }, [autoSaveEnabled, selectedMealType, onComplete, onError, onDraftSaved, imageUrl, isReady, encryptLog, imageIv]);
+  }, [autoSaveEnabled, selectedMealType, onComplete, onError, onDraftSaved, imageUrl, isReady, encryptLog, imageIv, selectedFile, vaultKey, encryptBinary]);
 
   const handleClear = useCallback(async () => {
     // Only delete if it's a permanent vault URL (not a Base64 data URI)

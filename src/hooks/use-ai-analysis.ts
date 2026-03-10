@@ -231,12 +231,22 @@ export function useAiAnalysis({
       // Use headers for key distribution to prevent body logging
       headersRef.current = {
         'x-session-key': sessionKeyBase64,
-        'x-session-iv': ivBase64
+        'x-session-iv': ivBase64,
+        'x-ephemeral': 'true' // SIGNAL: Ephemeral in-memory only analysis
       };
-      submit({
-        imageUrl: encryptedBase64,
-        mealTypeHint: mealType
-      });
+      try {
+        const { logPrivacyEvent } = await import('@/lib/privacy-audit');
+        await logPrivacyEvent('Cloud AI Analysis', 'ai_analysis', `Started analysis for meal type: ${mealType}`, 'success');
+        
+        submit({
+          imageUrl: encryptedBase64,
+          mealTypeHint: mealType
+        });
+      } catch (err) {
+        const { logPrivacyEvent } = await import('@/lib/privacy-audit');
+        await logPrivacyEvent('Cloud AI Analysis', 'ai_analysis', 'Failed to initiate analysis', 'failure');
+        throw err;
+      }
     } catch (err) {
       console.error('AI Analysis upload failed', err);
       onUploadProgress?.('idle');

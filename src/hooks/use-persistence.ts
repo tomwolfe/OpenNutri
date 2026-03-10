@@ -65,12 +65,12 @@ export function usePersistence({ onSuccess, onError }: UsePersistenceOptions = {
         id: logId,
         userId,
         timestamp,
-        mealType,
-        totalCalories,
-        aiConfidenceScore: 1.0, // Manual entry is 100% confident
+        mealType: 'encrypted', // Masked for server
+        totalCalories: 0,      // Masked for server
+        aiConfidenceScore: 1.0, 
         isVerified: true,
-        imageUrl,
-        notes,
+        imageUrl: null,        // Masked for server (images are in vault)
+        notes: 'encrypted',     // Masked for server
         encryptedData,
         encryptionIv,
         encryptionSalt: null,

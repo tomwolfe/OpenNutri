@@ -214,26 +214,20 @@ export async function preloadModels(): Promise<void> {
 
 /**
  * Determine if an image needs cloud AI analysis
- * Task 1.4: Smarter fallback logic based on device capabilities
+ * Task 4.6: Strictly fallback to cloud if local confidence < 80%
  */
 export function needsCloudAnalysis(localResults: ImageClassificationResult[] | null): boolean {
   if (!localResults || localResults.length === 0) return true;
 
-  const hasWebGPU = typeof navigator !== 'undefined' && !!(navigator as any).gpu;
   const topResult = localResults[0];
 
-  // If we have WebGPU, we assume Moondream2 was used, which is significantly more accurate.
-  if (hasWebGPU) {
-    // If we have even one result with decent score from Moondream2, skip cloud
-    return topResult.score < 0.7;
-  }
-
-  // MobileNet fallback (conservative)
+  // Task 4.6: Unified threshold for consistency
   if (topResult.score < 0.8) return true;
 
   if (localResults.length > 1) {
     const diff = topResult.score - localResults[1].score;
-    if (diff < 0.3) return true;
+    // If the top two results are too close, it's ambiguous
+    if (diff < 0.2) return true;
   }
 
   return false;

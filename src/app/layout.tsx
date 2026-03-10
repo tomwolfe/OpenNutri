@@ -4,6 +4,7 @@ import "./globals.css";
 import { SessionProvider } from "next-auth/react";
 import { validateEnv } from "@/lib/env";
 import { SyncInitializer } from "@/components/layout/sync-initializer";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 // Validate environment variables at startup (all environments)
 validateEnv();
@@ -50,8 +51,10 @@ export default function RootLayout({
     <html lang="en" className={inter.variable}>
       <body className="font-sans antialiased">
         <SessionProvider>
-          <SyncInitializer />
-          {children}
+          <TooltipProvider>
+            <SyncInitializer />
+            {children}
+          </TooltipProvider>
         </SessionProvider>
       </body>
     </html>

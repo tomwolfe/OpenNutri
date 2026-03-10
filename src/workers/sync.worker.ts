@@ -264,6 +264,11 @@ self.onmessage = async (event: MessageEvent) => {
         const pushPayload = {
           logs: unsyncedLogs.map(log => ({
             ...log,
+            // Zero-Knowledge Masking: never send plaintext to server if encrypted
+            mealType: log.encryptedData ? 'encrypted' : log.mealType,
+            totalCalories: log.encryptedData ? 0 : log.totalCalories,
+            notes: log.encryptedData ? 'encrypted' : log.notes,
+            imageUrl: log.encryptedData ? null : log.imageUrl,
             timestamp: log.timestamp.toISOString(),
             deviceId,
             version: (log.version || 0) + 1,
@@ -275,6 +280,9 @@ self.onmessage = async (event: MessageEvent) => {
           })),
           recipes: unsyncedRecipes.map(recipe => ({
             ...recipe,
+            // Zero-Knowledge Masking for recipes
+            name: recipe.encryptedData ? 'Encrypted Recipe' : recipe.name,
+            description: recipe.encryptedData ? 'Encrypted' : recipe.description,
             deviceId,
             version: (recipe.version || 0) + 1,
           })),

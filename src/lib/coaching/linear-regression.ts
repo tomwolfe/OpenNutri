@@ -263,6 +263,9 @@ export function generateCoachingInsights(weightData: Array<{ timestamp: number; 
   // Task 3.1: Sodium/Carb Correlation Analysis
   const sodiumInsights = analyzeSodiumCarbCorrelation(weightData, smoothedWeights, intakeData, start, targets);
 
+  // Task 4.11: Weekly Pattern Detection (Weekend overeating)
+  const patternInsights = analyzeWeeklyPatterns(intakeData, targets);
+
   const insights: CoachingInsight[] = [
     {
       id: `weight-${Date.now()}`,
@@ -285,7 +288,52 @@ export function generateCoachingInsights(weightData: Array<{ timestamp: number; 
     }
   ];
 
+  if (patternInsights) {
+    insights.push(patternInsights);
+  }
+
   return insights;
+}
+
+/**
+ * Task 4.11: Analyze Weekly Patterns
+ * Detects consistency issues like weekend overeating
+ */
+export function analyzeWeeklyPatterns(intakeData: IntakePoint[], targets: MacroTargets): CoachingInsight | null {
+  if (intakeData.length < 14) return null; // Need at least 2 weeks of data
+
+  const weekendIntake: number[] = [];
+  const weekdayIntake: number[] = [];
+
+  for (const intake of intakeData) {
+    const day = new Date(intake.timestamp).getDay();
+    const isWeekend = day === 0 || day === 6; // Sunday or Saturday
+    if (isWeekend) {
+      weekendIntake.push(intake.calories);
+    } else {
+      weekdayIntake.push(intake.calories);
+    }
+  }
+
+  if (weekendIntake.length < 4 || weekdayIntake.length < 8) return null;
+
+  const avgWeekend = weekendIntake.reduce((a, b) => a + b, 0) / weekendIntake.length;
+  const avgWeekday = weekdayIntake.reduce((a, b) => a + b, 0) / weekdayIntake.length;
+
+  if (avgWeekend > avgWeekday * 1.2) {
+    const diff = Math.round(avgWeekend - avgWeekday);
+    return {
+      id: `pattern-weekend-${Date.now()}`,
+      type: 'consistency',
+      trend: 'increasing',
+      confidence: 0.7,
+      recommendation: `Weekend calories are ${diff} kcal higher than weekdays.`,
+      explanation: `You tend to consume 20% more calories on weekends. Consistency across the whole week will help reach your ${targets.weightGoal} goal faster.`,
+      dataPoints: intakeData.length,
+    };
+  }
+
+  return null;
 }
 
 /**
