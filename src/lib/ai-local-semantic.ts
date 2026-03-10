@@ -149,8 +149,20 @@ export async function searchLocalHistory(
       let similarity = cosineSimilarity(queryEmbedding, item.embedding);
       
       // Boost similarity for items with portion memory (user's habitual portions)
-      if (item.typicalQuantity && item.typicalUnit && item.portionFrequency && item.portionFrequency > 2) {
-        similarity *= 1.1; // 10% boost for well-established portion habits
+      if (item.typicalQuantity && item.typicalUnit && item.portionFrequency && item.portionFrequency > 3) {
+        similarity *= 1.15; // 15% boost for well-established portion habits
+      }
+
+      // Task 4.3: Time of Day Weighting
+      // Prioritize foods logged around the same time of day (e.g., Breakfast foods in the morning)
+      if (item.lastUsed) {
+        const itemHour = new Date(item.lastUsed).getHours();
+        const currentHour = new Date().getHours();
+        const hourDiff = Math.min(Math.abs(currentHour - itemHour), 24 - Math.abs(currentHour - itemHour));
+        
+        if (hourDiff <= 2) {
+          similarity *= 1.1; // 10% boost for items used within 2 hours of current time in the past
+        }
       }
       
       if (similarity > highestSimilarity) {
@@ -208,21 +220,41 @@ export async function addToLocalCache(
       const samePortion = existing.typicalQuantity === item.numericQuantity && 
                           existing.typicalUnit === item.unit;
       
+      // Task 4.3: Robust Portion Memory
+      // Only switch the "default" portion if the current one isn't established (freq <= 3)
+      // or if the new portion eventually out-competes it (decay-based switch)
+      let typicalQuantity = existing.typicalQuantity;
+      let typicalUnit = existing.typicalUnit;
+      let typicalServingGrams = existing.typicalServingGrams;
+      let portionFrequency = existing.portionFrequency || 0;
+
+      if (samePortion) {
+        portionFrequency++;
+      } else if (portionFrequency <= 3) {
+        // Switch immediately if current portion isn't a strong habit yet
+        typicalQuantity = item.numericQuantity;
+        typicalUnit = item.unit;
+        typicalServingGrams = item.servingGrams;
+        portionFrequency = 1;
+      } else {
+        // "Decay" the habit strength of the old portion. 
+        // This ensures the user must log the new portion consistently to change the default.
+        portionFrequency--;
+      }
+
       await db.localSemanticCache.put({
-        id: String(item.id),
-        description: item.description,
-        embedding,
+        ...existing,
+        lastUsed: Date.now(),
+        typicalQuantity,
+        typicalUnit,
+        typicalServingGrams,
+        portionFrequency,
         calories: item.calories,
         protein: item.protein,
         carbs: item.carbs,
         fat: item.fat,
         micronutrients: item.micronutrients || existing.micronutrients,
-        sodium: item.sodium,
-        lastUsed: Date.now(),
-        typicalQuantity: item.numericQuantity,
-        typicalUnit: item.unit,
-        typicalServingGrams: item.servingGrams,
-        portionFrequency: samePortion ? (existing.portionFrequency || 0) + 1 : 1,
+        sodium: item.sodium ?? existing.sodium,
       });
     } else if (!existing) {
       // New item - add with portion data if available

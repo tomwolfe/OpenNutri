@@ -172,6 +172,12 @@ self.onmessage = async (event: MessageEvent) => {
             body: JSON.stringify(item),
           });
 
+          if (response.status === 401) {
+            // Task 3: Handle unauthorized (session expired or vault locked)
+            self.postMessage({ type: 'SYNC_UNAUTHORIZED', payload: { userId } });
+            return; // Pause sync processing
+          }
+
           if (response.ok) {
             // Mark as synced in the actual table
             if (item.table === 'foodLogs') {
@@ -280,6 +286,11 @@ self.onmessage = async (event: MessageEvent) => {
           body: JSON.stringify(pushPayload),
         });
 
+        if (response.status === 401) {
+          self.postMessage({ type: 'SYNC_UNAUTHORIZED', payload: { userId } });
+          return;
+        }
+
         if (response.ok) {
           const result = await response.json();
           const serverConflicts = (result.conflicts || []) as Array<{ type: string, id: string }>;
@@ -322,6 +333,12 @@ self.onmessage = async (event: MessageEvent) => {
 
       // 2. Pull
       const pullRes = await fetch(`${origin}/api/sync/delta?since=${lastSyncTimestamp}`);
+      
+      if (pullRes.status === 401) {
+        self.postMessage({ type: 'SYNC_UNAUTHORIZED', payload: { userId } });
+        return;
+      }
+      
       if (!pullRes.ok) throw new Error('Pull failed');
       const data = await pullRes.json();
       

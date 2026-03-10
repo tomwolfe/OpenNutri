@@ -122,7 +122,7 @@ export function useEncryption(): UseEncryptionReturn {
    * Double-wraps the vault key: master key → session key → device key
    * The device key is stored encrypted in localStorage with a browser-derived key
    */
-  const persistSessionKey = useCallback(async (masterKey: CryptoKey) => {
+  const persistSessionKey = useCallback(async (masterKey: CryptoKey, userId: string) => {
     try {
       const sessionWrappingKey = await generateSessionKey();
 
@@ -144,8 +144,10 @@ export function useEncryption(): UseEncryptionReturn {
       );
 
       localStorage.setItem(WRAPPED_VAULT_KEY_STORAGE, JSON.stringify({
+        userId, // Task 6.2: Link session to user for biometric refresh
         ciphertext: arrayBufferToBase64(deviceEncrypted.ciphertext),
-        iv: arrayBufferToBase64(deviceEncrypted.iv)
+        iv: arrayBufferToBase64(deviceEncrypted.iv),
+        createdAt: Date.now() // Task 6.2: Track session age
       }));
 
       // Also set the legacy flag
@@ -241,21 +243,23 @@ export function useEncryption(): UseEncryptionReturn {
   }, [key]);
 
   // Initialize a new vault
-  const initializeKey = useCallback(async (email: string, password: string) => {
+  const initializeKey = useCallback(async (userId: string | null, email: string, password: string) => {
     const keyData = await generateVaultKey(email, password);
     // Derive the master key object for current session
     const masterKey = await getVaultKey(password, keyData.salt, keyData.encryptedKey, keyData.iv);
-    setKey(masterKey);
-    await persistSessionKey(masterKey);
+    setVaultKey(masterKey);
+    if (userId) {
+      await persistSessionKey(masterKey, userId);
+    }
     return keyData;
   }, [persistSessionKey]);
 
   // Unlock existing vault
-  const unlockVault = useCallback(async (password: string, salt: string, encryptedKey: string, iv: string) => {
+  const unlockVault = useCallback(async (userId: string, password: string, salt: string, encryptedKey: string, iv: string) => {
     try {
       const masterKey = await getVaultKey(password, salt, encryptedKey, iv);
-      setKey(masterKey);
-      await persistSessionKey(masterKey);
+      setVaultKey(masterKey);
+      await persistSessionKey(masterKey, userId);
     } catch (err) {
       console.error('Failed to unlock vault:', err);
       throw new Error('Invalid password or corrupted vault data');
@@ -325,8 +329,22 @@ export function useEncryption(): UseEncryptionReturn {
     sessionStorage.removeItem(VAULT_KEY_STORAGE);
     sessionStorage.removeItem(SESSION_PERSISTENCE_KEY);
     localStorage.removeItem(WRAPPED_VAULT_KEY_STORAGE);
-    // Note: We don't clear DEVICE_KEY_STORAGE on logout to maintain session persistence
-    // across tabs/windows. It's only cleared on explicit account deletion or browser data clear.
+  }, []);
+
+  // Task 3: Handle global sync auth requirement
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleSyncAuthRequired = () => {
+      console.warn('Sync requested authentication, locking vault in-memory...');
+      setKey(null);
+      sessionStorage.removeItem(VAULT_KEY_STORAGE);
+      sessionStorage.removeItem(SESSION_PERSISTENCE_KEY);
+    };
+
+    // Use a custom event string to avoid confusion
+    window.addEventListener('SYNC_AUTH_REQUIRED', handleSyncAuthRequired);
+    return () => window.removeEventListener('SYNC_AUTH_REQUIRED', handleSyncAuthRequired);
   }, []);
 
   return {

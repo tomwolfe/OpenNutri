@@ -53,6 +53,7 @@ export function UnlockVault({ onUnlocked, onError }: UnlockVaultProps) {
 
       // Unlock vault using password to derive the encryption key
       await unlockVault(
+        session?.user?.id as string,
         password,
         keys.salt,
         keys.encryptedVaultKey,

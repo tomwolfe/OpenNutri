@@ -49,6 +49,7 @@ export default function LoginPage() {
           if (keyResponse.ok) {
             const keyData = await keyResponse.json();
             await unlockVault(
+              keyData.userId,
               password, // Use plaintext password to derive encryption key
               keyData.salt,
               keyData.encryptedVaultKey,
@@ -90,7 +91,7 @@ export default function LoginPage() {
       // Step 1: Generate E2E encryption vault key client-side
       let keyMetadata = null;
       try {
-        keyMetadata = await initializeKey(email, password);
+        keyMetadata = await initializeKey(null, email, password);
       } catch (err) {
         console.error('Failed to initialize encryption vault:', err);
         setError('Encryption setup failed. Please try again.');

@@ -105,6 +105,7 @@ registerRoute(
 
 // ============================================
 // ML Models (Hugging Face / Transformers.js)
+// Task 4.2: Force immutable headers for large model files
 // ============================================
 registerRoute(
   ({ url }) =>
@@ -112,16 +113,39 @@ registerRoute(
     url.hostname.includes('cdn.jsdelivr.net') ||
     url.pathname.includes('transformers') ||
     url.pathname.includes('onnx'),
-  new CacheFirst({
-    cacheName: ML_MODELS_CACHE,
-    plugins: [
-      new ExpirationPlugin({
-        maxEntries: 50,
-        maxAgeSeconds: 30 * 24 * 60 * 60, // 30 days
-        purgeOnQuotaError: true,
-      }),
-    ],
-  })
+  async ({ request }) => {
+    const cache = await caches.open(ML_MODELS_CACHE);
+    const cachedResponse = await cache.match(request);
+    
+    if (cachedResponse) {
+      return cachedResponse;
+    }
+
+    try {
+      const response = await fetch(request);
+      
+      // Only cache successful responses
+      if (response.status === 200) {
+        // Clone the response to modify headers
+        const headers = new Headers(response.headers);
+        headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+        
+        const responseToCache = new Response(response.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers,
+        });
+
+        await cache.put(request, responseToCache.clone());
+        return responseToCache;
+      }
+      
+      return response;
+    } catch (error) {
+      console.error('ML Model fetch failed:', error);
+      return fetch(request); // Fallback to network
+    }
+  }
 );
 
 // ============================================
@@ -175,6 +199,7 @@ self.addEventListener('push', (event) => {
     badge: '/icon-72x72.png',
     data: data.data,
     tag: data.tag ?? 'default',
+    actions: data.actions ?? [], // Support actionable notifications (e.g., "One-Tap Update")
   };
 
   event.waitUntil(self.registration.showNotification(title, options));
@@ -186,7 +211,15 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  const urlToOpen = event.notification.data?.url ?? '/dashboard';
+  // Task 5.1: Actionable Push Notifications
+  // Handle specific actions (like "UPDATE_TARGET")
+  let urlToOpen = event.notification.data?.url ?? '/dashboard';
+  
+  if (event.action === 'view_insight') {
+    urlToOpen = `/dashboard?insight=${event.notification.data?.insightId}`;
+  } else if (event.action === 'apply_update') {
+    urlToOpen = `/dashboard?action=apply&insight=${event.notification.data?.insightId}`;
+  }
 
   event.waitUntil(
     self.clients

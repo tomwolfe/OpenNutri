@@ -223,10 +223,11 @@ export function WeightTracker() {
                             day: 'numeric',
                           })}
                         </span>
-                        {(entry.highSodium || entry.highCarbs) && (
-                          <div className="flex gap-1">
+                        {(entry.highSodium || entry.highCarbs || entry.waterRetentionLikely) && (
+                          <div className="flex gap-1 mt-1">
                             {entry.highSodium && <span className="text-[10px] bg-amber-100 text-amber-700 px-1 rounded">Na</span>}
                             {entry.highCarbs && <span className="text-[10px] bg-blue-100 text-blue-700 px-1 rounded">CHO</span>}
+                            {entry.waterRetentionLikely && <span className="text-[10px] bg-teal-100 text-teal-700 px-1 rounded">WR</span>}
                           </div>
                         )}
                       </div>

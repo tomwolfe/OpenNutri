@@ -84,6 +84,14 @@ export async function syncDelta(
     setLastSyncTimestamp(serverTime);
     return { success: true, pulled, pushed, pulledLogIds };
   } catch (error) {
+    if (error instanceof Error && error.message === 'UNAUTHORIZED') {
+      console.warn('SyncEngine: Unauthorized. Session may be expired.');
+      // Task 3: Trigger Vault Unlock UI via global event
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('SYNC_AUTH_REQUIRED'));
+      }
+      return { success: false, pulled: 0, pushed: 0 };
+    }
     console.error('SyncEngine: Delta sync error', error);
     return { success: false, pulled: 0, pushed: 0 };
   }

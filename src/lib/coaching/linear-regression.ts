@@ -195,6 +195,25 @@ export interface CoachingInsight {
   };
 }
 
+/**
+ * Thresholds for water retention analysis
+ */
+export const WATER_RETENTION_THRESHOLDS = {
+  SODIUM_BASE: 2300, // mg
+  CARB_RATIO: 1.25,  // 25% over target
+  CARB_BASE: 300,    // g fallback
+};
+
+export function isHighSodium(sodium: number, calorieTarget: number = 2000): boolean {
+  const threshold = calorieTarget > 0 ? (calorieTarget / 2000) * WATER_RETENTION_THRESHOLDS.SODIUM_BASE : WATER_RETENTION_THRESHOLDS.SODIUM_BASE;
+  return sodium > threshold;
+}
+
+export function isHighCarbs(carbs: number, carbTarget: number = 250): boolean {
+  const threshold = carbTarget > 0 ? carbTarget * WATER_RETENTION_THRESHOLDS.CARB_RATIO : WATER_RETENTION_THRESHOLDS.CARB_BASE;
+  return carbs > threshold;
+}
+
 export function generateCoachingInsights(weightData: Array<{ timestamp: number; weight: number }>, intakeData: IntakePoint[], targets: MacroTargets): CoachingInsight[] {
   if (weightData.length < 3 || intakeData.length < 3) return [];
 
@@ -285,10 +304,6 @@ export function analyzeSodiumCarbCorrelation(
 ): { explanation?: string; metabolicContext?: CoachingInsight['metabolicContext'] } {
   if (weightData.length < 5 || intakeData.length < 3) return {};
 
-  // Thresholds for "high" intake relative to targets
-  const HIGH_SODIUM_THRESHOLD = targets.calories > 0 ? (targets.calories / 2000) * 2300 : 2300;
-  const HIGH_CARB_THRESHOLD = targets.carbs > 0 ? targets.carbs * 1.25 : 300;
-
   // Find the most recent weight spike (loop backwards)
   let recentSpikeIndex = -1;
   let spikeWeightChange = 0;
@@ -319,11 +334,11 @@ export function analyzeSodiumCarbCorrelation(
     const daysBeforeSpike = spikeDayNum - dayNum;
     
     if (daysBeforeSpike >= 0 && daysBeforeSpike <= lookbackDays) {
-      if (intake.sodium && intake.sodium > HIGH_SODIUM_THRESHOLD) {
+      if (intake.sodium && isHighSodium(intake.sodium, targets.calories)) {
         hasHighSodium = true;
         maxSodium = Math.max(maxSodium, intake.sodium);
       }
-      if (intake.carbs > HIGH_CARB_THRESHOLD) {
+      if (isHighCarbs(intake.carbs, targets.carbs)) {
         hasHighCarbs = true;
         maxCarbs = Math.max(maxCarbs, intake.carbs);
       }

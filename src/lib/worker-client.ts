@@ -116,6 +116,9 @@ export async function syncDeltaInWorker(
       if (type === 'SYNC_DELTA_SUCCESS') {
         w.removeEventListener('message', handler);
         resolve(payload);
+      } else if (type === 'SYNC_UNAUTHORIZED') {
+        w.removeEventListener('message', handler);
+        reject(new Error('UNAUTHORIZED'));
       } else if (type === 'ERROR') {
         w.removeEventListener('message', handler);
         reject(new Error(payload));

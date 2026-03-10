@@ -36,6 +36,7 @@ export async function GET() {
     }
 
     return NextResponse.json({
+      userId: session.user.id,
       salt: keys.salt,
       encryptedVaultKey: keys.encryptedVaultKey,
       encryptionIv: keys.encryptionIv,

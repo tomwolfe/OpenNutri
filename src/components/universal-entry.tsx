@@ -74,6 +74,7 @@ export function UniversalEntry({ onComplete, onError: _onError, editingLog }: Un
       const keys = await res.json();
 
       await unlockVault(
+        keys.userId, // use the userId returned from /api/auth/keys
         unlockPassword,
         keys.salt,
         keys.encryptedVaultKey,

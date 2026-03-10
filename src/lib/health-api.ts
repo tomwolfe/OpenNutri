@@ -337,11 +337,44 @@ export async function cleanupOldHealthData(
 }
 
 /**
+ * PKCE Helper: Generate a random code verifier
+ */
+function generateCodeVerifier(): string {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  return arrayBufferToBase64Url(array);
+}
+
+/**
+ * PKCE Helper: Generate a code challenge from verifier
+ */
+async function generateCodeChallenge(verifier: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(verifier);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return arrayBufferToBase64Url(new Uint8Array(digest));
+}
+
+/**
+ * Helper: Convert ArrayBuffer to Base64Url (no padding, URL safe)
+ */
+function arrayBufferToBase64Url(buffer: Uint8Array): string {
+  const binString = Array.from(buffer)
+    .map((b) => String.fromCharCode(b))
+    .join('');
+  const base64 = btoa(binString);
+  return base64
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '');
+}
+
+/**
  * Google Fit OAuth 2.0 Configuration
  */
 const GOOGLE_FIT_CONFIG = {
   clientId: process.env.NEXT_PUBLIC_GOOGLE_FIT_CLIENT_ID || '',
-  redirectUri: typeof window !== 'undefined' ? window.location.origin + '/api/auth/google-fit/callback' : '',
+  redirectUri: typeof window !== 'undefined' ? window.location.origin + '/auth/google-fit/callback' : '',
   scopes: [
     'https://www.googleapis.com/auth/fitness.activity.read',
     'https://www.googleapis.com/auth/fitness.body.read',
@@ -394,13 +427,20 @@ export async function initiateGoogleFitOAuth(): Promise<string | null> {
     return null;
   }
 
+  // Task 5.2: Use PKCE for secure OAuth
+  const verifier = generateCodeVerifier();
+  const challenge = await generateCodeChallenge(verifier);
+  sessionStorage.setItem('google_fit_code_verifier', verifier);
+
   const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   authUrl.searchParams.set('client_id', GOOGLE_FIT_CONFIG.clientId);
   authUrl.searchParams.set('redirect_uri', GOOGLE_FIT_CONFIG.redirectUri);
-  authUrl.searchParams.set('response_type', 'token');
+  authUrl.searchParams.set('response_type', 'code'); // PKCE uses 'code'
   authUrl.searchParams.set('scope', GOOGLE_FIT_CONFIG.scopes.join(' '));
   authUrl.searchParams.set('access_type', 'offline');
   authUrl.searchParams.set('prompt', 'consent');
+  authUrl.searchParams.set('code_challenge', challenge);
+  authUrl.searchParams.set('code_challenge_method', 'S256');
   authUrl.searchParams.set('state', crypto.randomUUID());
 
   return new Promise((resolve) => {
@@ -422,18 +462,38 @@ export async function initiateGoogleFitOAuth(): Promise<string | null> {
     }
 
     // Listen for message from popup callback
-    const handleMessage = (event: MessageEvent) => {
+    const handleMessage = async (event: MessageEvent) => {
       // Verify origin for security
       if (event.origin !== window.location.origin) return;
 
-      if (event.data.type === 'GOOGLE_FIT_OAUTH_SUCCESS') {
-        const { accessToken, expiresIn } = event.data.payload;
+      if (event.data.type === 'GOOGLE_FIT_OAUTH_CODE') {
+        const { code } = event.data.payload;
+        const storedVerifier = sessionStorage.getItem('google_fit_code_verifier');
 
-        // Store token in sessionStorage
-        sessionStorage.setItem('google_fit_access_token', accessToken);
-        sessionStorage.setItem('google_fit_expires_at', (Date.now() + expiresIn * 1000).toString());
+        try {
+          // Exchange code for token using our server-side proxy
+          const response = await fetch('/api/auth/google-fit/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              code,
+              code_verifier: storedVerifier,
+            }),
+          });
 
-        resolve(accessToken);
+          if (!response.ok) throw new Error('Token exchange failed');
+
+          const { access_token, expires_in } = await response.json();
+
+          // Store token in sessionStorage
+          sessionStorage.setItem('google_fit_access_token', access_token);
+          sessionStorage.setItem('google_fit_expires_at', (Date.now() + expires_in * 1000).toString());
+
+          resolve(access_token);
+        } catch (err) {
+          console.error('Google Fit token exchange error:', err);
+          resolve(null);
+        }
       } else if (event.data.type === 'GOOGLE_FIT_OAUTH_ERROR') {
         console.error('Google Fit OAuth error:', event.data.error);
         resolve(null);
@@ -441,6 +501,7 @@ export async function initiateGoogleFitOAuth(): Promise<string | null> {
 
       window.removeEventListener('message', handleMessage);
       popup.close();
+      sessionStorage.removeItem('google_fit_code_verifier');
     };
 
     window.addEventListener('message', handleMessage);

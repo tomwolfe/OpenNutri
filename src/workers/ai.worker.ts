@@ -136,24 +136,24 @@ async function getClassifier() {
   try {
     // Task 1.4: Use Moondream2 for high-quality vision analysis if WebGPU is available
     if (webGpuAvailable && deviceInfo.type === 'webgpu') {
-      console.log('🚀 WebGPU detected, loading Moondream2 vision model...');
+      console.log('🚀 WebGPU detected, loading Moondream2 tiny vision model (4-bit)...');
       self.postMessage({
         type: 'progress',
-        message: 'Loading Moondream2 vision model (~50MB)...',
+        message: 'Loading Moondream2 Tiny (4-bit quantized)...',
         progress: 0.2,
         stage: 'downloading'
       });
 
       try {
-        // Progressive loading: Load smaller quantized version first
+        // Progressive loading: Use quantized version for mobile-first performance
         classifier = await pipeline('image-to-text', 'onnx-community/moondream2', {
           device: 'webgpu',
-          dtype: 'fp32', // Full precision for best accuracy
+          dtype: 'q4f16', // 4-bit quantization for 3x less memory and faster inference
           progress_callback: (data: any) => {
             if (data.status === 'progress') {
               self.postMessage({
                 type: 'progress',
-                message: `Loading model: ${Math.round(data.progress * 100)}%`,
+                message: `Loading Tiny AI: ${Math.round(data.progress * 100)}%`,
                 progress: 0.2 + (data.progress * 0.6), // Scale from 0.2 to 0.8
                 stage: 'downloading',
                 details: data
@@ -161,7 +161,7 @@ async function getClassifier() {
             } else if (data.status === 'ready') {
               self.postMessage({
                 type: 'progress',
-                message: 'Model loaded successfully!',
+                message: 'Tiny AI loaded successfully!',
                 progress: 0.9,
                 stage: 'ready'
               });
@@ -171,12 +171,12 @@ async function getClassifier() {
 
         self.postMessage({
           type: 'progress',
-          message: '✨ Moondream2 ready for analysis!',
+          message: '✨ Moondream2 Tiny ready for analysis!',
           progress: 1.0,
           stage: 'ready'
         });
 
-        console.log('✅ Moondream2 loaded successfully on WebGPU');
+        console.log('✅ Moondream2 (q4f16) loaded successfully on WebGPU');
         modelLoadState = 'ready';
         return classifier;
       } catch (moondreamErr) {

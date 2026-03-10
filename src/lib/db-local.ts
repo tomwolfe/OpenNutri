@@ -62,6 +62,7 @@ export interface LocalUserTarget {
   weightRecord: number | null;
   highSodium?: boolean;
   highCarbs?: boolean;
+  waterRetentionLikely?: boolean;
   yjsData?: string | null; // Base64 encoded Yjs update
   version: number;
   deviceId: string | null;
