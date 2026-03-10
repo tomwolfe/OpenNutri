@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie';
+import { type Micronutrients } from '@/types/food';
 
 /**
  * OpenNutri Local-First Database
@@ -137,6 +138,7 @@ export interface LocalSemanticMatch {
   protein: number;
   carbs: number;
   fat: number;
+  micronutrients?: Micronutrients;
   sodium?: number;
   lastUsed: number;
   // Task 1.3: Portion Memory - Store user's typical portion habits

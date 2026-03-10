@@ -9,6 +9,7 @@ import { useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type DecryptedFoodLog } from '@/lib/db-local';
 import { syncDelta, type SyncConflict } from '@/lib/sync-engine';
+import { type Micronutrients } from '@/types/food';
 
 export interface LogItem {
   foodName: string;
@@ -17,6 +18,7 @@ export interface LogItem {
   protein: number;
   carbs: number;
   fat: number;
+  micronutrients?: Micronutrients;
   source: 'AI' | 'USDA' | 'MANUAL' | 'AI_ESTIMATE' | 'OPEN_FACTS';
   notes?: string;
   isEnhancing?: boolean;
@@ -42,6 +44,7 @@ export interface DailyTotals {
   protein: number;
   carbs: number;
   fat: number;
+  micronutrients: Micronutrients;
   activeEnergyBurned?: number;
   netCalories: number;
 }
@@ -85,10 +88,35 @@ function calculateDailyTotals(logs: FoodLog[], activeEnergyBurned: number = 0): 
         acc.protein += item.protein || 0;
         acc.carbs += item.carbs || 0;
         acc.fat += item.fat || 0;
+
+        if (item.micronutrients) {
+          Object.entries(item.micronutrients).forEach(([key, value]) => {
+            if (typeof value === 'number') {
+              const k = key as keyof Micronutrients;
+              acc.micronutrients[k] = (acc.micronutrients[k] || 0) + value;
+            }
+          });
+        }
       });
       return acc;
     },
-    { calories: 0, protein: 0, carbs: 0, fat: 0 }
+    { 
+      calories: 0, 
+      protein: 0, 
+      carbs: 0, 
+      fat: 0,
+      micronutrients: {
+        fiber: 0,
+        sugar: 0,
+        sodium: 0,
+        potassium: 0,
+        calcium: 0,
+        iron: 0,
+        vitaminC: 0,
+        saturatedFat: 0,
+        cholesterol: 0,
+      } as Micronutrients
+    }
   );
 
   return {

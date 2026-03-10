@@ -221,7 +221,7 @@ test.describe('Local AI - Semantic Cache', () => {
     const cachedFoods = await page.evaluate(async () => {
       if (typeof indexedDB === 'undefined') return null;
       
-      return new Promise((resolve) => {
+      return new Promise<any>((resolve) => {
         const request = indexedDB.open('opennutri-local', 1);
         request.onerror = () => resolve(null);
         request.onsuccess = () => {
@@ -298,7 +298,7 @@ test.describe('Local AI - Performance', () => {
       let lastTime = performance.now();
       let frameCount = 0;
       
-      return new Promise((resolve) => {
+      return new Promise<{ avgFps: number; frames: number[] }>((resolve) => {
         function measureFrame() {
           const now = performance.now();
           frames.push(1000 / (now - lastTime));

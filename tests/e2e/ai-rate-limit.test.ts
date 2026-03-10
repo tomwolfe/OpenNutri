@@ -15,7 +15,7 @@ import { eq, sql } from 'drizzle-orm';
 
 test.describe('AI Rate Limiting', () => {
   test('should show AI scan limit error after exceeding daily limit', async ({ page }) => {
-    const testEmail = `test_ai_limit_${Date.now()}@opennutri.test';
+    const testEmail = `test_ai_limit_${Date.now()}@opennutri.test`;
     const testPassword = 'TestPassword123!';
 
     await page.goto('/signup');
@@ -40,7 +40,7 @@ test.describe('AI Rate Limiting', () => {
   });
 
   test('should display remaining AI scans', async ({ page }) => {
-    const testEmail = `test_ai_remaining_${Date.now()}@opennutri.test';
+    const testEmail = `test_ai_remaining_${Date.now()}@opennutri.test`;
     const testPassword = 'TestPassword123!';
 
     await page.goto('/signup');
@@ -62,7 +62,7 @@ test.describe('AI Rate Limiting', () => {
   });
 
   test('should handle rate limit API response gracefully', async ({ page }) => {
-    const testEmail = `test_api_limit_${Date.now()}@opennutri.test';
+    const testEmail = `test_api_limit_${Date.now()}@opennutri.test`;
     const testPassword = 'TestPassword123!';
 
     await page.goto('/signup');
@@ -79,7 +79,7 @@ test.describe('AI Rate Limiting', () => {
   });
 
   test('should allow AI analysis within limit', async ({ page }) => {
-    const testEmail = `test_ai_within_${Date.now()}@opennutri.test';
+    const testEmail = `test_ai_within_${Date.now()}@opennutri.test`;
     const testPassword = 'TestPassword123!';
 
     await page.goto('/signup');
@@ -102,7 +102,7 @@ test.describe('AI Rate Limiting', () => {
 
 test.describe('AI Usage Tracking', () => {
   test('should track AI usage in database', async ({ page }) => {
-    const testEmail = `test_ai_track_${Date.now()}@opennutri.test';
+    const testEmail = `test_ai_track_${Date.now()}@opennutri.test`;
     const testPassword = 'TestPassword123!';
 
     await page.goto('/signup');
@@ -124,7 +124,7 @@ test.describe('AI Usage Tracking', () => {
   });
 
   test('should show upgrade option at limit', async ({ page }) => {
-    const testEmail = `test_ai_upgrade_${Date.now()}@opennutri.test';
+    const testEmail = `test_ai_upgrade_${Date.now()}@opennutri.test`;
     const testPassword = 'TestPassword123!';
 
     await page.goto('/signup');
@@ -147,7 +147,7 @@ test.describe('AI Usage Tracking', () => {
 
 test.describe('AI Analysis Error Handling', () => {
   test('should handle analysis timeout gracefully', async ({ page }) => {
-    const testEmail = `test_ai_timeout_${Date.now()}@opennutri.test';
+    const testEmail = `test_ai_timeout_${Date.now()}@opennutri.test`;
     const testPassword = 'TestPassword123!';
 
     await page.goto('/signup');
@@ -161,7 +161,7 @@ test.describe('AI Analysis Error Handling', () => {
   });
 
   test('should allow retry after failed analysis', async ({ page }) => {
-    const testEmail = `test_ai_retry_${Date.now()}@opennutri.test';
+    const testEmail = `test_ai_retry_${Date.now()}@opennutri.test`;
     const testPassword = 'TestPassword123!';
 
     await page.goto('/signup');
@@ -182,7 +182,7 @@ test.describe('AI Analysis Error Handling', () => {
   });
 
   test('should show clear error message on analysis failure', async ({ page }) => {
-    const testEmail = `test_ai_error_${Date.now()}@opennutri.test';
+    const testEmail = `test_ai_error_${Date.now()}@opennutri.test`;
     const testPassword = 'TestPassword123!';
 
     await page.goto('/signup');
@@ -197,7 +197,7 @@ test.describe('AI Analysis Error Handling', () => {
 });
 
 test.describe('AI Rate Limit Loophole Prevention', () => {
-  test('should log AI usage BEFORE analysis starts (prevent loophole)', async () => {
+  test('should log AI usage BEFORE analysis starts (prevent loophole)', async ({ request }) => {
     // This test verifies the fix for the rate limit loophole
     // where users could bypass limits by canceling requests
 
@@ -205,7 +205,7 @@ test.describe('AI Rate Limit Loophole Prevention', () => {
     const testPassword = 'TestPassword123!';
 
     // Create test user via signup
-    const signupResponse = await test.request.post('/api/auth/signup', {
+    const signupResponse = await request.post('/api/auth/signup', {
       data: {
         email: testEmail,
         password: testPassword,
@@ -224,7 +224,7 @@ test.describe('AI Rate Limit Loophole Prevention', () => {
     const initialCountNum = Number(initialCount[0]?.count ?? 0);
 
     // Make an AI analysis request
-    const analysisResponse = await test.request.post('/api/analyze', {
+    const analysisResponse = await request.post('/api/analyze', {
       data: {
         text: 'Test food analysis',
         mealTypeHint: 'breakfast',
@@ -249,11 +249,11 @@ test.describe('AI Rate Limit Loophole Prevention', () => {
     await db.delete(aiUsage).where(eq(aiUsage.userId, userId));
   });
 
-  test('should enforce rate limit even on failed/canceled requests', async () => {
+  test('should enforce rate limit even on failed/canceled requests', async ({ request }) => {
     const testEmail = `test_failed_${Date.now()}@opennutri.test`;
     const testPassword = 'TestPassword123!';
 
-    const signupResponse = await test.request.post('/api/auth/signup', {
+    const signupResponse = await request.post('/api/auth/signup', {
       data: {
         email: testEmail,
         password: testPassword,
@@ -264,13 +264,13 @@ test.describe('AI Rate Limit Loophole Prevention', () => {
 
     // Simulate 5 successful requests (hit the limit)
     for (let i = 0; i < 5; i++) {
-      await test.request.post('/api/analyze', {
+      await request.post('/api/analyze', {
         data: { text: `Test food ${i}` },
       });
     }
 
     // 6th request should be blocked (even if it would fail mid-stream)
-    const blockedResponse = await test.request.post('/api/analyze', {
+    const blockedResponse = await request.post('/api/analyze', {
       data: { text: 'Should be blocked' },
     });
 
@@ -284,11 +284,11 @@ test.describe('AI Rate Limit Loophole Prevention', () => {
     await db.delete(aiUsage).where(eq(aiUsage.userId, userId));
   });
 
-  test('should count usage even when analysis fails mid-stream', async () => {
+  test('should count usage even when analysis fails mid-stream', async ({ request }) => {
     const testEmail = `test_midstream_${Date.now()}@opennutri.test`;
     const testPassword = 'TestPassword123!';
 
-    const signupResponse = await test.request.post('/api/auth/signup', {
+    const signupResponse = await request.post('/api/auth/signup', {
       data: {
         email: testEmail,
         password: testPassword,
@@ -298,7 +298,7 @@ test.describe('AI Rate Limit Loophole Prevention', () => {
     const { userId } = await signupResponse.json();
 
     // Send invalid request that will fail mid-stream
-    const invalidResponse = await test.request.post('/api/analyze', {
+    const invalidResponse = await request.post('/api/analyze', {
       data: {
         imageUrl: 'invalid-url-that-will-fail',
       },

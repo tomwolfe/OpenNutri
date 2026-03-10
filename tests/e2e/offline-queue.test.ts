@@ -9,7 +9,7 @@ import { test, expect } from './fixtures';
 
 test.describe('Offline Queue Management', () => {
   test('should queue food log entry while offline', async ({ page, context }) => {
-    const testEmail = `test_queue_offline_${Date.now()}@opennutri.test';
+    const testEmail = `test_queue_offline_${Date.now()}@opennutri.test`;
     const testPassword = 'TestPassword123!';
 
     // Create account while online
@@ -56,7 +56,7 @@ test.describe('Offline Queue Management', () => {
   });
 
   test('should sync queued entries when back online', async ({ page, context }) => {
-    const testEmail = `test_queue_sync_${Date.now()}@opennutri.test';
+    const testEmail = `test_queue_sync_${Date.now()}@opennutri.test`;
     const testPassword = 'TestPassword123!';
 
     await page.goto('/signup');
@@ -93,7 +93,7 @@ test.describe('Offline Queue Management', () => {
   });
 
   test('should queue multiple entries and sync all', async ({ page, context }) => {
-    const testEmail = `test_queue_multi_${Date.now()}@opennutri.test';
+    const testEmail = `test_queue_multi_${Date.now()}@opennutri.test`;
     const testPassword = 'TestPassword123!';
 
     await page.goto('/signup');
@@ -134,7 +134,7 @@ test.describe('Offline Queue Management', () => {
   });
 
   test('should show sync progress indicator', async ({ page, context }) => {
-    const testEmail = `test_queue_progress_${Date.now()}@opennutri.test';
+    const testEmail = `test_queue_progress_${Date.now()}@opennutri.test`;
     const testPassword = 'TestPassword123!';
 
     await page.goto('/signup');
@@ -174,7 +174,7 @@ test.describe('Offline Queue Management', () => {
   });
 
   test('should handle queue with browser close', async ({ page, context }) => {
-    const testEmail = `test_queue_close_${Date.now()}@opennutri.test';
+    const testEmail = `test_queue_close_${Date.now()}@opennutri.test`;
     const testPassword = 'TestPassword123!';
 
     await page.goto('/signup');
@@ -258,7 +258,7 @@ test.describe('Offline Queue Management', () => {
 
 test.describe('Offline Image Queue', () => {
   test('should queue image for later analysis', async ({ page, context }) => {
-    const testEmail = `test_image_queue_${Date.now()}@opennutri.test';
+    const testEmail = `test_image_queue_${Date.now()}@opennutri.test`;
     const testPassword = 'TestPassword123!';
 
     await page.goto('/signup');

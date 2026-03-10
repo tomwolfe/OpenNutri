@@ -139,7 +139,7 @@ export function usePersistence({ onSuccess, onError }: UsePersistenceOptions = {
             protein: item.protein,
             carbs: item.carbs,
             fat: item.fat,
-            sodium: item.sodium,
+            sodium: item.micronutrients?.sodium,
             numericQuantity: item.numericQuantity,
             unit: item.unit,
             servingGrams: item.servingGrams,

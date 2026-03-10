@@ -10,6 +10,7 @@
 
 import { db, type LocalSemanticMatch } from './db-local';
 import { generateEmbedding } from './embeddings';
+import { type Micronutrients } from '@/types/food';
 
 const SIMILARITY_THRESHOLD = 0.85;
 
@@ -188,6 +189,7 @@ export async function addToLocalCache(
     protein: number;
     carbs: number;
     fat: number;
+    micronutrients?: Micronutrients;
     sodium?: number;
     numericQuantity?: number;
     unit?: string;
@@ -214,6 +216,7 @@ export async function addToLocalCache(
         protein: item.protein,
         carbs: item.carbs,
         fat: item.fat,
+        micronutrients: item.micronutrients || existing.micronutrients,
         sodium: item.sodium,
         lastUsed: Date.now(),
         typicalQuantity: item.numericQuantity,
@@ -231,6 +234,7 @@ export async function addToLocalCache(
         protein: item.protein,
         carbs: item.carbs,
         fat: item.fat,
+        micronutrients: item.micronutrients,
         sodium: item.sodium,
         lastUsed: Date.now(),
         typicalQuantity: item.numericQuantity,
@@ -247,6 +251,7 @@ export async function addToLocalCache(
         protein: item.protein,
         carbs: item.carbs,
         fat: item.fat,
+        micronutrients: item.micronutrients || existing.micronutrients,
         sodium: item.sodium ?? existing.sodium,
       });
     }

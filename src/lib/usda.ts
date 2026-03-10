@@ -91,13 +91,17 @@ export async function getFoodDetails(fdcId: number): Promise<USDAFoodItem> {
 }
 
 /**
- * Extract macronutrients from USDA food item
+ * Extract macronutrients and micronutrients from USDA food item
  */
 export function extractMacros(food: USDAFoodItem) {
   const nutrients = food.foodNutrients || [];
   
   const getNutrient = (name: string): number => {
-    const nutrient = nutrients.find(n => n.nutrientName === name);
+    const searchLower = name.toLowerCase().trim();
+    const nutrient = nutrients.find(n => {
+      const nName = n.nutrientName.toLowerCase();
+      return nName === searchLower || nName.startsWith(searchLower + ',');
+    });
     return nutrient ? nutrient.value : 0;
   };
 
@@ -106,20 +110,45 @@ export function extractMacros(food: USDAFoodItem) {
     protein: getNutrient('Protein'),
     carbs: getNutrient('Carbohydrate, by difference'),
     fat: getNutrient('Total lipid (fat)'),
-    fiber: getNutrient('Fiber, total dietary'),
-    sugar: getNutrient('Sugars, total including NLEA'),
+    micronutrients: {
+      fiber: getNutrient('Fiber, total dietary'),
+      sugar: getNutrient('Sugars, total including NLEA'),
+      sodium: getNutrient('Sodium, Na'),
+      potassium: getNutrient('Potassium, K'),
+      calcium: getNutrient('Calcium, Ca'),
+      iron: getNutrient('Iron, Fe'),
+      vitaminC: getNutrient('Vitamin C, total ascorbic acid'),
+      saturatedFat: getNutrient('Fatty acids, total saturated'),
+      cholesterol: getNutrient('Cholesterol'),
+    }
   };
 }
 
 /**
  * Calculate macros for a specific portion size based on 100g USDA data
- * @param baseMacros - Macros per 100g
+ * @param baseMacros - Macros and micros per 100g
  * @param quantity - Numeric quantity (e.g. 2)
  * @param unit - Unit (e.g. "slice", "g", "cup")
  * @param densityFactor - Optional density (g per unit) if known (e.g. 150g for 1 cup of some food)
  */
 export function calculateMacrosByPortion(
-  baseMacros: { calories: number; protein: number; carbs: number; fat: number },
+  baseMacros: { 
+    calories: number; 
+    protein: number; 
+    carbs: number; 
+    fat: number;
+    micronutrients?: {
+      fiber: number;
+      sugar: number;
+      sodium: number;
+      potassium: number;
+      calcium: number;
+      iron: number;
+      vitaminC: number;
+      saturatedFat: number;
+      cholesterol: number;
+    }
+  },
   quantity: number,
   unit: string,
   densityFactor: number = 100 // Default to 100g per unit if unknown
@@ -160,6 +189,17 @@ export function calculateMacrosByPortion(
     protein: Number((baseMacros.protein * ratio).toFixed(1)),
     carbs: Number((baseMacros.carbs * ratio).toFixed(1)),
     fat: Number((baseMacros.fat * ratio).toFixed(1)),
+    micronutrients: baseMacros.micronutrients ? {
+      fiber: Number((baseMacros.micronutrients.fiber * ratio).toFixed(1)),
+      sugar: Number((baseMacros.micronutrients.sugar * ratio).toFixed(1)),
+      sodium: Math.round(baseMacros.micronutrients.sodium * ratio),
+      potassium: Math.round(baseMacros.micronutrients.potassium * ratio),
+      calcium: Math.round(baseMacros.micronutrients.calcium * ratio),
+      iron: Number((baseMacros.micronutrients.iron * ratio).toFixed(2)),
+      vitaminC: Number((baseMacros.micronutrients.vitaminC * ratio).toFixed(1)),
+      saturatedFat: Number((baseMacros.micronutrients.saturatedFat * ratio).toFixed(1)),
+      cholesterol: Math.round(baseMacros.micronutrients.cholesterol * ratio),
+    } : undefined,
     grams: Math.round(totalGrams)
   };
 }

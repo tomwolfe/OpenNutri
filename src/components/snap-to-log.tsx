@@ -691,7 +691,7 @@ export function SnapToLog({ onComplete, onError, onDraftSaved, onSyncComplete }:
             protein: item.protein,
             carbs: item.carbs,
             fat: item.fat,
-            sodium: item.sodium,
+            sodium: item.micronutrients?.sodium,
             numericQuantity: item.numericQuantity,
             unit: item.unit,
             servingGrams: item.servingGrams,

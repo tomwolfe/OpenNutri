@@ -9,7 +9,13 @@ export const FoodAnalysisSchema = z.object({
       protein_g: z.number().describe('Protein in grams'),
       carbs_g: z.number().describe('Carbohydrates in grams'),
       fat_g: z.number().describe('Fat in grams'),
+      fiber_g: z.number().optional().describe('Fiber in grams'),
+      sugar_g: z.number().optional().describe('Sugar in grams'),
       sodium_mg: z.number().optional().describe('Sodium in milligrams'),
+      potassium_mg: z.number().optional().describe('Potassium in milligrams'),
+      calcium_mg: z.number().optional().describe('Calcium in milligrams'),
+      iron_mg: z.number().optional().describe('Iron in milligrams'),
+      vitamin_c_mg: z.number().optional().describe('Vitamin C in milligrams'),
       confidence: z.number().describe('Confidence score 0-1'),
       portion_guess: z.string().describe('Estimated portion size string (e.g., "2 large slices")'),
       numeric_quantity: z.number().describe('Structured numeric quantity (e.g., 2)'),
@@ -29,13 +35,25 @@ export const FoodAnalysisSchema = z.object({
 
 export type FoodAnalysis = z.infer<typeof FoodAnalysisSchema>;
 
+export interface Micronutrients {
+  fiber?: number;
+  sugar?: number;
+  sodium?: number;
+  potassium?: number;
+  calcium?: number;
+  iron?: number;
+  vitaminC?: number;
+  saturatedFat?: number;
+  cholesterol?: number;
+}
+
 export interface DraftItem {
   foodName: string;
   calories: number;
   protein: number;
   carbs: number;
   fat: number;
-  sodium?: number; // mg
+  micronutrients?: Micronutrients;
   source: string;
   servingGrams: number;
   numericQuantity?: number;
@@ -54,7 +72,7 @@ export interface DraftItem {
     protein: number;
     carbs: number;
     fat: number;
-    sodium?: number;
+    micronutrients?: Micronutrients;
     similarity: number;
   }>;
 }

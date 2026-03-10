@@ -11,6 +11,7 @@
 import { searchFoods, extractMacros, type USDAFoodItem, calculateMacrosByPortion } from '@/lib/usda';
 import { getCachedUSDAMatch, cacheUSDAMatch } from '@/lib/ai-usda-cache';
 import { hybridMatch } from '@/lib/ai-usda-semantic';
+import { type Micronutrients } from '@/types/food';
 
 /**
  * Calculate Levenshtein distance between two strings
@@ -212,6 +213,13 @@ export async function enhanceWithUSDAData(
     protein_g: number;
     carbs_g: number;
     fat_g: number;
+    fiber_g?: number;
+    sugar_g?: number;
+    sodium_mg?: number;
+    potassium_mg?: number;
+    calcium_mg?: number;
+    iron_mg?: number;
+    vitamin_c_mg?: number;
     confidence: number;
     portion_guess: string;
     numeric_quantity: number;
@@ -224,6 +232,17 @@ export async function enhanceWithUSDAData(
     protein: number;
     carbs: number;
     fat: number;
+    micronutrients?: {
+      fiber?: number;
+      sugar?: number;
+      sodium?: number;
+      potassium?: number;
+      calcium?: number;
+      iron?: number;
+      vitaminC?: number;
+      saturatedFat?: number;
+      cholesterol?: number;
+    };
     source: string;
     usdaMatch?: {
       fdcId: number;
@@ -237,6 +256,7 @@ export async function enhanceWithUSDAData(
       protein: number;
       carbs: number;
       fat: number;
+      micronutrients?: Micronutrients;
       similarity: number;
     }>;
   }>
@@ -248,17 +268,32 @@ export async function enhanceWithUSDAData(
       const { matchFoodToUSDAWithAlternatives } = await import('@/lib/ai-usda-semantic');
       const results = await matchFoodToUSDAWithAlternatives(item.name);
       
+      // Prepare the AI's original micronutrients as the baseline
+      const aiMicros = {
+        fiber: item.fiber_g,
+        sugar: item.sugar_g,
+        sodium: item.sodium_mg,
+        potassium: item.potassium_mg,
+        calcium: item.calcium_mg,
+        iron: item.iron_mg,
+        vitaminC: item.vitamin_c_mg,
+      };
+
       if (results && results.length > 0) {
         const usdaMatch = results[0];
-        const alternatives = results.slice(1).map(alt => ({
-          fdcId: alt.fdcId,
-          description: alt.description,
-          calories: alt.foodNutrients.find(n => n.nutrientName === 'Energy')?.value || 0,
-          protein: alt.foodNutrients.find(n => n.nutrientName === 'Protein')?.value || 0,
-          carbs: alt.foodNutrients.find(n => n.nutrientName === 'Carbohydrate, by difference')?.value || 0,
-          fat: alt.foodNutrients.find(n => n.nutrientName === 'Total lipid (fat)')?.value || 0,
-          similarity: alt.similarity || 0,
-        }));
+        const alternatives = results.slice(1).map(alt => {
+          const altMacros = extractMacros(alt);
+          return {
+            fdcId: alt.fdcId,
+            description: alt.description,
+            calories: altMacros.calories,
+            protein: altMacros.protein,
+            carbs: altMacros.carbs,
+            fat: altMacros.fat,
+            micronutrients: altMacros.micronutrients,
+            similarity: alt.similarity || 0,
+          };
+        });
 
         const baseMacros = extractMacros(usdaMatch);
         
@@ -279,6 +314,7 @@ export async function enhanceWithUSDAData(
           protein: useUSDA ? scaledMacros.protein : item.protein_g,
           carbs: useUSDA ? scaledMacros.carbs : item.carbs_g,
           fat: useUSDA ? scaledMacros.fat : item.fat_g,
+          micronutrients: (useUSDA && scaledMacros.micronutrients) ? scaledMacros.micronutrients : aiMicros,
           source: 'USDA',
           usdaMatch: {
             fdcId: usdaMatch.fdcId,
@@ -296,6 +332,7 @@ export async function enhanceWithUSDAData(
         protein: item.protein_g,
         carbs: item.carbs_g,
         fat: item.fat_g,
+        micronutrients: aiMicros, // PRESERVE AI ESTIMATES
         source: 'AI_ESTIMATE',
       };
     })
