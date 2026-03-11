@@ -305,23 +305,6 @@ export function isCryptoAvailable(): boolean {
 }
 
 /**
- * @deprecated ⚠️ SECURITY NOTE: This uses SHA-256 client-side hashing before transmission,
- * which creates a vulnerability where the hash itself becomes the effective password.
- * 
- * TODO: Remove this once Phase 2 (Hardened Auth) is fully validated.
- * @param password - User's plaintext password
- * @returns Hex-encoded SHA-256 hash
- */
-export async function hashForAuth(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password + 'OPENNUTRI_AUTH_SALT_v1');
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(hash))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-/**
  * Encrypt binary data (e.g. image)
  * @param data - ArrayBuffer or Uint8Array to encrypt
  * @param key - Encryption key

@@ -138,6 +138,7 @@ async function getDepthEstimator() {
  * Initialize the classifier with progressive loading strategy
  * Task 1.4: Progressive model loading for faster initial response
  * Task 1.5: Lazy loading with device-optimized model selection
+ * Task 5.1: WebGPU Error Boundaries - Handle WebGPU context loss and OOM errors
  */
 async function getClassifier() {
   if (classifier) return classifier;
@@ -199,6 +200,30 @@ async function getClassifier() {
         return classifier;
       } catch (moondreamErr) {
         console.warn('⚠️ Moondream2 loading failed, falling back:', moondreamErr);
+        
+        // Task 5.1: Check for WebGPU-specific errors
+        const isWebGpuError = 
+          moondreamErr instanceof Error && 
+          (moondreamErr.message.includes('WebGPU') ||
+           moondreamErr.message.includes('context lost') ||
+           moondreamErr.message.includes('out of memory') ||
+           moondreamErr.message.includes('GPU'));
+        
+        if (isWebGpuError) {
+          console.warn('❌ WebGPU error detected, disabling WebGPU and falling back to WASM');
+          webGpuAvailable = false;
+          deviceInfo = {
+            type: 'wasm',
+            name: 'WebGPU failed, using WASM fallback',
+            isMobile: deviceInfo.isMobile,
+          };
+          self.postMessage({
+            type: 'device-info',
+            info: deviceInfo,
+            webGpuAvailable: false
+          });
+        }
+        
         self.postMessage({
           type: 'progress',
           message: 'Moondream2 failed, using fallback model...',
@@ -268,6 +293,10 @@ async function getClassifier() {
 
 let embedderLoadState: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
 
+/**
+ * Initialize the embedder with WebGPU error handling
+ * Task 5.1: WebGPU Error Boundaries
+ */
 async function getEmbedder() {
   if (embedder) return embedder;
   if (embedderLoadState === 'loading') {
@@ -315,6 +344,63 @@ async function getEmbedder() {
     embedderLoadState = 'ready';
     return embedder;
   } catch (err) {
+    // Task 5.1: Check for WebGPU-specific errors
+    const isWebGpuError = 
+      err instanceof Error && 
+      webGpuAvailable &&
+      (err.message.includes('WebGPU') ||
+       err.message.includes('context lost') ||
+       err.message.includes('out of memory') ||
+       err.message.includes('GPU'));
+    
+    if (isWebGpuError) {
+      console.warn('❌ WebGPU error detected in embedder, falling back to WASM');
+      webGpuAvailable = false;
+      deviceInfo = {
+        type: 'wasm',
+        name: 'WebGPU failed, using WASM fallback',
+        isMobile: deviceInfo.isMobile,
+      };
+      self.postMessage({
+        type: 'device-info',
+        info: deviceInfo,
+        webGpuAvailable: false
+      });
+      
+      // Retry with WASM
+      self.postMessage({
+        type: 'progress',
+        message: 'WebGPU failed, loading embeddings on CPU...',
+        progress: 0.3,
+        stage: 'loading-embedder-fallback'
+      });
+      
+      embedder = await pipeline('feature-extraction', 'xenova/all-MiniLM-L6-v2', {
+        device: 'wasm',
+        progress_callback: (data: any) => {
+          if (data.status === 'progress') {
+            self.postMessage({
+              type: 'progress',
+              message: `Loading embeddings: ${Math.round(data.progress * 100)}%`,
+              progress: 0.3 + (data.progress * 0.5),
+              stage: 'loading-embedder-fallback'
+            });
+          } else if (data.status === 'ready') {
+            self.postMessage({
+              type: 'progress',
+              message: 'Embedding model ready (WASM)!',
+              progress: 0.8,
+              stage: 'ready'
+            });
+          }
+        }
+      });
+      
+      console.log('✅ Embedder loaded on WASM (fallback)');
+      embedderLoadState = 'ready';
+      return embedder;
+    }
+    
     console.error('❌ Embedder initialization failed:', err);
     self.postMessage({
       type: 'progress',

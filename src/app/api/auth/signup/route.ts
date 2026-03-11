@@ -3,10 +3,10 @@
  *
  * Creates a new user account with hashed password.
  * Validates email format and password strength.
- * 
- * SECURITY: The password received here should already be hashed client-side
- * using hashForAuth() to prevent plaintext password transmission.
- * We then bcrypt this hash server-side for additional protection.
+ *
+ * SECURITY: Passwords are hashed server-side using Argon2id.
+ * For enhanced security, consider implementing client-side password hashing
+ * to prevent plaintext password transmission over TLS.
  */
 
 import { NextRequest, NextResponse } from 'next/server';

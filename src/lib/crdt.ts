@@ -73,6 +73,10 @@ export function getYData<T = unknown>(base64Update: string): T {
 /**
  * Merges server and local updates using CRDT logic
  * Supports nested Y.Array for 'items' to prevent array-overwrite conflicts
+ *
+ * PERFORMANCE: Implements state compaction to prevent PostgreSQL yjs_data bloat.
+ * After merging, the Y.Doc is re-instantiated with only the current JSON state,
+ * pruning the entire operational history tree.
  */
 export function mergeCrdt(
   localUpdate: string | null,
@@ -82,7 +86,7 @@ export function mergeCrdt(
 ): { mergedUpdate: string; mergedData: unknown } {
   const doc = new Y.Doc();
   const map = doc.getMap('data');
-  
+
   // 1. Start with server state (as baseline)
   if (serverUpdate) {
     applyYUpdate(doc, serverUpdate);
@@ -112,18 +116,18 @@ export function mergeCrdt(
           yArray = new Y.Array();
           map.set(k, yArray);
         }
-        
+
         // Task 4.7: Granular operational transforms for items
         const currentYArray = yArray as Y.Array<unknown>;
         const currentItems = currentYArray.toArray();
-        
+
         // Basic diffing to avoid full replacement
         if (JSON.stringify(currentItems) !== JSON.stringify(v)) {
           // If lengths are different or items changed, we need to sync them
           // For now, we'll do a slightly smarter replacement that preserves common prefixes
           let commonPrefix = 0;
-          while (commonPrefix < currentItems.length && 
-                 commonPrefix < v.length && 
+          while (commonPrefix < currentItems.length &&
+                 commonPrefix < v.length &&
                  JSON.stringify(currentItems[commonPrefix]) === JSON.stringify(v[commonPrefix])) {
             commonPrefix++;
           }
@@ -141,8 +145,25 @@ export function mergeCrdt(
     });
   }
 
+  // 3. STATE COMPACTION: Prune Yjs history tree to prevent bloat
+  // Extract current JSON state and create a fresh Y.Doc with only that state
+  const currentState = doc.getMap('data').toJSON() as Record<string, unknown>;
+  const compactedDoc = new Y.Doc();
+  const compactedMap = compactedDoc.getMap('data');
+
+  // Re-populate fresh doc with current state (no history)
+  Object.entries(currentState).forEach(([k, v]) => {
+    if (k === 'items' && Array.isArray(v)) {
+      const yArray = new Y.Array();
+      yArray.insert(0, v);
+      compactedMap.set(k, yArray);
+    } else {
+      compactedMap.set(k, v);
+    }
+  });
+
   return {
-    mergedUpdate: encodeYDoc(doc),
-    mergedData: doc.getMap('data').toJSON()
+    mergedUpdate: encodeYDoc(compactedDoc),
+    mergedData: currentState
   };
 }

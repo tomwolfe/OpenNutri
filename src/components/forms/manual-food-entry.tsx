@@ -134,41 +134,45 @@ export function ManualFoodEntryForm({ mealType, onEntryComplete }: ManualFoodEnt
         fat: Math.round(food.fat * (servingGrams / 100) * 10) / 10,
         source: 'USDA' as const,
       }));
-// E2E Encryption: Encrypt everything before sending
-let encryptedData = null;
-let encryptionIv = null;
+      // E2E Encryption: Encrypt everything before sending
+      let encryptedData = null;
+      let encryptionIv = null;
 
-    if (isReady) {
-      try {
-        // Encrypt full metadata for zero-knowledge privacy
-        const encryptionResult = await encryptLog({
-          mealType: mealType,
-          items,
-          timestamp: Date.now()
-        });
-        encryptedData = encryptionResult.encryptedData;
-        encryptionIv = encryptionResult.iv;
-      } catch (err) {
-        console.error('Encryption failed, saving in plaintext...', err);
+      if (isReady) {
+        try {
+          // Encrypt full metadata for zero-knowledge privacy
+          const encryptionResult = await encryptLog({
+            mealType: mealType,
+            items,
+            timestamp: Date.now()
+          });
+          encryptedData = encryptionResult.encryptedData;
+          encryptionIv = encryptionResult.iv;
+        } catch (err) {
+          // CRITICAL: Throw error to abort save - never fallback to plaintext
+          console.error('Encryption failed, aborting save...', err);
+          setError('Encryption failed. Please check your vault status and try again.');
+          setIsSubmitting(false);
+          return;
+        }
       }
-    }
 
-    const response = await fetch('/api/log/food', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        // If encrypted, only send 'encrypted' or generic values
-        mealType: encryptedData ? 'encrypted' : mealType,
-        items: encryptedData ? [] : items,
-        totalCalories: encryptedData ? 0 : totals.calories,
-        notes: encryptedData ? 'encrypted' : null,
-        imageUrl: null,
-        encryptedData,
-        encryptionIv,
-      }),
-    });
+      const response = await fetch('/api/log/food', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          // If encrypted, only send 'encrypted' or generic values
+          mealType: encryptedData ? 'encrypted' : mealType,
+          items: encryptedData ? [] : items,
+          totalCalories: encryptedData ? 0 : totals.calories,
+          notes: encryptedData ? 'encrypted' : null,
+          imageUrl: null,
+          encryptedData,
+          encryptionIv,
+        }),
+      });
       if (!response.ok) {
         throw new Error('Failed to save food log');
       }

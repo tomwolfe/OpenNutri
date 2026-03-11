@@ -408,9 +408,9 @@ export async function getGoogleFitAccessToken(): Promise<string | null> {
     sessionStorage.removeItem('google_fit_expires_at');
   }
 
-  // No valid token found - OAuth flow required
-  console.log('Google Fit OAuth required, initiating flow...');
-  return null;
+  // No valid token found - initiate OAuth flow
+  const token = await initiateGoogleFitOAuth();
+  return token;
 }
 
 /**
