@@ -551,7 +551,7 @@ self.onmessage = async (event) => {
 
         // Simple parser for "Item (Weight)"
         const lines = generatedText.split('\n');
-        results = lines.map((line: string) => {
+        results = (await Promise.all(lines.map(async (line: string) => {
           const match = line.match(/(.+)\s*\((\d+)g\)/);
           if (match) {
             const label = match[1].trim();
@@ -571,7 +571,7 @@ self.onmessage = async (event) => {
             };
           }
           return null;
-        }).filter(Boolean);
+        }))).filter(Boolean);
 
         // If parser failed, return the raw text as a single label with needsCloud=true
         if (results.length === 0) {
