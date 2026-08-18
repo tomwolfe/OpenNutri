@@ -10,6 +10,7 @@ import {
   syncAppleHealthData,
   syncGoogleFitData,
   saveHealthDataLocally,
+  getGoogleFitAccessToken,
   type HealthDataSync,
 } from '@/lib/health-api';
 
@@ -196,25 +197,4 @@ export function useHealthData(date: Date) {
     recordManualActivity,
     getHistoricalData,
   };
-}
-
-/**
- * Get Google Fit access token from session or initiate OAuth flow
- */
-async function getGoogleFitAccessToken(): Promise<string | null> {
-  // In a real implementation, this would:
-  // 1. Check for existing token in session storage
-  // 2. If expired, use refresh token to get new token
-  // 3. If no refresh token, initiate OAuth flow
-  
-  // For now, check if token is stored in session
-  const token = sessionStorage.getItem('google_fit_access_token');
-  if (token) {
-    return token;
-  }
-
-  // Initiate OAuth flow (would open popup)
-  // This is a placeholder for the actual OAuth implementation
-  console.log('Google Fit OAuth required - implement OAuth popup flow');
-  return null;
 }

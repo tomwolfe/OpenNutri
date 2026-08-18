@@ -112,6 +112,7 @@ export async function POST(request: NextRequest) {
     // Return user data without password hash
     return NextResponse.json(
       {
+        userId: newUser.id,
         user: {
           id: newUser.id,
           email: newUser.email,

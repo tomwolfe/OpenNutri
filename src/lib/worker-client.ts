@@ -106,7 +106,7 @@ export async function syncDeltaInWorker(
   deviceId: string,
   lastSyncTimestamp: number,
   origin: string
-): Promise<{ pulled: number; pushed: number; serverTime: number; pulledLogIds: string[]; pulledRecipeIds: string[] }> {
+): Promise<{ pulled: number; pushed: number; serverTime: number; pulledLogIds: string[]; pulledRecipeIds: string[]; conflicts: SyncConflict[] }> {
   const w = getSyncWorker();
 
   return new Promise((resolve, reject) => {

@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Loader2, Lock, ShieldCheck, AlertCircle } from 'lucide-react';
-import { generateSharingKeyPair, unwrapVaultKey } from '@/lib/sharing-protocol';
+import { generateSharingKeyPair, exportPublicKey, importPublicKey, unwrapVaultKey } from '@/lib/sharing-protocol';
 import { CoachingDashboard } from '@/components/coaching-dashboard';
 
 export default function SharedVaultPage() {
@@ -23,30 +23,45 @@ export default function SharedVaultPage() {
   const [vaultKey, setVaultKey] = useState<CryptoKey | null>(null);
   const [privateKey, setPrivateKey] = useState<CryptoKey | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
+  const [hasSentPublicKey, setHasSentPublicKey] = useState(false);
 
-  // 1. Initialize temporary sharing keys
+  // 1. Initialize temporary sharing keys and send public key to owner
   useEffect(() => {
     async function initKeys() {
       try {
-        const { privateKey } = await generateSharingKeyPair();
+        // Generate temporary key pair for this recipient
+        const { privateKey: recipientPrivateKey, publicKey: recipientPublicKey } = 
+          await generateSharingKeyPair();
         
         // Store private key in memory only
-        setPrivateKey(privateKey);
+        setPrivateKey(recipientPrivateKey);
+        setHasSentPublicKey(false);
         
-        // Register this recipient session with the server
-        // This is a simplified flow: normally the recipient would provide 
-        // their public key to the owner FIRST. 
-        // Here we're assuming the link [id] already exists and we just need to 
-        // fetch the data that was already re-encrypted for us (or provide our key).
+        // Send recipient's public key to owner via the accept endpoint
+        // This triggers the two-step sharing handshake
+        const response = await fetch(`/api/share/${id}/accept`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ publicKey: await exportPublicKey(recipientPublicKey) }),
+        });
         
-        const response = await fetch(`/api/share/${id}`);
         if (!response.ok) {
           const errData = await response.json();
-          throw new Error(errData.error || 'Failed to load share');
+          throw new Error(errData.error || 'Failed to initialize share');
         }
         
         const data = await response.json();
-        setShareData(data);
+        setHasSentPublicKey(true);
+        
+        // Now fetch the share data - the owner has wrapped the vault key with our public key
+        const shareResponse = await fetch(`/api/share/${id}`);
+        if (!shareResponse.ok) {
+          const errData = await shareResponse.json();
+          throw new Error(errData.error || 'Failed to load share');
+        }
+        
+        const share = await shareResponse.json();
+        setShareData(share);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Initialization failed');
       } finally {
@@ -57,6 +72,24 @@ export default function SharedVaultPage() {
 
     initKeys();
   }, [id]);
+
+  // 2. Unwrap the vault key when it arrives
+  const handleDecrypt = async () => {
+    if (!shareData || !privateKey) return;
+    
+    setLoading(true);
+    try {
+      // Decrypt the owner's vault key with our private key
+      const key = await unwrapVaultKey(shareData.encryptedVaultKey, privateKey);
+      setVaultKey(key);
+    } catch (_err) {
+      setError('Decryption failed. The sharing session may be invalid.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ... rest of the component stays the same
 
   // 2. Unwrap the vault key when it arrives
   const handleDecrypt = async () => {

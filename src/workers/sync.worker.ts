@@ -416,7 +416,7 @@ self.onmessage = async (event: MessageEvent) => {
 
       self.postMessage({
         type: 'SYNC_DELTA_SUCCESS',
-        payload: { pulled, pushed, serverTime: data.serverTime, pulledLogIds, pulledRecipeIds }
+        payload: { pulled, pushed, serverTime: data.serverTime, pulledLogIds, pulledRecipeIds, conflicts: serverConflicts }
       });
     }
   } catch (err: unknown) {

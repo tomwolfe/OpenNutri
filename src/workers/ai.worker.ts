@@ -292,6 +292,9 @@ async function getClassifier() {
 }
 
 let embedderLoadState: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
+let coreFoodIndex: Array<{ description: string; id: string; calories: number; protein: number; carbs: number; fat: number }> = [];
+let coreFoodEmbeddings: Float32Array | null = null;
+let coreFoodIndexLoaded = false;
 
 /**
  * Initialize the embedder with WebGPU error handling
@@ -398,6 +401,13 @@ async function getEmbedder() {
       
       console.log('✅ Embedder loaded on WASM (fallback)');
       embedderLoadState = 'ready';
+      
+      // Load core food index with embeddings if not already loaded
+      if (!coreFoodIndexLoaded) {
+        coreFoodIndexLoaded = true;
+        loadCoreFoodIndex();
+      }
+      
       return embedder;
     }
     
@@ -414,36 +424,101 @@ async function getEmbedder() {
 }
 
 /**
- * Find the closest macro match for a label
- * Returns per-100g macros for common items
+ * Load the core food index from public data and compute embeddings
  */
-function getMacrosForLabel(label: string): { calories: number; protein: number; carbs: number; fat: number } | null {
+async function loadCoreFoodIndex() {
+  // Fetch the small-core-index.json
+  const indexResponse = await fetch('public/data/small-core-index.json');
+  const indexData = await indexResponse.json();
+  
+  coreFoodIndex = indexData.map(item => ({
+    description: item.description,
+    id: item.id,
+    calories: item.calories,
+    protein: item.protein,
+    carbs: item.carbs,
+    fat: item.fat
+  }));
+  
+  // Generate embeddings for all food descriptions using the embedder
+  if (embedder && coreFoodIndex.length > 0) {
+    coreFoodEmbeddings = new Float32Array(coreFoodIndex.length * 512); // MiniLM-L6-v2 produces 512-dim embeddings
+    
+    for (let i = 0; i < coreFoodIndex.length; i++) {
+      const output = await embedder(coreFoodIndex[i].description, { pooling: 'mean', normalize: true });
+      const embedding = Array.from(output.data);
+      coreFoodEmbeddings.set(embedding, i * 512);
+    }
+    
+    console.log(`✅ Loaded ${coreFoodIndex.length} food items with embeddings`);
+  }
+}
+
+/**
+ * Find the closest food match in the core index using embedding similarity
+ * Returns the matched food's macros and similarity score, or null if no good match
+ */
+async function findClosestFoodMatch(label: string): { macros: { calories: number; protein: number; carbs: number; fat: number } | null; similarity: number } | null {
+  if (!coreFoodIndexLoaded || !coreFoodIndex.length || !coreFoodEmbeddings) {
+    return null;
+  }
+  
   const lowercaseLabel = label.toLowerCase();
   
-  // Hardcoded core dataset for fast matching in the worker
-  const coreFoods: Record<string, { calories: number; protein: number; carbs: number; fat: number }> = {
-    'apple': { calories: 52, protein: 0.3, carbs: 13.8, fat: 0.2 },
-    'banana': { calories: 89, protein: 1.1, carbs: 22.8, fat: 0.3 },
-    'chicken': { calories: 165, protein: 31, carbs: 0, fat: 3.6 },
-    'egg': { calories: 155, protein: 12.6, carbs: 1.1, fat: 10.6 },
-    'oatmeal': { calories: 71, protein: 2.5, carbs: 12, fat: 1.4 },
-    'milk': { calories: 50, protein: 3.3, carbs: 4.8, fat: 2 },
-    'avocado': { calories: 160, protein: 2, carbs: 8.5, fat: 14.7 },
-    'rice': { calories: 130, protein: 2.7, carbs: 28, fat: 0.3 },
-    'salmon': { calories: 208, protein: 22, carbs: 0, fat: 13 },
-    'peanut butter': { calories: 588, protein: 25, carbs: 20, fat: 50 },
-    'bread': { calories: 265, protein: 9, carbs: 49, fat: 3.2 },
-    'steak': { calories: 271, protein: 27, carbs: 0, fat: 18 },
-    'broccoli': { calories: 34, protein: 2.8, carbs: 7, fat: 0.4 },
-    'potato': { calories: 77, protein: 2, carbs: 17, fat: 0.1 },
-    'yogurt': { calories: 59, protein: 10, carbs: 3.6, fat: 0.4 },
-  };
-
-  // Simple substring match
-  for (const [key, macros] of Object.entries(coreFoods)) {
-    if (lowercaseLabel.includes(key)) return macros;
+  // Generate embedding for the label using the embedder
+  const output = await embedder(lowercaseLabel, { pooling: 'mean', normalize: true });
+  const labelEmbedding = new Float32Array(512);
+  labelEmbedding.set(Array.from(output.data));
+  
+  // Compute cosine similarity with all index foods
+  let bestScore = -1;
+  let bestIndex = -1;
+  
+  for (let i = 0; i < coreFoodIndex.length; i++) {
+    const indexEmbedding = new Float32Array(coreFoodEmbeddings.buffer, i * 512, 512);
+    
+    // Cosine similarity: dot product of normalized vectors
+    let dotProduct = 0;
+    for (let j = 0; j < 512; j++) {
+      dotProduct += labelEmbedding[j] * indexEmbedding[j];
+    }
+    
+    const score = dotProduct; // Vectors are already normalized
+    
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = i;
+    }
   }
+  
+  // Only return a match if similarity is above threshold (0.6)
+  if (bestIndex >= 0 && bestScore >= 0.6) {
+    const matchedFood = coreFoodIndex[bestIndex];
+    return {
+      macros: {
+        calories: matchedFood.calories,
+        protein: matchedFood.protein,
+        carbs: matchedFood.carbs,
+        fat: matchedFood.fat
+      },
+      similarity: bestScore
+    };
+  }
+  
+  return null;
+}
 
+/**
+ * Get the closest macro match for a label
+ * Uses embedding similarity against the core food index
+ */
+async function getMacrosForLabel(label: string): { calories: number; protein: number; carbs: number; fat: number } | null {
+  const match = await findClosestFoodMatch(label);
+  
+  if (match && match.macros) {
+    return match.macros;
+  }
+  
   return null;
 }
 
@@ -481,7 +556,7 @@ self.onmessage = async (event) => {
           if (match) {
             const label = match[1].trim();
             const weight = parseInt(match[2]);
-            const macros = getMacrosForLabel(label);
+            const macros = await getMacrosForLabel(label);
             return {
               label,
               score: 0.95, // High confidence for Moondream2
@@ -491,22 +566,33 @@ self.onmessage = async (event) => {
                 protein: (macros.protein * weight) / 100,
                 carbs: (macros.carbs * weight) / 100,
                 fat: (macros.fat * weight) / 100,
-              } : null
+              } : null,
+              needsCloud: !macros // true if no match found in core index
             };
           }
           return null;
         }).filter(Boolean);
 
-        // If parser failed, return the raw text as a single label
+        // If parser failed, return the raw text as a single label with needsCloud=true
         if (results.length === 0) {
-          results = [{ label: generatedText, score: 0.9, macros: null }];
+          results = [{ label: generatedText, score: 0.9, macros: null, needsCloud: true }];
         }
-      } else {
+} else {
         // MobileNet fallback
         const rawResults = await model(image);
-        results = rawResults.map((res: { label: string; score: number }) => ({
-          ...res,
-          macros: getMacrosForLabel(res.label)
+        results = await Promise.all(rawResults.map(async (res: { label: string; score: number }) => {
+          const macros = await getMacrosForLabel(res.label);
+          return {
+            label: res.label,
+            score: res.score,
+            macros: macros ? {
+              calories: (macros.calories * 100) / 100, // default to per-100g
+              protein: macros.protein,
+              carbs: macros.carbs,
+              fat: macros.fat
+            } : null,
+            needsCloud: !macros // true if no match found in core index
+          };
         }));
       }
 

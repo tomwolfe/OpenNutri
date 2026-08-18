@@ -56,7 +56,7 @@ function setLastSyncTimestamp(timestamp: number): void {
 export async function syncDelta(
   userId: string,
   vaultKey: CryptoKey | null
-): Promise<{ success: boolean; pulled: number; pushed: number; pulledLogIds?: string[] }> {
+): Promise<{ success: boolean; pulled: number; pushed: number; pulledLogIds?: string[]; conflicts?: SyncConflict[] }> {
   try {
     const deviceId = getDeviceId();
     const since = getLastSyncTimestamp();
@@ -95,7 +95,7 @@ export async function syncDelta(
     const { syncDeltaInWorker, decryptBatchInWorker } = await import('@/lib/worker-client');
 
     // 2. Offload the main sync logic to the worker
-    const { pulled, pushed, serverTime, pulledLogIds } = await syncDeltaInWorker(userId, deviceId, since, origin);
+    const { pulled, pushed, serverTime, pulledLogIds, pulledRecipeIds, conflicts } = await syncDeltaInWorker(userId, deviceId, since, origin);
 
     // Reset failure count on success
     localStorage.setItem('opennutri_sync_failure_count', '0');
@@ -122,7 +122,7 @@ export async function syncDelta(
     }
 
     setLastSyncTimestamp(serverTime);
-    return { success: true, pulled, pushed, pulledLogIds };
+    return { success: true, pulled, pushed, pulledLogIds, conflicts };
   } catch (error) {
     // Task 4.9: Record failure for exponential backoff
     if (typeof window !== 'undefined') {

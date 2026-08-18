@@ -72,6 +72,7 @@ export async function POST(request: NextRequest) {
               protein: item.protein,
               carbs: item.carbs,
               fat: item.fat,
+              sodium: item.sodium,
               notes: item.notes,
               source: item.source || 'AI_ESTIMATE',
             }))

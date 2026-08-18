@@ -54,7 +54,7 @@ export interface UseDailyLogsReturn {
   dailyTotals: DailyTotals;
   isLoading: boolean;
   error: string | null;
-  triggerSync: (userId: string, vaultKey: CryptoKey | null) => Promise<{ success?: boolean; pulled?: number }>;
+  triggerSync: (userId: string, vaultKey: CryptoKey | null) => Promise<{ success?: boolean; pulled?: number; conflicts?: SyncConflict[] }>;
   removeLog: (logId: string) => Promise<boolean>;
   resolveConflicts: (conflicts: SyncConflict[], resolution: 'keep-local' | 'keep-server' | 'keep-newest') => Promise<void>;
 }
@@ -181,10 +181,10 @@ export function useDailyLogs(
   );
 
   // Trigger background sync
-  const triggerSync = async (syncUserId: string, syncVaultKey: CryptoKey | null): Promise<{ success?: boolean; pulled?: number }> => {
+  const triggerSync = async (syncUserId: string, syncVaultKey: CryptoKey | null): Promise<{ success?: boolean; pulled?: number; conflicts?: SyncConflict[] }> => {
     try {
       const result = await syncDelta(syncUserId, syncVaultKey);
-      return { success: result.success, pulled: result.pulled };
+      return { success: result.success, pulled: result.pulled, conflicts: result.conflicts };
     } catch (err) {
       console.error('Sync error:', err);
       return {};

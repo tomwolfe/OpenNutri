@@ -9,6 +9,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { list, del } from '@vercel/blob';
+import { db } from '@/lib/db';
+import { foodLogs } from '@/db/schema';
+import { isNotNull } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300; // 5 minutes for cleanup
@@ -63,19 +66,39 @@ async function getAllBlobs() {
 }
 
 /**
+ * Get all image URLs referenced in food_logs
+ */
+async function getReferencedImageUrls(): Promise<Set<string>> {
+  try {
+    const result = await db
+      .selectDistinct({ imageUrl: foodLogs.imageUrl })
+      .from(foodLogs)
+      .where(isNotNull(foodLogs.imageUrl));
+
+    return new Set(result.map((r) => r.imageUrl).filter(Boolean) as string[]);
+  } catch (error) {
+    console.error('Error checking referenced images:', error);
+    return new Set();
+  }
+}
+
+/**
  * Main cleanup function
  */
 async function performCleanup() {
   const cutoffDate = new Date();
   cutoffDate.setHours(cutoffDate.getHours() - MAX_AGE_HOURS);
 
+  // Get referenced images from database
+  const referencedUrls = await getReferencedImageUrls();
+
   // Get all blobs
   const allBlobs = await getAllBlobs();
   const userFoodBlobs = allBlobs.filter((b) => b.pathname.startsWith('users/'));
 
-  // Filter to orphans (older than cutoff)
+  // Filter to orphans: older than cutoff AND not referenced in database
   const orphans = userFoodBlobs.filter(
-    (blob) => blob.uploadedAt < cutoffDate
+    (blob) => blob.uploadedAt < cutoffDate && !referencedUrls.has(blob.url)
   );
 
   if (orphans.length === 0) {

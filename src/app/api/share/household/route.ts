@@ -169,10 +169,10 @@ export async function POST(request: NextRequest) {
       id: shareId,
       ownerId: userId,
       recipientEmail,
-      encryptedVaultKey,
-      publicKey,
+      // Don't set encryptedVaultKey or publicKey yet - two-step flow
+      // active: false until owner wraps the key with recipient's public key
+      active: false,
       expiresAt,
-      active: true,
     });
 
     const shareLink = `${process.env.NEXTAUTH_URL || ''}/share/${shareId}`;
@@ -182,7 +182,7 @@ export async function POST(request: NextRequest) {
       shareId,
       shareLink,
       expiresAt: expiresAt.toISOString(),
-      message: `Invitation sent to ${recipientEmail}`
+      message: `Invitation sent to ${recipientEmail}. Recipient must accept the share link first.`
     });
   } catch (error) {
     console.error('Household invite error:', error);

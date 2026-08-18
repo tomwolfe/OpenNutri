@@ -111,7 +111,7 @@ export async function GET(
       .orderBy(userTargets.date);
 
     const [owner] = await db
-      .select({ weightGoal: users.weightGoal })
+      .select({ email: users.email, weightGoal: users.weightGoal })
       .from(users)
       .where(eq(users.id, share.ownerId))
       .limit(1);
@@ -123,16 +123,102 @@ export async function GET(
 
     return NextResponse.json({
       success: true,
-      ownerEmail: share.recipientEmail,
+      ownerEmail: owner?.email || null,
       encryptedVaultKey: share.encryptedVaultKey,
       weightRecords,
       weightGoal: owner?.weightGoal || 'maintain',
-      ownerId: share.ownerId
+      ownerId: share.ownerId,
+      // Two-step sharing protocol status
+      sharingStatus: share.active ? 'active' : 'pendingAccept',
+      recipientPublicKey: share.publicKey
     });
   } catch (error) {
     console.error('Shared vault retrieval error:', error);
     return NextResponse.json(
       { error: 'Failed to retrieve shared data' },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * PUT /api/share/[id]
+ * Owner wraps the vault key with the recipient's public key and activates the share.
+ * This completes the two-step sharing handshake.
+ */
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const shareId = params.id;
+    const session = await auth();
+    if (!session?.user?.email) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
+    const recipientEmail = session.user.email;
+
+    // Fetch the sharing session
+    const [share] = await db
+      .select()
+      .from(sharedVaults)
+      .where(eq(sharedVaults.id, shareId))
+      .limit(1);
+
+    if (!share) {
+      return NextResponse.json({ error: 'Sharing session not found' }, { status: 404 });
+    }
+
+    // Verify recipient email matches session (owner can only activate their own shares)
+    if (share.recipientEmail !== recipientEmail) {
+      return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+    }
+
+    // Check if share is already active
+    if (share.active) {
+      return NextResponse.json({ error: 'Sharing session already active' }, { status: 409 });
+    }
+
+    // Check expiration
+    if (share.expiresAt && new Date() > share.expiresAt) {
+      return NextResponse.json({ error: 'Sharing session expired' }, { status: 410 });
+    }
+
+    // Verify recipient's public key is available
+    if (!share.publicKey) {
+      return NextResponse.json({ error: 'Recipient public key not found. Has the recipient sent their public key?' }, { status: 400 });
+    }
+
+    // Import the recipient's public key (for validation - the actual wrapping is done client-side)
+    await importPublicKey(share.publicKey);
+
+    // Parse the wrapped (encrypted) vault key from the request
+    const { wrappedVaultKey } = await request.json();
+    if (!wrappedVaultKey) {
+      return NextResponse.json({ error: 'Wrapped vault key is required' }, { status: 400 });
+    }
+
+    // Update the shared vault with the wrapped key and mark as active
+    // The wrapped key is encrypted with the recipient's public key, so only they can decrypt it
+    await db
+      .update(sharedVaults)
+      .set({
+        encryptedVaultKey: wrappedVaultKey,
+        active: true,
+      })
+      .where(eq(sharedVaults.id, shareId));
+
+    return NextResponse.json({
+      success: true,
+      shareId,
+      message: 'Sharing activated. Recipient can now decrypt the vault key.',
+      sharingStatus: 'active'
+    });
+  } catch (error) {
+    console.error('Share activate error:', error);
+    return NextResponse.json(
+      { error: 'Failed to activate share' },
       { status: 500 }
     );
   }

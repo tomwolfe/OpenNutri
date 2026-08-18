@@ -17,7 +17,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { generateSharingKeyPair, exportPublicKey, wrapVaultKey } from '@/lib/sharing-protocol';
+import { generateSharingKeyPair, exportPublicKey, wrapVaultKey, importPublicKey } from '@/lib/sharing-protocol';
 import { useEncryption } from '@/hooks/useEncryption';
 import { cn } from '@/lib/utils';
 
@@ -68,25 +68,17 @@ export function HouseholdSharing() {
     setSuccess(null);
 
     try {
-      // 1. Generate temporary key pair for this share
+      // 1. Create a pending share record (active: false, no vault key wrapped yet)
       const keyPair = await generateSharingKeyPair();
-      
-      // 2. Export public key
       const publicKeyBase64 = await exportPublicKey(keyPair.publicKey);
       
-      // 3. Wrap vault key with recipient's public key
-      // Note: In a real implementation, you'd fetch their public key first
-      // For now, we generate a new keypair and will share the private key via link
-      const wrappedKey = await wrapVaultKey(vaultKey, keyPair.publicKey);
-      
-      // 4. Create share record
       const res = await fetch('/api/share/household', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           recipientEmail: inviteEmail,
-          encryptedVaultKey: wrappedKey,
-          publicKey: publicKeyBase64,
+          // We don't send encryptedVaultKey yet - the two-step flow handles this
+          // publicKey will be sent by the recipient via /api/share/[id]/accept
           expiresDays: 30,
         }),
       });
