@@ -89,24 +89,6 @@ export default function SharedVaultPage() {
     }
   };
 
-  // ... rest of the component stays the same
-
-  // 2. Unwrap the vault key when it arrives
-  const handleDecrypt = async () => {
-    if (!shareData || !privateKey) return;
-    
-    setLoading(true);
-    try {
-      // Decrypt the owner's vault key with our private key
-      const key = await unwrapVaultKey(shareData.encryptedVaultKey, privateKey);
-      setVaultKey(key);
-    } catch (_err) {
-      setError('Decryption failed. The sharing session may be invalid.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   if (isInitializing) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
