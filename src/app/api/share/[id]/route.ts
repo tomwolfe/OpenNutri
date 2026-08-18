@@ -13,6 +13,7 @@ import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { sharedVaults, userTargets, users } from '@/db/schema';
 import { eq, and, gte, lte } from 'drizzle-orm';
+import { importPublicKey } from '@/lib/sharing-protocol';
 
 // Rate limiting: Track requests per IP per hour
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
