@@ -429,7 +429,7 @@ async function getEmbedder() {
 async function loadCoreFoodIndex() {
   // Fetch the small-core-index.json
   const indexResponse = await fetch('public/data/small-core-index.json');
-  const indexData = await indexResponse.json();
+  const indexData: Array<{ description: string; id: string; calories: number; protein: number; carbs: number; fat: number }> = await indexResponse.json();
   
   coreFoodIndex = indexData.map(item => ({
     description: item.description,
@@ -446,7 +446,7 @@ async function loadCoreFoodIndex() {
     
     for (let i = 0; i < coreFoodIndex.length; i++) {
       const output = await embedder(coreFoodIndex[i].description, { pooling: 'mean', normalize: true });
-      const embedding = Array.from(output.data);
+      const embedding = Array.from(output.data as unknown as number[]);
       coreFoodEmbeddings.set(embedding, i * 512);
     }
     
@@ -458,15 +458,15 @@ async function loadCoreFoodIndex() {
  * Find the closest food match in the core index using embedding similarity
  * Returns the matched food's macros and similarity score, or null if no good match
  */
-async function findClosestFoodMatch(label: string): { macros: { calories: number; protein: number; carbs: number; fat: number } | null; similarity: number } | null {
+function findClosestFoodMatch(label: string): { macros: { calories: number; protein: number; carbs: number; fat: number } | null; similarity: number } | null {
   if (!coreFoodIndexLoaded || !coreFoodIndex.length || !coreFoodEmbeddings) {
     return null;
   }
   
   const lowercaseLabel = label.toLowerCase();
-  
+
   // Generate embedding for the label using the embedder
-  const output = await embedder(lowercaseLabel, { pooling: 'mean', normalize: true });
+  const output = embedder(lowercaseLabel, { pooling: 'mean', normalize: true });
   const labelEmbedding = new Float32Array(512);
   labelEmbedding.set(Array.from(output.data));
   
@@ -483,10 +483,8 @@ async function findClosestFoodMatch(label: string): { macros: { calories: number
       dotProduct += labelEmbedding[j] * indexEmbedding[j];
     }
     
-    const score = dotProduct; // Vectors are already normalized
-    
-    if (score > bestScore) {
-      bestScore = score;
+    if (dotProduct > bestScore) {
+      bestScore = dotProduct;
       bestIndex = i;
     }
   }
@@ -512,8 +510,8 @@ async function findClosestFoodMatch(label: string): { macros: { calories: number
  * Get the closest macro match for a label
  * Uses embedding similarity against the core food index
  */
-async function getMacrosForLabel(label: string): { calories: number; protein: number; carbs: number; fat: number } | null {
-  const match = await findClosestFoodMatch(label);
+function getMacrosForLabel(label: string): { calories: number; protein: number; carbs: number; fat: number } | null {
+  const match = findClosestFoodMatch(label);
   
   if (match && match.macros) {
     return match.macros;

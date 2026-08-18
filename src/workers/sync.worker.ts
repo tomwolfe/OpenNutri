@@ -258,8 +258,9 @@ self.onmessage = async (event: MessageEvent) => {
           console.error('Failed to queue recipe for sync:', err);
         }
       }
+let pushed = 0;
+      let serverConflicts: Array<{ type: string; id: string }> = [];
 
-      let pushed = 0;
       if (unsyncedLogs.length > 0 || unsyncedTargets.length > 0 || unsyncedRecipes.length > 0) {
         const pushPayload = {
           logs: unsyncedLogs.map(log => ({
@@ -294,6 +295,8 @@ self.onmessage = async (event: MessageEvent) => {
           body: JSON.stringify(pushPayload),
         });
 
+        let serverConflicts: Array<{ type: string; id: string }>;
+
         if (response.status === 401) {
           self.postMessage({ type: 'SYNC_UNAUTHORIZED', payload: { userId } });
           return;
@@ -301,7 +304,7 @@ self.onmessage = async (event: MessageEvent) => {
 
         if (response.ok) {
           const result = await response.json();
-          const serverConflicts = (result.conflicts || []) as Array<{ type: string, id: string }>;
+          serverConflicts = (result.conflicts || []) as Array<{ type: string; id: string }>;
 
           for (const log of unsyncedLogs) {
             const hasConflict = serverConflicts.some((c) => c.type === 'log' && c.id === log.id);

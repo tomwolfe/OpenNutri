@@ -262,8 +262,8 @@ export const sharedVaults = pgTable('shared_vaults', {
     .references(() => users.id, { onDelete: 'cascade' })
     .notNull(),
   recipientEmail: text('recipient_email').notNull(),
-  encryptedVaultKey: text('encrypted_vault_key').notNull(), // Master key encrypted with recipient's public key
-  publicKey: text('public_key').notNull(), // Recipient's public key used for this session
+  encryptedVaultKey: text('encrypted_vault_key'), // Master key encrypted with recipient's public key (set during accept)
+  publicKey: text('public_key'), // Recipient's public key used for this session (set during accept)
   expiresAt: timestamp('expires_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   active: boolean('active').default(true).notNull(), // Track if sharing session is active

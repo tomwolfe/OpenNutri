@@ -8,6 +8,7 @@
 
 import { type DecryptedFoodLog } from './db-local';
 import { type CoachingInsight, type MacroTargets, type IntakePoint } from './coaching';
+import { type SyncConflict } from './sync-engine';
 
 let encryptionWorker: Worker | null = null;
 let coachingWorker: Worker | null = null;
